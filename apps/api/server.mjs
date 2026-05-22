@@ -233,12 +233,7 @@ function withOpponentDecor(user) {
   return {
     id: user.id,
     handle: user.handle,
-    rating: user.rating,
-    country: "—",
-    reputation: "—",
-    verified: true,
-    h2h: "—",
-    note: ""
+    rating: user.rating
   };
 }
 
@@ -330,6 +325,9 @@ function settlementPayload(game, viewerId) {
   const lastMove = game.moves[game.moves.length - 1];
   const opponentId = game.players.find((p) => p.id !== viewerId)?.id;
   const opponentHandle = opponentId ? db.getUser(opponentId)?.handle : null;
+  const challenge = game.challengeId ? db.getChallenge(game.challengeId) : null;
+  const timeControl = challenge?.timeControl ?? null;
+  const canRematch = finalized && opponentId && timeControl;
 
   return {
     id: `set_${game.id}`,
@@ -344,9 +342,30 @@ function settlementPayload(game, viewerId) {
     netPotCents: pot.netPotCents,
     balanceAfterCents: walletSummary(ledger, viewerId).balanceCents,
     winningMove: lastMove?.san ?? null,
-    ratingDelta: 18,
-    rematchChallenge: opponentHandle ? { opponent: opponentHandle, stakeCents } : null,
+    ratingDelta: null,
+    rematchChallenge: canRematch
+      ? { opponentId, opponent: opponentHandle, stakeCents, timeControl }
+      : null,
     entries
+  };
+}
+
+function historyEntry(game, viewerId) {
+  const settlement = settlementPayload(game, viewerId);
+  const viewerPlayer = game.players.find((p) => p.id === viewerId);
+  const opponentPlayer = game.players.find((p) => p.id !== viewerId);
+  const opponent = opponentPlayer ? db.getUser(opponentPlayer.id) : null;
+  const challenge = game.challengeId ? db.getChallenge(game.challengeId) : null;
+  return {
+    gameId: game.id,
+    endedAt: game.endedAt,
+    endReason: game.endReason,
+    viewerColor: viewerPlayer?.color ?? null,
+    opponent: opponent ? withOpponentDecor(opponent) : null,
+    stakeCents: challenge?.stakeCents ?? game.pot?.stakeCents ?? 0,
+    timeControl: challenge?.timeControl ?? null,
+    result: settlement.result,
+    creditedCents: settlement.creditedCents
   };
 }
 
@@ -681,6 +700,7 @@ const ROUTES = [
   { method: "GET", pattern: /^\/api\/health$/ },
   { method: "GET", pattern: /^\/api\/bootstrap$/ },
   { method: "GET", pattern: /^\/api\/wallet$/ },
+  { method: "GET", pattern: /^\/api\/games\/history$/ },
 
   { method: "POST", pattern: /^\/api\/challenges$/ },
   { method: "GET", pattern: /^\/api\/challenges\/([^/]+)$/ },
@@ -773,6 +793,12 @@ async function routeApi(req, res) {
       viewer: viewerPayload(viewer.id),
       ledger: db.listLedgerForUser(viewer.id)
     });
+  }
+
+  if (req.method === "GET" && pathname === "/api/games/history") {
+    const games = db.listFinalizedGamesForUser(viewer.id, 50);
+    const items = games.map((game) => historyEntry(game, viewer.id));
+    return json(res, 200, { games: items });
   }
 
   if (req.method === "POST" && pathname === "/api/challenges") {
@@ -1060,7 +1086,10 @@ async function serveStatic(req, res) {
   } catch { filePath = path.join(webDir, "index.html"); }
 
   const ext = path.extname(filePath);
-  res.writeHead(200, { "content-type": contentTypes[ext] || "application/octet-stream" });
+  res.writeHead(200, {
+    "content-type": contentTypes[ext] || "application/octet-stream",
+    "cache-control": "no-store"
+  });
   createReadStream(filePath).pipe(res);
 }
 

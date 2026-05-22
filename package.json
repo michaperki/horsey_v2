@@ -17,5 +17,8 @@
     "better-sqlite3": "^12.10.0",
     "chess.js": "^1.4.0",
     "ws": "^8.20.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.15"
   }
 }

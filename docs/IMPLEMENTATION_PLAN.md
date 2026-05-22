@@ -17,6 +17,15 @@ Horsey is a wagered chess product. Two players pick a stake and time control, es
 - Record major decisions in docs before importing libraries or creating hard-to-reverse structure.
 - Every dev mock has a named seam. Replacing a mock is a contained swap, not a rewrite.
 
+## Current Working Preferences
+
+These reflect *how* we're working right now, not permanent rules. Update as conditions change.
+
+- **Rapid iteration mode.** Surfaces are still moving. Don't propose broad automated test scaffolding (E2E, integration sweeps) as a headline next step — targeted tests for specific new domain logic are fine, but locking-in-the-milestone-via-tests is deferred until the loop stabilizes. The existing 42 unit tests should keep passing; we're just not investing in a test pyramid yet.
+- **Nav is product, not scaffolding.** The current top nav (`LOBBY · WAGER · GAME · SETTLEMENT · WALLET`) treats flow stops as destinations. Wager / Game / Settlement are places a user passes through, not places they navigate to. Information architecture rethink is a tracked workstream (see below); the current nav is a debug-era artifact.
+- **UI placeholder fields count as mocks.** A field that *looks* real but is hardcoded (opponent rating, country, h2h, momentum, rating delta, rematch button) is as much a mock as any subsystem in the seam list — and arguably more misleading, because it pretends to be product. Track them.
+- **Docs over chat.** When a working session produces a durable direction or preference, the relevant doc (this one, `PROJECT_SOUL`, or an ADR) gets updated in the same change.
+
 ## Where We Are Right Now
 
 What a developer can do locally today, end to end:
@@ -70,8 +79,9 @@ Phase: **4** core done; UX polish + bullet-format support pending.
 
 ### 6. Crude unicode board → production board UI
 
-Today: custom CSS-grid board with public-domain SVG pieces, viewer-relative orientation, click-to-move, legal target hints with capture styling, last-move/check highlighting, captured-piece trays, and a promotion picker. No drag/drop yet, limited keyboard accessibility, and mobile touch ergonomics still need dedicated work.
-Real version: SVG/PNG piece assets, drag-and-drop, promotion modal, captured tray, last-move highlight, keyboard navigation, mobile touch ergonomics. Either keep the custom board or adopt a permissively licensed package (e.g. chessground).
+Today: custom CSS-grid board with public-domain SVG pieces, viewer-relative orientation, click-to-move, drag/drop, turn-aware source selection, legal target hints with capture styling, last-move/check highlighting, captured-piece trays, and a promotion picker. Keyboard accessibility and mobile touch ergonomics still need dedicated work.
+Real version: stronger keyboard navigation, mobile touch ergonomics, and a later decision on whether to keep the custom board or adopt a permissively licensed package (e.g. chessground).
+Implementation note: in the runtime app, the board square button is the draggable surface and the inner piece image stays visual-only; the placeholder `primitives.jsx` board remains design-source only.
 Phase: **2** (remaining work).
 
 ### 7. Resign + auto-finalize → full lifecycle endpoints
@@ -135,12 +145,12 @@ Deliverables:
 - License review for chess libraries. Status: **done** for `chess.js`; board UI remains custom (see ADR 0002).
 - Server-side game state model with FEN. Status: **done** (in-memory).
 - Legal move validation, turn enforcement, check/checkmate/stalemate/draw detection. Status: **done** via `chess.js` wrapper.
-- Client board: orientation, drag/drop, legal-move hints, last-move highlight, captures, responsive sizing. Status: **partial** — click-to-move + target hints only.
+- Client board: orientation, drag/drop, legal-move hints, last-move highlight, captures, responsive sizing. Status: **partial** — core board interaction is now real; keyboard navigation and mobile touch ergonomics remain.
 - Move history / notation display. Status: **partial** — basic SAN rows.
 - Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **partial** — legal/illegal/auto-finalize covered; castling, en passant, promotion, stalemate, threefold not yet explicit.
 
 Remaining Phase 2 work:
-- Drag/drop interaction model.
+- Keyboard navigation and mobile touch ergonomics.
 - Explicit tests for threefold repetition and move history; castling, en passant, promotion, checkmate, and stalemate are covered.
 - Decide whether the custom board keeps evolving or to adopt a permissively licensed board UI package.
 
@@ -194,9 +204,9 @@ Goal: make the full design loop real after a game ends.
 
 Deliverables:
 - Settlement page with credited amount, rake, balance change, rating/stat changes, final position, rematch actions. Status: **partial** — credited / rake / balance / final move are real; rating delta is still seed-driven; rematch is a navigation-only button.
-- Game history and profile stats. Status: **pending**.
+- Game history and profile stats. Status: **partial** — viewer-scoped finalized games list shipped at `GET /api/games/history` with a History route + detail view (reusing the settlement renderer); per-game stats aggregation and profile stats still pending.
 - Rivalry/head-to-head tracking. Status: **pending**.
-- Rematch, double-or-nothing, auto-requeue flows. Status: **pending**.
+- Rematch, double-or-nothing, auto-requeue flows. Status: **partial** — rematch now issues a real challenge against the prior opponent at the same stake + time control; double-or-nothing and auto-requeue still pending.
 - Review/replay view for finished games. Status: **pending**.
 
 Key decisions:
@@ -255,7 +265,15 @@ Exit criteria:
 
 Run alongside the phases, not after them:
 
-- **Testing.** Unit tests for domains (currently 42 passing in `tests/`), integration tests for API and realtime, end-to-end tests for core flows.
+- **Information architecture.** First pass landed: top nav is now Play · History · Profile, with a Resume-game pill that appears only when a live game exists. Wager/Game/Settlement keep their routes but are reached through the flow, not the chrome. Wallet folded into Profile. History list + detail (reusing the settlement renderer) shipped. Deferred destinations (Live spectator, Friends/Rivals, Admin) remain named slots. **See `IA_PROPOSAL.md` for the per-screen real-vs-mocked matrix; it stays live as mocks turn real.**
+- **UI surfaces still showing seed/decorative data.** Distinct from the numbered subsystem mocks (#1–#9). Status after the IA pass:
+  - Wager page opponent `country` / `reputation` / `verified` / `h2h` / `note` — **deleted from API and UI.** Will re-emerge with real backing under Phase 5 (rivalry/h2h) + trust subsystem (Phase 6).
+  - Settlement `ratingDelta` — **returns `null`; row hidden** until a real rating system exists.
+  - Settlement rematch button — **now a real action** (`POST /api/challenges` against prior opponent + stake + time control).
+  - Game page eval / anti-cheat insights — the prior "Momentum" placeholder has been removed from the live rail; real eval/scouting remains deferred to trust/safety work.
+  - Play page rivals list — not yet rendered (was always pending). Will arrive with Phase 5.
+- **Dev ergonomics.** Phase 0 lint/format/typecheck are still partial. Currently only `npm test` and `npm run check`. Pick a minimal stack (likely Biome or ESLint+Prettier, optional `tsc --noEmit` for JSDoc types) and wire pre-commit + a single `npm run verify` aggregate. Low cost, compounds across the rest of the work.
+- **Testing.** Unit tests for domains (currently 42 passing in `tests/`). Broader test investment (integration, E2E) is **deferred** while we're in rapid-iteration mode — see Working Preferences. Targeted tests for specific new domain logic are still welcome; what's deferred is a test-pyramid push.
 - **Observability.** Logs, metrics, traces, audit events, error reporting.
 - **Security.** Auth, authorization, input validation, rate limiting, secrets, abuse prevention.
 - **Accessibility.** Keyboard board controls, focus states, color contrast, mobile ergonomics.
@@ -270,7 +288,7 @@ Scope:
 - Challenge or quick-match path. **Done** — `POST /api/challenges` for targeted/open challenges; `POST /api/matchmaking/quick` for stake+time pairing.
 - Server-authoritative chess game. **Done.**
 - Fake-money escrow and settlement. **Done** (decisive + draw + resign).
-- Basic post-game settlement/rematch page. **Partial** — settlement is real; rematch is a button stub.
+- Basic post-game settlement/rematch page. **Done** — settlement is real; rematch now issues a real `POST /api/challenges` against the prior opponent at the same stake + time control.
 
 Out of scope for this milestone:
 - Real payments.
@@ -280,7 +298,7 @@ Out of scope for this milestone:
 - Advanced engine evaluation unless a low-risk permissive dependency is chosen.
 
 What stands between now and the milestone being complete:
-1. Phase 2 remaining — board polish (drag/drop, promotion picker, tests for castling/en passant/promotion/stalemate/threefold).
+1. Phase 2 remaining — board polish (keyboard navigation, mobile touch ergonomics, promotion UX hardening, tests for threefold and move history).
 
 Safety note: the manual `POST /api/games/:id/finalize` endpoint is now explicitly dev-gated by `HORSEY_ENABLE_DEV_FINALIZE=1` and still requires the caller to be a player. Normal game completion should flow through moves, resignation, draw agreement, or timeout settlement.
 

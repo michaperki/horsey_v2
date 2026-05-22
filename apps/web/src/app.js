@@ -1,3 +1,15 @@
+const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
+
+function parseHash() {
+  const raw = (window.location.hash || "").replace(/^#/, "");
+  const [head = "", ...rest] = raw.split("/");
+  const name = ROUTE_ALIASES[head] ?? head;
+  const param = rest.join("/") || null;
+  return { name, param };
+}
+
+const initialRoute = parseHash();
+
 const state = {
   view: "loading",
   authMode: "login",
@@ -6,13 +18,17 @@ const state = {
   activeChallenge: null,
   activeGame: null,
   activeSettlement: null,
+  liveGame: null,
+  historyList: null,
   walletLedger: [],
   selectedSquare: null,
+  dragFromSquare: null,
   pendingPromotion: null,
   gameError: null,
   actionError: null,
   matchmakingPoll: null,
-  route: window.location.hash.replace("#", "") || "lobby",
+  route: initialRoute.name,
+  routeParam: initialRoute.param,
   rt: {
     ws: null,
     reconnectAttempts: 0,
@@ -31,6 +47,15 @@ const money = (cents) => new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: cents % 100 === 0 ? 0 : 2
 }).format(cents / 100);
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
 const pieceNames = {
   k: "king",
@@ -73,8 +98,12 @@ async function postJson(url, body = {}, method = "POST") {
 async function loadBootstrap() {
   const data = await getJson("/api/bootstrap");
   state.bootstrap = data;
-  state.activeGame = data.activeGame || data.recentGame || null;
-  state.activeSettlement = data.recentSettlement || null;
+  state.liveGame = data.activeGame || null;
+  const viewingHistoryDetail = state.route === "history" && state.routeParam;
+  if (!viewingHistoryDetail) {
+    state.activeGame = data.activeGame || data.recentGame || null;
+    state.activeSettlement = data.recentSettlement || null;
+  }
   if (!state.activeChallenge) {
     state.activeChallenge = data.incomingChallenges[0] || data.sentChallenges[0] || data.lobby.openChallenges[0] || null;
   } else {
@@ -92,8 +121,8 @@ async function load() {
     await loadBootstrap();
     state.view = "app";
     connectRealtime();
-    managePolling();
-    syncGameSubscription();
+    await enterRoute(parseHash());
+    return;
   } catch (error) {
     if (error instanceof AuthRequiredError) {
       state.view = "auth";
@@ -135,6 +164,8 @@ async function logout() {
   state.activeChallenge = null;
   state.activeGame = null;
   state.activeSettlement = null;
+  state.liveGame = null;
+  state.historyList = null;
   state.walletLedger = [];
   state.view = "auth";
   state.authMode = "login";
@@ -156,6 +187,8 @@ function authGuard(error) {
     state.activeChallenge = null;
     state.activeGame = null;
     state.activeSettlement = null;
+    state.liveGame = null;
+    state.historyList = null;
     state.walletLedger = [];
     state.view = "auth";
     state.authMode = "login";
@@ -182,7 +215,7 @@ function closeRealtime() {
 function navigate(route) { window.location.hash = route; }
 
 function managePolling() {
-  const shouldPoll = state.route === "lobby" && state.bootstrap?.matchmakingTicket && !state.activeGame;
+  const shouldPoll = state.route === "play" && state.bootstrap?.matchmakingTicket && !state.liveGame;
   if (shouldPoll && !state.matchmakingPoll) {
     state.matchmakingPoll = setInterval(async () => {
       try {
@@ -220,7 +253,7 @@ function manageClockTick() {
 
 function updateClockDom() {
   const game = state.activeGame;
-  if (!game || !game.clock) return;
+  if (!game?.clock) return;
   const now = Date.now();
   for (const player of game.players) {
     const node = document.querySelector(`[data-clock="${player.color}"] time`);
@@ -228,7 +261,12 @@ function updateClockDom() {
     const ms = remainingForSide(game.clock, player.color, now);
     node.textContent = ms == null ? "--:--" : formatClock(ms);
     const strip = node.closest(".player-strip");
-    if (strip) strip.classList.toggle("low", ms != null && ms < 30000 && game.state === "live");
+    if (strip) {
+      strip.classList.toggle("low", ms != null && ms < 30000 && game.state === "live");
+      strip.classList.toggle("critical", ms != null && ms < 10000 && game.state === "live");
+      const meter = strip.querySelector(".clock-meter span");
+      if (meter) meter.style.width = clockPercent(game.clock, ms);
+    }
   }
 }
 
@@ -246,6 +284,7 @@ function connectRealtime() {
       sendRealtime({ type: "subscribe", channel: `game:${state.activeGame.id}` });
       state.rt.subscribedGameId = state.activeGame.id;
     }
+    if (state.route === "game") render();
   });
 
   ws.addEventListener("message", (event) => {
@@ -257,6 +296,7 @@ function connectRealtime() {
   ws.addEventListener("close", () => {
     state.rt.subscribedGameId = null;
     scheduleReconnect();
+    if (state.route === "game") render();
   });
 
   ws.addEventListener("error", () => {
@@ -388,7 +428,9 @@ async function submitMove(from, to, promotion = "q") {
 }
 
 async function resignGame() {
-  if (!window.confirm("Resign this game? Your opponent will receive the pot.")) return;
+  const stake = state.activeGame?.pot?.stakeCents;
+  const consequence = stake ? ` You concede your ${money(stake)} stake.` : "";
+  if (!window.confirm(`Resign this game? Your opponent will receive the pot.${consequence}`)) return;
   state.gameError = null;
   try {
     const payload = await postJson(`/api/games/${state.activeGame.id}/resign`, {});
@@ -447,7 +489,7 @@ async function actOnChallenge(action) {
     if (action === "accept") navigate("game");
     if (action === "decline" || action === "counter") {
       state.activeChallenge = null;
-      navigate("lobby");
+      navigate("play");
     }
     render();
   } catch (error) {
@@ -514,32 +556,102 @@ function selectChallenge(challenge) {
   navigate("wager");
 }
 
-window.addEventListener("hashchange", () => {
-  state.route = window.location.hash.replace("#", "") || "lobby";
+async function requestRematch() {
+  const rematch = state.activeSettlement?.rematchChallenge;
+  if (!rematch) return;
+  state.actionError = null;
+  try {
+    const payload = await postJson("/api/challenges", {
+      recipientId: rematch.opponentId,
+      stakeCents: rematch.stakeCents,
+      timeControl: rematch.timeControl
+    });
+    state.activeChallenge = payload.challenge;
+    await loadBootstrap();
+    navigate("wager");
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  }
+}
+
+function normalizeHashUrl() {
+  const raw = (window.location.hash || "").replace(/^#/, "");
+  const [head = "", ...rest] = raw.split("/");
+  if (head in ROUTE_ALIASES && ROUTE_ALIASES[head] !== head) {
+    const canonical = [ROUTE_ALIASES[head], ...rest].filter(Boolean).join("/");
+    window.history.replaceState(null, "", `#${canonical}`);
+  }
+}
+
+async function enterRoute(parsed) {
+  state.route = parsed.name;
+  state.routeParam = parsed.param;
+  normalizeHashUrl();
+
+  if (state.route === "history" && state.routeParam) {
+    state.actionError = null;
+    try {
+      const gameId = state.routeParam;
+      const [gameResp, settlementResp] = await Promise.all([
+        getJson(`/api/games/${gameId}`),
+        getJson(`/api/games/${gameId}/settlement`)
+      ]);
+      state.activeGame = gameResp.game;
+      state.activeSettlement = settlementResp.settlement;
+    } catch (error) {
+      if (authGuard(error)) return;
+      state.actionError = error.message;
+    }
+  } else if (state.route === "history") {
+    try {
+      const resp = await getJson("/api/games/history");
+      state.historyList = resp.games;
+    } catch (error) {
+      if (authGuard(error)) return;
+      state.actionError = error.message;
+    }
+  } else if (state.route === "profile") {
+    try {
+      const wallet = await getJson("/api/wallet");
+      state.walletLedger = wallet.ledger;
+      if (state.bootstrap) state.bootstrap.viewer = wallet.viewer;
+    } catch (error) {
+      if (authGuard(error)) return;
+    }
+  }
+
   managePolling();
   syncGameSubscription();
   render();
+}
+
+window.addEventListener("hashchange", () => {
+  enterRoute(parseHash());
 });
 
 function shell(content) {
   const viewer = state.bootstrap.viewer;
+  const liveGame = state.liveGame;
   return `
     <header class="topbar">
-      <a class="brand" href="#lobby"><span class="mark">♞</span>Horsey</a>
+      <a class="brand" href="#play"><span class="mark">♞</span>Horsey</a>
       <nav>
-        ${navLink("lobby", "Lobby")}
-        ${state.activeChallenge ? navLink("wager", "Wager") : ""}
-        ${state.activeGame ? navLink("game", "Game") : ""}
-        ${state.activeSettlement ? navLink("settlement", "Settlement") : ""}
-        ${navLink("wallet", "Wallet")}
+        ${navLink("play", "Play")}
+        ${navLink("history", "History")}
+        ${navLink("profile", "Profile")}
       </nav>
-      <div class="viewer-id">
-        <small>signed in as <strong>${viewer.handle}</strong></small>
-        <button class="link" data-logout>Log out</button>
-      </div>
-      <div class="wallet-pill">
-        <span>${money(viewer.balanceCents)}</span>
-        <small>${money(viewer.escrowCents)} escrow</small>
+      <div class="topbar-actions">
+        ${liveGame ? `<a class="resume-pill" href="#game"><span class="dot"></span>Resume game</a>` : ""}
+        <a class="wallet-pill" href="#profile" title="Wallet detail in Profile">
+          <span>${money(viewer.balanceCents)}</span>
+          <small>${money(viewer.escrowCents)} escrow</small>
+        </a>
+        <div class="viewer-id">
+          <small>signed in as <strong>${escapeHtml(viewer.handle)}</strong></small>
+          <button class="link" data-logout>Log out</button>
+        </div>
       </div>
     </header>
     <main>${content}</main>
@@ -547,10 +659,11 @@ function shell(content) {
 }
 
 function navLink(id, label) {
-  return `<a class="${state.route === id ? "active" : ""}" href="#${id}">${label}</a>`;
+  const active = state.route === id ? "active" : "";
+  return `<a class="${active}" href="#${id}">${label}</a>`;
 }
 
-function renderLobby() {
+function renderPlay() {
   const { lobby, incomingChallenges, sentChallenges, matchmakingTicket } = state.bootstrap;
   const me = viewerId();
   const openChallenges = lobby.openChallenges.filter((c) => c.challengerId !== me);
@@ -579,7 +692,7 @@ function renderLobby() {
             <button class="primary" type="submit">Join quick match</button>
           </form>
         `}
-        ${state.actionError ? `<em class="action-error">${state.actionError}</em>` : ""}
+        ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </article>
 
       <aside class="stack">
@@ -625,9 +738,9 @@ function challengeRow(challenge) {
   const label = isMine ? `→ ${challenge.recipient ? challenge.recipient.handle : "anyone"}` : `from ${opponent.handle}`;
   return `
     <button class="table-row" data-select-challenge="${challenge.id}">
-      <strong>${label}</strong>
+      <strong>${escapeHtml(label)}</strong>
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
-      <em>${challenge.state}</em>
+      <em>${escapeHtml(challenge.state)}</em>
       <span>→</span>
     </button>
   `;
@@ -635,7 +748,7 @@ function challengeRow(challenge) {
 
 function renderWager() {
   const challenge = state.activeChallenge;
-  if (!challenge) return `<p class="muted">No active challenge. <a href="#lobby">Pick one.</a></p>`;
+  if (!challenge) return `<p class="muted">No active challenge. <a href="#play">Pick one.</a></p>`;
   const viewerIsRecipient = viewerId() === challenge.recipientId;
   const viewerIsChallenger = viewerId() === challenge.challengerId;
   const isOpen = !challenge.recipientId;
@@ -651,7 +764,7 @@ function renderWager() {
   const opponent = challenge.opponent;
   const headline = viewerIsChallenger
     ? `<span class="muted">You staked</span> ${money(challenge.stakeCents)}`
-    : `<span class="muted">${opponent.handle} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
+    : `<span class="muted">${escapeHtml(opponent.handle)} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
 
   return `
     <section class="grid wager">
@@ -661,14 +774,9 @@ function renderWager() {
           <h1>${headline}</h1>
         </div>
         <article class="card opponent">
-          <div class="avatar huge">${opponent.handle[0]}</div>
+          <div class="avatar huge">${escapeHtml(opponent.handle[0] || "?")}</div>
           <div>
-            <h2>${opponent.handle} ${opponent.rating ? `<span>${opponent.rating}</span>` : ""}</h2>
-            <p>${opponent.country || "—"} · ${opponent.note || "—"} · reputation ${opponent.reputation || "—"}</p>
-            <div class="tag-row">
-              <span>${opponent.verified ? "verified ID" : "unverified"}</span>
-              <span>h2h ${opponent.h2h || "—"}</span>
-            </div>
+            <h2>${escapeHtml(opponent.handle)} ${opponent.rating ? `<span>${escapeHtml(opponent.rating)}</span>` : ""}</h2>
           </div>
         </article>
       </article>
@@ -677,10 +785,10 @@ function renderWager() {
         <h2>${money(challenge.stakeCents)} each</h2>
         <p>${challenge.timeControl} blitz · ${money(challenge.pot.netPotCents)} pot after ${money(challenge.pot.rakeCents)} rake.</p>
         <div class="escrow">Stakes lock in fake-money escrow for this milestone.</div>
-        <button class="primary" ${canAct ? 'data-action="accept"' : "disabled"}>${actionLabel} ${canAct ? money(challenge.stakeCents) : ""}</button>
+        <button class="primary" ${canAct ? 'data-action="accept"' : "disabled"}>${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}</button>
         <button ${canAct ? 'data-action="counter"' : "disabled"}>Counter same stake</button>
         <button ${canAct ? 'data-action="decline"' : "disabled"}>Decline</button>
-        ${state.actionError ? `<em class="action-error">${state.actionError}</em>` : ""}
+        ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
   `;
@@ -688,48 +796,86 @@ function renderWager() {
 
 function renderGame() {
   const game = state.activeGame;
-  if (!game) return `<p class="muted">No active game. <a href="#lobby">Back to lobby.</a></p>`;
+  if (!game) return `<p class="muted">No active game. <a href="#play">Back to lobby.</a></p>`;
   const white = game.players.find((player) => player.color === "white");
   const black = game.players.find((player) => player.color === "black");
-  const viewer = game.players.find((player) => player.id === viewerId());
+  const viewer = viewerPlayer(game);
   const viewerIsPlayer = !!viewer;
   const canResign = viewerIsPlayer && game.state === "live";
   const drawSection = viewerIsPlayer && game.state === "live"
     ? drawControls(game, viewer.color)
     : "";
+  const opponent = viewerIsPlayer
+    ? game.players.find((player) => player.id !== viewer.id)
+    : null;
+  const turnOwner = game.players.find((player) => player.color === game.turn);
+  const statusText = game.state === "live"
+    ? `${turnOwner?.id === viewerId() ? "Your" : `${turnOwner?.handle ?? game.turn}'s`} move`
+    : game.status;
   return `
     <section class="game-layout">
-      <aside class="card">
-        <h2>Move history</h2>
-        <ol class="moves">
-          ${(game.moveRows || []).map((move) => `<li><span>${move[0]}</span><span>${move[1] || ""}</span></li>`).join("") || "<li><span>No moves yet</span><span></span></li>"}
+      <aside class="card game-panel move-panel">
+        <div class="between">
+          <h2>Move history</h2>
+          <small>${game.moveNumber ? `move ${game.moveNumber}` : "opening"}</small>
+        </div>
+        <div class="move-head"><span>White</span><span>Black</span></div>
+        <ol class="moves" data-move-list>
+          ${(game.moveRows || []).map((move, index, rows) => `
+            <li class="${index === rows.length - 1 ? "current" : ""}">
+              <span>${escapeHtml(move[0])}</span>
+              <span>${escapeHtml(move[1] || "")}</span>
+            </li>
+          `).join("") || "<li><span>No moves yet</span><span></span></li>"}
         </ol>
       </aside>
       <article class="board-column">
-        ${playerStrip(game, black, game.turn === "black")}
-        ${captureTray(game, "black")}
-        ${board(game)}
-        ${promotionDialog()}
-        ${captureTray(game, "white")}
-        ${playerStrip(game, white, game.turn === "white")}
+        ${(() => {
+          const orientation = boardOrientation(game);
+          const topPlayer = orientation === "black" ? white : black;
+          const bottomPlayer = orientation === "black" ? black : white;
+          return `
+            ${playerStrip(game, topPlayer, game.turn === topPlayer.color)}
+            ${captureTray(game, topPlayer.color)}
+            ${board(game)}
+            ${promotionDialog()}
+            ${captureTray(game, bottomPlayer.color)}
+            ${playerStrip(game, bottomPlayer, game.turn === bottomPlayer.color)}
+          `;
+        })()}
         <div class="turn-strip">
-          <strong>${game.turn} to move</strong>
-          <span>${game.status}${game.inCheck ? " · check" : ""}</span>
-          ${state.gameError ? `<em>${state.gameError}</em>` : ""}
+          <strong>${escapeHtml(statusText)}</strong>
+          <span>${escapeHtml(game.status)}${game.inCheck ? " · check" : ""}</span>
+          ${state.gameError ? `<em>${escapeHtml(state.gameError)}</em>` : ""}
         </div>
       </article>
       <aside class="stack">
-        <article class="felt pot">
-          <div class="eyebrow">The pot</div>
+        <article class="felt pot game-panel">
+          <div class="between">
+            <div class="eyebrow">The pot</div>
+            <span class="status-pill">escrowed</span>
+          </div>
           <h2>${money(game.pot.netPotCents)}</h2>
-          <p>Winner takes after fake-money rake.</p>
+          <p>Winner takes after ${money(game.pot.rakeCents)} fake-money rake.</p>
+          <div class="stake-grid">
+            <div><small>Your stake</small><strong>${money(game.pot.stakeCents)}</strong></div>
+            <div><small>${opponent ? `${escapeHtml(opponent.handle)} stake` : "Their stake"}</small><strong>${money(game.pot.stakeCents)}</strong></div>
+          </div>
         </article>
-        <article class="card">
-          <h2>Momentum</h2>
-          <p>Eval and anti-cheat-backed insights are placeholders until the chess core and trust systems land.</p>
+        <article class="card game-panel live-status">
+          <div class="between">
+            <h2>Table status</h2>
+            ${connectionPill()}
+          </div>
+          <div class="status-grid">
+            <div><small>Side</small><strong>${viewer ? viewer.color : "spectator"}</strong></div>
+            <div><small>Last move</small><strong>${game.lastMove ? escapeHtml(game.lastMove.san) : "—"}</strong></div>
+            <div><small>Material</small><strong>${viewer ? formatMaterialDelta(materialDelta(game, viewer.color)) : "—"}</strong></div>
+            <div><small>State</small><strong>${escapeHtml(game.state)}</strong></div>
+          </div>
         </article>
         ${drawSection}
-        ${canResign ? `<button class="danger" data-resign>Resign</button>` : ""}
+        ${canResign ? `<button class="danger resign-button" data-resign>Resign · concede ${money(game.pot.stakeCents)}</button>` : ""}
       </aside>
     </section>
   `;
@@ -738,7 +884,7 @@ function renderGame() {
 function drawControls(game, viewerColor) {
   const offer = game.drawOffer;
   if (!offer) {
-    return `<button data-draw-action="draw-offer">Offer draw</button>`;
+    return `<button class="draw-button" data-draw-action="draw-offer">Offer draw</button>`;
   }
   if (offer.offeredBy === viewerColor) {
     return `<div class="card draw-pending"><strong>Draw offered</strong><small>Waiting on opponent. Your offer clears on your next move.</small></div>`;
@@ -746,7 +892,7 @@ function drawControls(game, viewerColor) {
   const opponent = game.players.find((p) => p.color !== viewerColor)?.handle ?? "Opponent";
   return `
     <div class="card draw-incoming">
-      <strong>${opponent} offers a draw</strong>
+      <strong>${escapeHtml(opponent)} offers a draw</strong>
       <div class="stack">
         <button class="primary" data-draw-action="draw-accept">Accept draw</button>
         <button data-draw-action="draw-decline">Decline</button>
@@ -759,14 +905,54 @@ function playerStrip(game, player, active = false) {
   const ms = remainingForSide(game.clock, player.color, Date.now());
   const display = ms == null ? "--:--" : formatClock(ms);
   const low = ms != null && ms < 30000 && game.state === "live";
+  const critical = ms != null && ms < 10000 && game.state === "live";
+  const isViewer = player.id === viewerId();
+  const material = materialDelta(game, player.color);
+  const activity = game.state !== "live"
+    ? game.state
+    : active
+      ? (isViewer ? `your turn · move ${game.moveNumber}` : "thinking")
+      : "waiting";
   return `
-    <div class="player-strip ${active ? "active" : ""} ${low ? "low" : ""}" data-clock="${player.color}">
-      <span class="avatar">${player.handle[0]}</span>
-      <strong>${player.handle}</strong>
-      <small>${player.rating}</small>
-      <time>${display}</time>
+    <div class="player-strip ${active ? "active" : ""} ${low ? "low" : ""} ${critical ? "critical" : ""}" data-clock="${player.color}">
+      <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
+      <span class="player-main">
+        <span>
+          <strong>${isViewer ? "You" : escapeHtml(player.handle)}</strong>
+          <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}</small>
+        </span>
+        <span class="player-subline">
+          ${capturedPiecesMarkup(game, player.color, "No captures")}
+          <span>${formatMaterialDelta(material)}</span>
+          <span>${escapeHtml(activity)}</span>
+        </span>
+      </span>
+      <span class="clock-box">
+        <time>${display}</time>
+        <span class="clock-meter"><span style="width: ${clockPercent(game.clock, ms)}"></span></span>
+      </span>
     </div>
   `;
+}
+
+function connectionPill() {
+  const ws = state.rt.ws;
+  let label = "offline";
+  let cls = "stale";
+  if (ws?.readyState === WebSocket.OPEN) {
+    label = "live";
+    cls = "live";
+  } else if (ws?.readyState === WebSocket.CONNECTING || state.rt.reconnectTimer) {
+    label = "reconnecting";
+    cls = "pending";
+  }
+  return `<span class="connection-pill ${cls}"><span></span>${label}</span>`;
+}
+
+function formatMaterialDelta(delta) {
+  if (delta > 0) return `+${delta}`;
+  if (delta < 0) return `${delta}`;
+  return "even";
 }
 
 function movingColorForMoveIndex(index) {
@@ -785,19 +971,62 @@ function pieceImg(color, type, className = "piece") {
   return `<img class="${className}" src="${pieceAsset(color, type)}" alt="${pieceAlt(color, type)}" draggable="false">`;
 }
 
+const pieceValues = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+
 function capturedPieces(game, color) {
   return (game.moves || [])
     .filter((move, index) => move.captured && movingColorForMoveIndex(index) === color)
     .map((move) => ({ color: color === "white" ? "black" : "white", type: move.captured }));
 }
 
-function captureTray(game, color) {
+function materialScore(game, color) {
+  return capturedPieces(game, color).reduce((sum, piece) => sum + (pieceValues[piece.type] || 0), 0);
+}
+
+function materialDelta(game, color) {
+  return materialScore(game, color) - materialScore(game, color === "white" ? "black" : "white");
+}
+
+function capturedPiecesMarkup(game, color, empty = "No captures") {
   const pieces = capturedPieces(game, color);
   return `
+    <span class="capture-inline" aria-label="${color} captured pieces">
+      ${pieces.length ? pieces.map((piece) => pieceImg(piece.color, piece.type, "captured-piece")).join("") : `<small>${empty}</small>`}
+    </span>
+  `;
+}
+
+function captureTray(game, color) {
+  return `
     <div class="capture-tray" aria-label="${color} captured pieces">
-      ${pieces.length ? pieces.map((piece) => pieceImg(piece.color, piece.type, "captured-piece")).join("") : "<small>No captures</small>"}
+      ${capturedPiecesMarkup(game, color)}
     </div>
   `;
+}
+
+function viewerPlayer(game) {
+  return game.players?.find((player) => player.id === viewerId()) || null;
+}
+
+function isViewerTurn(game) {
+  const viewer = viewerPlayer(game);
+  return !!viewer && game.state === "live" && game.turn === viewer.color;
+}
+
+function colorNameFromBoardPiece(square) {
+  return square?.color === "w" ? "white" : square?.color === "b" ? "black" : null;
+}
+
+function canMoveFrom(game, squareName) {
+  if (!isViewerTurn(game)) return false;
+  const square = game.board.find((cell) => cell.square === squareName);
+  const viewer = viewerPlayer(game);
+  if (!square || colorNameFromBoardPiece(square) !== viewer.color) return false;
+  return game.legalMoves.some((move) => move.from === squareName);
+}
+
+function legalMoveFor(from, to) {
+  return state.activeGame?.legalMoves.find((move) => move.from === from && move.to === to) || null;
 }
 
 function remainingForSide(clock, side, now) {
@@ -809,10 +1038,19 @@ function remainingForSide(clock, side, now) {
 }
 
 function formatClock(ms) {
+  if (ms != null && ms > 0 && ms < 10000) {
+    return `${(ms / 1000).toFixed(1)}`;
+  }
   const seconds = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(seconds / 60);
   const s = String(seconds % 60).padStart(2, "0");
   return `${m}:${s}`;
+}
+
+function clockPercent(clock, ms) {
+  if (!clock || ms == null) return "0%";
+  const base = Math.max(clock.whiteMs, clock.blackMs, 1);
+  return `${Math.max(0, Math.min(100, (ms / base) * 100))}%`;
 }
 
 function board(game) {
@@ -825,24 +1063,26 @@ function board(game) {
   const orientation = boardOrientation(game);
   const displaySquares = orientation === "black" ? [...game.board].reverse() : game.board;
   const cells = displaySquares.map((square) => {
+    const isSource = canMoveFrom(game, square.square);
     const target = targetMoves.get(square.square);
-    const pieceColor = square.color === "w" ? "white" : square.color === "b" ? "black" : null;
     const classes = [
       (square.row + square.col) % 2 ? "dark" : "light",
       square.square === selected ? "selected" : "",
+      isSource ? "source" : "",
       target ? "target" : "",
       target?.captured ? "target-capture" : target ? "target-quiet" : "",
       lastSquares.has(square.square) ? "last-move" : "",
-      checkedKing === square.square ? "king-check" : ""
+      game.inCheck && square.square === checkedKing ? "king-check" : ""
     ].filter(Boolean).join(" ");
-    const showFile = orientation === "white" ? square.row === 7 : square.row === 0;
-    const showRank = orientation === "white" ? square.col === 0 : square.col === 7;
+    const pieceColor = colorNameFromBoardPiece(square);
     const piece = pieceColor && square.type ? pieceImg(pieceColor, square.type) : "";
+    const showRank = orientation === "white" ? square.col === 0 : square.col === 7;
+    const showFile = orientation === "white" ? square.row === 7 : square.row === 0;
     const coords = [
       showRank ? `<span class="coord rank">${square.square[1]}</span>` : "",
       showFile ? `<span class="coord file">${square.square[0]}</span>` : ""
     ].join("");
-    return `<button class="${classes}" data-square="${square.square}" aria-label="${square.square}">${piece}${coords}</button>`;
+    return `<button class="${classes}" data-square="${square.square}" draggable="${isSource ? "true" : "false"}" aria-label="${square.square}">${piece}${coords}</button>`;
   });
   return `<div class="board ${orientation === "black" ? "flipped" : ""}" aria-label="Chess board">${cells.join("")}</div>`;
 }
@@ -854,6 +1094,65 @@ function boardOrientation(game) {
 
 function promotionMoveFor(from, to) {
   return state.activeGame?.legalMoves.find((move) => move.from === from && move.to === to && move.promotion) || null;
+}
+
+function queueOrSubmitMove(from, to) {
+  const game = state.activeGame;
+  if (!game || !from || !to) return;
+  const move = legalMoveFor(from, to);
+  if (!move) {
+    state.selectedSquare = canMoveFrom(game, to) ? to : null;
+    state.dragFromSquare = null;
+    state.pendingPromotion = null;
+    render();
+    return;
+  }
+  const promotionMove = promotionMoveFor(from, to);
+  if (promotionMove) {
+    const movingPiece = game.board.find((cell) => cell.square === from);
+    state.pendingPromotion = {
+      from,
+      to,
+      color: movingPiece?.color === "b" ? "black" : "white"
+    };
+    state.selectedSquare = from;
+    state.dragFromSquare = null;
+    render();
+    return;
+  }
+  submitMove(from, to).catch((error) => {
+    state.gameError = error.message;
+    state.selectedSquare = null;
+    state.dragFromSquare = null;
+    state.pendingPromotion = null;
+    render();
+  });
+}
+
+function handleSquareIntent(clicked) {
+  const game = state.activeGame;
+  if (!game) return;
+  if (!state.selectedSquare) {
+    if (canMoveFrom(game, clicked)) {
+      state.selectedSquare = clicked;
+      state.gameError = null;
+      render();
+    }
+    return;
+  }
+  if (state.selectedSquare === clicked) {
+    state.selectedSquare = null;
+    state.pendingPromotion = null;
+    render();
+    return;
+  }
+  if (canMoveFrom(game, clicked)) {
+    state.selectedSquare = clicked;
+    state.pendingPromotion = null;
+    render();
+    return;
+  }
+  queueOrSubmitMove(state.selectedSquare, clicked);
 }
 
 function promotionDialog() {
@@ -885,7 +1184,7 @@ function promotionDialog() {
 
 function renderSettlement() {
   const settlement = state.activeSettlement;
-  if (!settlement) return `<p class="muted">No settlement yet. <a href="#lobby">Back to lobby.</a></p>`;
+  if (!settlement) return `<p class="muted">No settlement yet. <a href="#play">Back to lobby.</a></p>`;
   const game = state.activeGame;
   const opponentHandle = settlement.rematchChallenge?.opponent || "your opponent";
 
@@ -908,7 +1207,7 @@ function renderSettlement() {
   const drew = settlement.result === "draw";
   let eyebrowClass = "danger";
   let eyebrowText = "Settlement · stake taken";
-  let headline = `${opponentHandle} took the pot.`;
+  let headline = `${escapeHtml(opponentHandle)} took the pot.`;
   let amountClass = "money-loss";
   let amountPrefix = "-";
   let amountCents = game?.pot?.stakeCents || 0;
@@ -916,7 +1215,7 @@ function renderSettlement() {
   if (won) {
     eyebrowClass = "success";
     eyebrowText = "Settlement · auto-credited";
-    headline = `You took ${opponentHandle}.`;
+    headline = `You took ${escapeHtml(opponentHandle)}.`;
     amountClass = "money-win";
     amountPrefix = "+";
     amountCents = settlement.creditedCents;
@@ -932,46 +1231,106 @@ function renderSettlement() {
   return `
     <section class="grid two">
       <article class="felt settlement">
-        <div class="eyebrow ${eyebrowClass}">${eyebrowText}</div>
+        <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
         <h1>${headline}</h1>
         <div class="${amountClass}">${amountPrefix}${money(amountCents)}</div>
         <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
         <div class="metric-grid">
           <div><small>Balance</small><strong>${money(settlement.balanceAfterCents)}</strong></div>
-          <div><small>Rating</small><strong>${drew ? "±0" : `${won ? "+" : "−"}${settlement.ratingDelta}`}</strong></div>
-          <div><small>Last move</small><strong>${settlement.winningMove || "—"}</strong></div>
+          ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${drew ? "±0" : `${won ? "+" : "−"}${settlement.ratingDelta}`}</strong></div>` : ""}
+          <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
         </div>
       </article>
       <aside class="card stack">
         <h2>Queue another</h2>
-        ${settlement.rematchChallenge ? `<button class="primary" data-nav="lobby">Find another · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
-        <button data-nav="lobby">Find new opponent</button>
+        ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
+        <button data-nav="play">Find new opponent</button>
+        ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
   `;
 }
 
-function renderWallet() {
+function renderHistoryList() {
+  const items = state.historyList;
+  if (items === null) {
+    return `<p class="muted">Loading history…</p>`;
+  }
+  if (items.length === 0) {
+    return `
+      <section class="history-empty">
+        <article class="card">
+          <h1>No finished games yet</h1>
+          <p class="muted">Play a game and it'll show up here.</p>
+          <a class="primary-link" href="#play">Find a match</a>
+        </article>
+      </section>
+    `;
+  }
+  return `
+    <section class="history">
+      <header class="history-header">
+        <h1>History</h1>
+        <p class="muted">${items.length} finished game${items.length === 1 ? "" : "s"}</p>
+      </header>
+      <div class="history-list">
+        ${items.map(historyRow).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function historyRow(entry) {
+  const opponentHandle = entry.opponent?.handle ?? "—";
+  const resultLabel = entry.result === "win" ? "Win" : entry.result === "loss" ? "Loss" : entry.result === "draw" ? "Draw" : entry.result;
+  const resultClass = entry.result === "win" ? "money-win" : entry.result === "loss" ? "money-loss" : "money-draw";
+  const sign = entry.result === "win" ? "+" : entry.result === "loss" ? "−" : "";
+  const credited = entry.result === "loss" ? entry.stakeCents : entry.creditedCents;
+  const when = entry.endedAt ? new Date(entry.endedAt).toLocaleString() : "—";
+  return `
+    <a class="history-row" href="#history/${entry.gameId}">
+      <div class="history-result ${resultClass}">${resultLabel}</div>
+      <div class="history-vs">
+        <strong>vs ${escapeHtml(opponentHandle)}</strong>
+        <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(entry.endReason || "—")}</small>
+      </div>
+      <div class="history-credit ${resultClass}">${sign}${money(credited)}</div>
+      <small class="history-when">${when}</small>
+    </a>
+  `;
+}
+
+function renderProfile() {
   const viewer = state.bootstrap.viewer;
   return `
-    <section class="grid two">
-      <article class="felt settlement">
-        <div class="eyebrow">Fake-money wallet</div>
-        <h1>${money(viewer.balanceCents)}</h1>
-        <p>${money(viewer.escrowCents)} is currently held in escrow for accepted challenges.</p>
-      </article>
-      <article class="card ledger-card">
-        <h2>Ledger</h2>
-        <div class="ledger-list">
-          ${state.walletLedger.map((entry) => `
-            <div class="ledger-row">
-              <strong>${entry.type.replaceAll("_", " ")}</strong>
-              <span>${money(entry.availableDeltaCents)}</span>
-              <small>${entry.escrowDeltaCents ? `${money(entry.escrowDeltaCents)} escrow` : entry.note || ""}</small>
-            </div>
-          `).join("")}
+    <section class="profile">
+      <article class="card profile-header">
+        <div class="avatar huge">${escapeHtml(viewer.handle[0]?.toUpperCase() || "?")}</div>
+        <div>
+          <h1>${escapeHtml(viewer.handle)}</h1>
+          <p class="muted">${escapeHtml(viewer.email)}</p>
+          <div class="tag-row"><span>rating ${escapeHtml(viewer.rating)}</span></div>
         </div>
       </article>
+      <section class="grid two">
+        <article class="felt settlement">
+          <div class="eyebrow">Fake-money wallet</div>
+          <h1>${money(viewer.balanceCents)}</h1>
+          <p>${money(viewer.escrowCents)} is currently held in escrow for accepted challenges.</p>
+        </article>
+        <article class="card ledger-card">
+          <h2>Ledger</h2>
+          <div class="ledger-list">
+            ${state.walletLedger.map((entry) => `
+              <div class="ledger-row">
+                <strong>${escapeHtml(entry.type.replaceAll("_", " "))}</strong>
+                <span>${money(entry.availableDeltaCents)}</span>
+                <small>${entry.escrowDeltaCents ? `${money(entry.escrowDeltaCents)} escrow` : escapeHtml(entry.note || "")}</small>
+              </div>
+            `).join("")}
+          </div>
+        </article>
+      </section>
     </section>
   `;
 }
@@ -1002,7 +1361,7 @@ function renderAuth() {
             ${isSignup ? `<small class="muted">8+ characters</small>` : ""}
           </label>
           <button class="primary" type="submit">${isSignup ? "Create account" : "Log in"}</button>
-          ${state.authError ? `<em class="action-error">${state.authError}</em>` : ""}
+          ${state.authError ? `<em class="action-error">${escapeHtml(state.authError)}</em>` : ""}
         </form>
         <p class="muted small">New accounts start with $1,000 in fake-money escrow funds.</p>
       </article>
@@ -1035,15 +1394,18 @@ function render() {
   }
   if (!state.bootstrap) return;
   const routes = {
-    lobby: renderLobby,
+    play: renderPlay,
     wager: renderWager,
     game: renderGame,
     settlement: renderSettlement,
-    wallet: renderWallet
+    history: state.routeParam ? renderSettlement : renderHistoryList,
+    profile: renderProfile
   };
-  const view = routes[state.route] || renderLobby;
+  const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
   manageClockTick();
+  const moveList = document.querySelector("[data-move-list]");
+  if (moveList) moveList.scrollTop = moveList.scrollHeight;
 
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.addEventListener("click", () => navigate(b.dataset.nav));
@@ -1056,6 +1418,9 @@ function render() {
   });
   document.querySelectorAll("[data-resign]").forEach((b) => {
     b.addEventListener("click", () => resignGame());
+  });
+  document.querySelectorAll("[data-rematch]").forEach((b) => {
+    b.addEventListener("click", () => requestRematch());
   });
   document.querySelectorAll("[data-draw-action]").forEach((b) => {
     b.addEventListener("click", () => submitDrawAction(b.dataset.drawAction));
@@ -1117,36 +1482,55 @@ function render() {
   });
   document.querySelectorAll("[data-square]").forEach((square) => {
     square.addEventListener("click", () => {
-      const clicked = square.dataset.square;
-      if (!state.selectedSquare) {
-        state.selectedSquare = clicked;
-        state.gameError = null;
-        render();
+      handleSquareIntent(square.dataset.square);
+    });
+    square.addEventListener("dragstart", (event) => {
+      const from = square.dataset.square;
+      if (!canMoveFrom(state.activeGame, from)) {
+        event.preventDefault();
         return;
       }
-      if (state.selectedSquare === clicked) {
-        state.selectedSquare = null;
-        state.pendingPromotion = null;
-        render();
-        return;
+      state.dragFromSquare = from;
+      state.selectedSquare = from;
+      state.gameError = null;
+      square.classList.add("dragging");
+      const piece = square.querySelector(".piece");
+      if (event.dataTransfer) {
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", from);
+        if (piece && event.dataTransfer.setDragImage) {
+          const rect = piece.getBoundingClientRect();
+          event.dataTransfer.setDragImage(piece, rect.width / 2, rect.height / 2);
+        }
       }
-      const promotionMove = promotionMoveFor(state.selectedSquare, clicked);
-      if (promotionMove) {
-        const movingPiece = state.activeGame.board.find((cell) => cell.square === state.selectedSquare);
-        state.pendingPromotion = {
-          from: state.selectedSquare,
-          to: clicked,
-          color: movingPiece?.color === "b" ? "black" : "white"
-        };
-        render();
-        return;
-      }
-      submitMove(state.selectedSquare, clicked).catch((error) => {
-        state.gameError = error.message;
-        state.selectedSquare = null;
-        state.pendingPromotion = null;
-        render();
+    });
+    square.addEventListener("dragend", () => {
+      state.dragFromSquare = null;
+      square.classList.remove("dragging", "drop-ready");
+      document.querySelectorAll(".drop-ready").forEach((node) => {
+        node.classList.remove("drop-ready");
       });
+    });
+    square.addEventListener("dragover", (event) => {
+      const from = state.dragFromSquare;
+      if (from && legalMoveFor(from, square.dataset.square)) {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "move";
+        square.classList.add("drop-ready");
+      }
+    });
+    square.addEventListener("dragleave", () => {
+      square.classList.remove("drop-ready");
+    });
+    square.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const from = event.dataTransfer.getData("text/plain") || state.dragFromSquare;
+      const to = square.dataset.square;
+      state.dragFromSquare = null;
+      document.querySelectorAll(".drop-ready, .dragging").forEach((node) => {
+        node.classList.remove("drop-ready", "dragging");
+      });
+      queueOrSubmitMove(from, to);
     });
   });
 }
