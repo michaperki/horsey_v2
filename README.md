@@ -33,8 +33,10 @@ The current baseline uses a built-in Node HTTP server, SQLite via `better-sqlite
 Useful checks:
 
 ```bash
+npm run check
 npm test
 npm run lint
+npm run format
 npm run verify
 ```
 

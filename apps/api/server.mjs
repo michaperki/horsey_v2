@@ -276,6 +276,14 @@ function requireRecipient(viewer, challenge) {
   }
 }
 
+function requireChallenger(viewer, challenge) {
+  if (viewer.id !== challenge.challengerId) {
+    const e = new RangeError("only the challenger can withdraw this challenge");
+    e.code = "not_your_challenge";
+    throw e;
+  }
+}
+
 function requireChallengeViewer(viewer, challenge) {
   const isParticipant = viewer.id === challenge.challengerId || viewer.id === challenge.recipientId;
   const isOpenTable = challenge.state === "incoming" && challenge.recipientId === null;
@@ -976,6 +984,24 @@ async function routeApi(req, res) {
       const challenge = refreshChallengeState(getChallengeOr404(m[1]));
       requireRecipient(viewer, challenge);
       db.saveChallenge(transitionChallenge(challenge, "declined", { declinedAt: new Date().toISOString() }));
+      const updated = getChallengeOr404(m[1]);
+      publishChallengeUpdated(updated);
+      return json(res, 200, {
+        challenge: challengePayload(updated, viewer.id),
+        viewer: viewerPayload(viewer.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "DELETE" && (m = pathname.match(/^\/api\/challenges\/([^/]+)$/))) {
+    try {
+      const challenge = refreshChallengeState(getChallengeOr404(m[1]));
+      requireChallenger(viewer, challenge);
+      if (challenge.state !== "incoming" && challenge.state !== "countered") {
+        const e = new RangeError(`cannot withdraw challenge in state ${challenge.state}`);
+        e.code = "invalid_challenge_transition"; throw e;
+      }
+      db.saveChallenge(transitionChallenge(challenge, "declined", { withdrawnAt: new Date().toISOString() }));
       const updated = getChallengeOr404(m[1]);
       publishChallengeUpdated(updated);
       return json(res, 200, {

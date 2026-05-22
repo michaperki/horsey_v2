@@ -14,9 +14,9 @@ This repository is the beginning of the real Horsey project. The current JSX and
 
 ## Current Environment Notes
 
-- The working directory is currently under WSL at `/mnt/c/Users/PerkD/documents/dev/horsey_v2`.
+- The working directory is `/home/michaperki/dev/horsey_v2` under WSL.
 - The user can operate from WSL or Windows PowerShell. Prefer commands and docs that make this dual environment easy to understand.
-- This directory is currently not a git repository. If git is initialized later, preserve this guide and the docs directory as project memory.
+- This is a git repository (main branch). This guide and the `docs/` directory are project memory — keep them in sync as decisions change.
 
 ## Documentation Map
 

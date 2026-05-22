@@ -340,6 +340,18 @@ p {
   gap: 12px;
 }
 
+.live-game-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.live-game-banner h2 {
+  margin: 6px 0 0;
+}
+
 .live-dot {
   width: 10px;
   height: 10px;
@@ -896,8 +908,14 @@ p {
 }
 
 .moves li {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: auto 1fr 1fr;
   font-variant-numeric: tabular-nums;
+}
+
+.move-number {
+  color: var(--muted);
+  font-weight: 800;
+  min-width: 2ch;
 }
 
 .moves li.current {
@@ -1195,6 +1213,11 @@ p {
       "result credit"
       "vs vs"
       "when when";
+  }
+
+  .live-game-banner {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .history-result { grid-area: result; }

@@ -37,6 +37,7 @@ const state = {
     reconnectTimer: null,
     subscribedGameId: null
   },
+  challengeCountdownTimer: null,
   clockTickFrame: null,
   clockAnchor: null
 };
@@ -62,6 +63,10 @@ function captureClockAnchor(clock) {
 function setActiveGame(game) {
   state.activeGame = game;
   captureClockAnchor(game?.clock ?? null);
+}
+
+function liveGameForShell() {
+  return state.liveGame?.state === "live" ? state.liveGame : null;
 }
 
 function localRemainingForSide(side) {
@@ -152,7 +157,7 @@ async function loadReplay(gameId) {
 async function loadBootstrap() {
   const data = await getJson("/api/bootstrap");
   state.bootstrap = data;
-  state.liveGame = data.activeGame || null;
+  state.liveGame = data.activeGame?.state === "live" ? data.activeGame : null;
   const viewingHistoryDetail = state.route === "history" && state.routeParam;
   if (!viewingHistoryDetail) {
     setActiveGame(data.activeGame || data.recentGame || null);
@@ -218,6 +223,7 @@ async function submitLogin({ email, password }) {
 async function logout() {
   try { await postJson("/api/auth/logout"); } catch { /* ignore */ }
   stopPolling();
+  stopChallengeCountdown();
   closeRealtime();
   state.bootstrap = null;
   state.activeChallenge = null;
@@ -241,6 +247,7 @@ function setAuthMode(mode) {
 function authGuard(error) {
   if (error instanceof AuthRequiredError) {
     stopPolling();
+    stopChallengeCountdown();
     closeRealtime();
     state.bootstrap = null;
     state.activeChallenge = null;
@@ -296,6 +303,47 @@ function stopPolling() {
   if (state.matchmakingPoll) {
     clearInterval(state.matchmakingPoll);
     state.matchmakingPoll = null;
+  }
+}
+
+function stopChallengeCountdown() {
+  if (state.challengeCountdownTimer) {
+    clearInterval(state.challengeCountdownTimer);
+    state.challengeCountdownTimer = null;
+  }
+}
+
+function challengeSecondsRemaining(challenge) {
+  if (!challenge || !["incoming", "countered"].includes(challenge.state)) return null;
+  const seconds = challenge.expiresInSeconds ?? 0;
+  const base = Date.parse(challenge.updatedAt || challenge.createdAt);
+  if (!seconds || !Number.isFinite(base)) return null;
+  return Math.max(0, Math.ceil((base + seconds * 1000 - Date.now()) / 1000));
+}
+
+function challengeExpiryLabel(challenge) {
+  const remaining = challengeSecondsRemaining(challenge);
+  if (remaining == null) return "";
+  return remaining > 0 ? ` · auto-decline ${remaining}s` : " · expired";
+}
+
+function manageChallengeCountdown() {
+  const remaining = challengeSecondsRemaining(state.activeChallenge);
+  const shouldTick = state.route === "wager"
+    && state.activeChallenge
+    && remaining !== null
+    && remaining > 0;
+  if (shouldTick && !state.challengeCountdownTimer) {
+    state.challengeCountdownTimer = setInterval(() => {
+      if (state.route !== "wager" || !state.activeChallenge) {
+        manageChallengeCountdown();
+        return;
+      }
+      render();
+    }, 1000);
+  } else if (!shouldTick && state.challengeCountdownTimer) {
+    clearInterval(state.challengeCountdownTimer);
+    state.challengeCountdownTimer = null;
   }
 }
 
@@ -414,6 +462,9 @@ async function handleRealtimeMessage(msg) {
     case "game.updated": {
       if (state.activeGame && msg.game && msg.game.id === state.activeGame.id) {
         setActiveGame(msg.game);
+        if (state.liveGame?.id === msg.game.id && msg.game.state !== "live") {
+          state.liveGame = null;
+        }
         if (state.route === "game") render();
       }
       return;
@@ -437,11 +488,16 @@ async function handleRealtimeMessage(msg) {
           getJson("/api/wallet")
         ]);
         setActiveGame(gameResp.game);
+        if (state.liveGame?.id === id) state.liveGame = null;
         state.activeSettlement = settlementResp.settlement;
         state.bootstrap.viewer = wallet.viewer;
         state.walletLedger = wallet.ledger;
         await loadReplay(id);
-        navigate("settlement");
+        if (state.route === "game") {
+          navigate("settlement");
+        } else {
+          render();
+        }
       } catch (error) {
         console.warn("failed to load settlement after finalize", error);
       }
@@ -566,6 +622,24 @@ async function actOnChallenge(action) {
       state.activeChallenge = null;
       navigate("play");
     }
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  }
+}
+
+async function withdrawChallenge() {
+  state.actionError = null;
+  try {
+    const challengeId = state.activeChallenge.id;
+    const payload = await postJson(`/api/challenges/${challengeId}`, {}, "DELETE");
+    state.activeChallenge = payload.challenge;
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    await loadBootstrap();
+    state.activeChallenge = null;
+    navigate("play");
     render();
   } catch (error) {
     if (authGuard(error)) return;
@@ -713,9 +787,16 @@ window.addEventListener("hashchange", () => {
   enterRoute(parseHash());
 });
 
+window.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !state.pendingPromotion) return;
+  event.preventDefault();
+  state.pendingPromotion = null;
+  render();
+});
+
 function shell(content) {
   const viewer = state.bootstrap.viewer;
-  const liveGame = state.liveGame;
+  const liveGame = liveGameForShell();
   return `
     <header class="topbar">
       <a class="brand" href="#play"><span class="mark">♞</span>Horsey</a>
@@ -745,12 +826,31 @@ function navLink(id, label) {
   return `<a class="${active}" href="#${id}">${label}</a>`;
 }
 
+function liveGameBanner(game) {
+  const viewer = game.players?.find((p) => p.id === viewerId());
+  const opponent = game.players?.find((p) => p.id !== viewerId());
+  const turnOwner = game.players?.find((p) => p.color === game.turn);
+  const yourTurn = turnOwner && viewer && turnOwner.id === viewer.id;
+  const stake = game.pot?.stakeCents ?? 0;
+  return `
+    <section class="live-game-banner felt">
+      <div>
+        <div class="eyebrow">Live game · ${escapeHtml(yourTurn ? "your move" : opponent ? `${opponent.handle}'s move` : game.status)}</div>
+        <h2>vs ${escapeHtml(opponent?.handle || "opponent")} · ${money(stake)}</h2>
+      </div>
+      <a class="primary" href="#game">Resume game</a>
+    </section>
+  `;
+}
+
 function renderPlay() {
   const { lobby, incomingChallenges, sentChallenges, matchmakingTicket } = state.bootstrap;
   const me = viewerId();
   const openChallenges = lobby.openChallenges.filter((c) => c.challengerId !== me);
+  const liveGame = liveGameForShell();
 
   return `
+    ${liveGame ? liveGameBanner(liveGame) : ""}
     <section class="grid two">
       <article class="hero felt">
         <div class="eyebrow">Quick match</div>
@@ -834,8 +934,14 @@ function renderWager() {
   const viewerIsRecipient = viewerId() === challenge.recipientId;
   const viewerIsChallenger = viewerId() === challenge.challengerId;
   const isOpen = !challenge.recipientId;
+  const expiresRemaining = challengeSecondsRemaining(challenge);
+  const isExpired = expiresRemaining === 0;
   const canAct = (viewerIsRecipient || (isOpen && !viewerIsChallenger))
-    && (challenge.state === "incoming" || challenge.state === "countered");
+    && (challenge.state === "incoming" || challenge.state === "countered")
+    && !isExpired;
+  const canWithdraw = viewerIsChallenger
+    && (challenge.state === "incoming" || challenge.state === "countered")
+    && !isExpired;
 
   let actionLabel = "Accept and lock";
   if (challenge.state === "accepted") actionLabel = "Escrow locked";
@@ -852,7 +958,7 @@ function renderWager() {
     <section class="grid wager">
       <article class="stack">
         <div>
-          <div class="eyebrow danger">${challenge.state} challenge · auto-decline ${challenge.expiresInSeconds}s</div>
+          <div class="eyebrow danger">${challenge.state} challenge${challengeExpiryLabel(challenge)}</div>
           <h1>${headline}</h1>
         </div>
         <article class="card opponent">
@@ -870,6 +976,7 @@ function renderWager() {
         <button class="primary" ${canAct ? 'data-action="accept"' : "disabled"}>${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}</button>
         <button ${canAct ? 'data-action="counter"' : "disabled"}>Counter same stake</button>
         <button ${canAct ? 'data-action="decline"' : "disabled"}>Decline</button>
+        ${canWithdraw ? `<button class="danger" data-withdraw-challenge>Withdraw invite</button>` : ""}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
@@ -905,10 +1012,11 @@ function renderGame() {
         <ol class="moves" data-move-list>
           ${(game.moveRows || []).map((move, index, rows) => `
             <li class="${index === rows.length - 1 ? "current" : ""}">
+              <span class="move-number">${index + 1}.</span>
               <span>${escapeHtml(move[0])}</span>
               <span>${escapeHtml(move[1] || "")}</span>
             </li>
-          `).join("") || "<li><span>No moves yet</span><span></span></li>"}
+          `).join("") || `<li><span class="move-number">1.</span><span>No moves yet</span><span></span></li>`}
         </ol>
       </aside>
       <article class="board-column">
@@ -1540,17 +1648,28 @@ function historyRow(entry) {
   const sign = entry.result === "win" ? "+" : entry.result === "loss" ? "−" : "";
   const credited = entry.result === "loss" ? entry.stakeCents : entry.creditedCents;
   const when = entry.endedAt ? new Date(entry.endedAt).toLocaleString() : "—";
+  const endReason = endReasonLabel(entry.endReason);
   return `
     <a class="history-row" href="#history/${entry.gameId}">
       <div class="history-result ${resultClass}">${resultLabel}</div>
       <div class="history-vs">
         <strong>vs ${escapeHtml(opponentHandle)}</strong>
-        <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(entry.endReason || "—")}</small>
+        <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(endReason)}</small>
       </div>
       <div class="history-credit ${resultClass}">${sign}${money(credited)}</div>
       <small class="history-when">${when}</small>
     </a>
   `;
+}
+
+function endReasonLabel(reason) {
+  const labels = {
+    agreement: "Draw by agreement",
+    checkmate: "Checkmate",
+    resignation: "Resignation",
+    timeout: "Timeout"
+  };
+  return labels[reason] || reason || "—";
 }
 
 function renderProfile() {
@@ -1656,6 +1775,7 @@ function render() {
   };
   const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
+  manageChallengeCountdown();
   manageClockTick();
   const moveList = document.querySelector("[data-move-list]");
   if (moveList) moveList.scrollTop = moveList.scrollHeight;
@@ -1668,6 +1788,9 @@ function render() {
   });
   document.querySelectorAll("[data-action]").forEach((b) => {
     b.addEventListener("click", () => actOnChallenge(b.dataset.action));
+  });
+  document.querySelectorAll("[data-withdraw-challenge]").forEach((b) => {
+    b.addEventListener("click", () => withdrawChallenge());
   });
   document.querySelectorAll("[data-resign]").forEach((b) => {
     b.addEventListener("click", () => resignGame());
