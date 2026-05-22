@@ -33,4 +33,4 @@ Three pieces had to be chosen: how passwords are stored, how sessions are tracke
 - The two-tab dev workflow (`?as=sam` / `?as=vish`) is dead. To play both sides on one machine, use two browser profiles or one regular + one incognito window — the cookie is the identity.
 - Targeted challenges by id still work server-side, but the lobby's "Send to opponent" picker is gone because we no longer ship the user directory in `/api/bootstrap`. Future work can re-introduce targeted invites via a handle lookup once a rivals/friends surface exists.
 - CSRF risk is mitigated by `SameSite=Lax` + the API being same-origin with the SPA. If the API is ever served from a different origin or accepts cross-site state-changing requests, this needs a CSRF token.
-- Rate limiting on signup/login is still absent. Acceptable while everything is fake-money but should be added before any external test.
+- Basic in-memory rate limiting now covers signup/login, challenge creation, and quick matchmaking. It is enough for the local fake-money scaffold, but production still needs a shared store so limits work across processes and deploys.

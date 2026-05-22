@@ -7,7 +7,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 ## Dashboard / Play
 
 - [x] **Live game doesn't surface on `/play`.** The header Resume pill was the only entry back to a game in progress. Added a "Live game" banner on the Play page that links to the board, and guarded both banner + shell pill so finalized games cannot linger as resumable. (`app.js:renderPlay`)
-- [ ] **Your own open invite doesn't show in "Open tables".** Filtered out in `renderPlay` (`c.challengerId !== me`). It only appears under "Your sent". Decide on one canonical home, or show in both with a "yours" tag.
+- [x] **Your own open invite doesn't show in "Open tables".** Open tables now includes your own open invite with a "yours" marker while still listing it under sent for withdrawal.
 - [x] **No way to cancel a sent open invite.** Added a challenger-only `DELETE /api/challenges/:id` route and a Wager-screen "Withdraw invite" action for pending sent invites.
 - [x] **Sent/incoming rows show no time-remaining hint.** Play rows now include a live seconds-left / expired hint beside the challenge state.
 
@@ -20,7 +20,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 - [x] **`window.confirm` for resign** (`resignGame`) breaks the design language. Replaced with an in-app confirmation dialog.
 - [x] **Promotion dialog has no Escape-to-cancel.** Global Escape handling now cancels an open promotion choice.
 - [x] **Move history isn't numbered.** Move rows now include an explicit move number column.
-- [ ] **`gameError` persists in the turn strip with no dismissal.** Only clears when the next action fires.
+- [x] **`gameError` persists in the turn strip with no dismissal.** Added an inline dismiss action in the turn strip.
 - [x] **Buttons don't disable during in-flight requests.** Accept / Resign / Offer draw / Join quick match now disable while their POST is in flight.
 
 ## Realtime / connection
@@ -35,13 +35,13 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 ## Profile
 
-- [ ] **Ledger entries show no timestamp or running balance.** Each row is `type · delta · note` only.
-- [ ] **No account settings.** Password change, email change, log out from other sessions — named in IMPLEMENTATION_PLAN mock #2 but no entry surface yet.
+- [x] **Ledger entries show no timestamp or running balance.** Profile ledger rows now show timestamps plus running available/escrow balances.
+- [x] **No account settings.** Profile now exposes email change, password change, and log-out-other-sessions actions.
 
 ## Auth / hardening
 
-- [ ] **Signup vs login error messages allow account enumeration.** "email already registered" vs "invalid email or password". Tighten messaging at the signup surface (or accept it as a known dev-mode trade-off and document).
-- [ ] **No rate limiting** on signup / login / challenges / matchmaking. Already named in mocks #2 / #4 — keeping it visible.
+- [x] **Signup vs login error messages allow account enumeration.** Signup email/handle conflicts now use generic copy.
+- [x] **No rate limiting** on signup / login / challenges / matchmaking. Added conservative in-memory per-client limits for auth, challenge creation, and quick matchmaking.
 
 ## Docs
 
@@ -74,3 +74,8 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 - In-flight disabling for accept, resign, draw, and quick-match actions.
 - Global realtime connection pill in the shell.
 - History Wins / Losses / Draws counts.
+- Own open invite marker in Open tables.
+- Dismissible game errors.
+- Ledger timestamps and running balances.
+- Profile account settings.
+- Generic signup conflict messaging and basic rate limiting.

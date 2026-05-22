@@ -29,6 +29,8 @@ const state = {
   resignConfirmOpen: false,
   gameError: null,
   actionError: null,
+  accountError: null,
+  accountNotice: null,
   inFlight: new Set(),
   matchmakingPoll: null,
   route: initialRoute.name,
@@ -102,6 +104,13 @@ const money = (cents) => new Intl.NumberFormat("en-US", {
 function formatRatingDelta(delta) {
   if (delta === 0) return "±0";
   return delta > 0 ? `+${delta}` : `${delta}`;
+}
+
+function formatDateTime(iso) {
+  if (!iso) return "—";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
 }
 
 function escapeHtml(value) {
@@ -749,6 +758,67 @@ async function leaveQuickMatch() {
   }
 }
 
+async function updateAccountEmail({ email, password }) {
+  if (actionInFlight("account-email")) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("account-email", "", true);
+  render();
+  try {
+    const payload = await postJson("/api/auth/account/email", { email, password }, "PATCH");
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    state.accountNotice = "Email updated.";
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("account-email", "", false);
+    if (state.view === "app") render();
+  }
+}
+
+async function updateAccountPassword({ currentPassword, nextPassword }) {
+  if (actionInFlight("account-password")) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("account-password", "", true);
+  render();
+  try {
+    await postJson("/api/auth/account/password", { currentPassword, nextPassword }, "PATCH");
+    state.accountNotice = "Password updated.";
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("account-password", "", false);
+    if (state.view === "app") render();
+  }
+}
+
+async function logoutOtherSessions() {
+  if (actionInFlight("logout-others")) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("logout-others", "", true);
+  render();
+  try {
+    await postJson("/api/auth/logout-others");
+    state.accountNotice = "Other sessions signed out.";
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("logout-others", "", false);
+    if (state.view === "app") render();
+  }
+}
+
 function selectChallenge(challenge) {
   state.activeChallenge = challenge;
   state.actionError = null;
@@ -904,8 +974,7 @@ function liveGameBanner(game) {
 
 function renderPlay() {
   const { lobby, incomingChallenges, sentChallenges, matchmakingTicket } = state.bootstrap;
-  const me = viewerId();
-  const openChallenges = lobby.openChallenges.filter((c) => c.challengerId !== me);
+  const openChallenges = lobby.openChallenges;
   const liveGame = liveGameForShell();
   const quickMatchBusy = actionInFlight("quick-match");
 
@@ -977,7 +1046,9 @@ function renderPlay() {
 function challengeRow(challenge) {
   const opponent = challenge.opponent;
   const isMine = challenge.challengerId === viewerId();
-  const label = isMine ? `→ ${challenge.recipient ? challenge.recipient.handle : "anyone"}` : `from ${opponent.handle}`;
+  const label = isMine
+    ? (challenge.recipient ? `your invite → ${challenge.recipient.handle}` : "your open invite")
+    : `from ${opponent.handle}`;
   const remaining = challengeSecondsRemaining(challenge);
   const timeHint = remaining === null
     ? ""
@@ -988,7 +1059,7 @@ function challengeRow(challenge) {
     <button class="table-row" data-select-challenge="${challenge.id}">
       <strong>${escapeHtml(label)}</strong>
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
-      <em>${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
+      <em>${isMine && !challenge.recipientId ? "yours · " : ""}${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
       <span>→</span>
     </button>
   `;
@@ -1105,7 +1176,7 @@ function renderGame() {
         <div class="turn-strip">
           <strong>${escapeHtml(statusText)}</strong>
           <span>${escapeHtml(game.status)}${game.inCheck ? " · check" : ""}</span>
-          ${state.gameError ? `<em>${escapeHtml(state.gameError)}</em>` : ""}
+          ${state.gameError ? `<em>${escapeHtml(state.gameError)} <button type="button" class="inline-dismiss" data-dismiss-game-error aria-label="Dismiss game error">Dismiss</button></em>` : ""}
         </div>
       </article>
       <aside class="stack">
@@ -1794,6 +1865,10 @@ function endReasonLabel(reason) {
 
 function renderProfile() {
   const viewer = state.bootstrap.viewer;
+  const ledgerRows = ledgerRowsWithBalances(state.walletLedger);
+  const emailBusy = actionInFlight("account-email");
+  const passwordBusy = actionInFlight("account-password");
+  const logoutBusy = actionInFlight("logout-others");
   return `
     <section class="profile">
       <article class="card profile-header">
@@ -1810,14 +1885,42 @@ function renderProfile() {
           <h1>${money(viewer.balanceCents)}</h1>
           <p>${money(viewer.escrowCents)} is currently held in escrow for accepted challenges.</p>
         </article>
+        <article class="card account-card">
+          <h2>Account settings</h2>
+          <form class="stack compact-form" data-account-email>
+            <label>Email
+              <input name="email" type="email" value="${escapeHtml(viewer.email)}" autocomplete="email" required />
+            </label>
+            <label>Current password
+              <input name="password" type="password" autocomplete="current-password" required />
+            </label>
+            <button type="submit" ${emailBusy ? "disabled" : ""}>${emailBusy ? "Updating..." : "Update email"}</button>
+          </form>
+          <form class="stack compact-form" data-account-password>
+            <label>Current password
+              <input name="currentPassword" type="password" autocomplete="current-password" required />
+            </label>
+            <label>New password
+              <input name="nextPassword" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <button type="submit" ${passwordBusy ? "disabled" : ""}>${passwordBusy ? "Updating..." : "Change password"}</button>
+          </form>
+          <button type="button" data-logout-others ${logoutBusy ? "disabled" : ""}>${logoutBusy ? "Signing out..." : "Log out other sessions"}</button>
+          ${state.accountNotice ? `<em class="account-notice">${escapeHtml(state.accountNotice)}</em>` : ""}
+          ${state.accountError ? `<em class="account-error">${escapeHtml(state.accountError)}</em>` : ""}
+        </article>
+      </section>
+      <section class="grid one">
         <article class="card ledger-card">
           <h2>Ledger</h2>
           <div class="ledger-list">
-            ${state.walletLedger.map((entry) => `
+            ${ledgerRows.map(({ entry, balanceCents, escrowCents }) => `
               <div class="ledger-row">
                 <strong>${escapeHtml(entry.type.replaceAll("_", " "))}</strong>
                 <span>${money(entry.availableDeltaCents)}</span>
-                <small>${entry.escrowDeltaCents ? `${money(entry.escrowDeltaCents)} escrow` : escapeHtml(entry.note || "")}</small>
+                <small>${escapeHtml(formatDateTime(entry.createdAt))}</small>
+                <small>${entry.escrowDeltaCents ? `${money(entry.escrowDeltaCents)} escrow · ` : ""}${escapeHtml(entry.note || "")}</small>
+                <small>Balance ${money(balanceCents)} · escrow ${money(escrowCents)}</small>
               </div>
             `).join("")}
           </div>
@@ -1825,6 +1928,16 @@ function renderProfile() {
       </section>
     </section>
   `;
+}
+
+function ledgerRowsWithBalances(entries) {
+  let balanceCents = 0;
+  let escrowCents = 0;
+  return entries.map((entry) => {
+    balanceCents += entry.availableDeltaCents;
+    escrowCents += entry.escrowDeltaCents;
+    return { entry, balanceCents, escrowCents };
+  }).reverse();
 }
 
 function renderAuth() {
@@ -1905,6 +2018,12 @@ function render() {
   });
   document.querySelectorAll("[data-logout]").forEach((b) => {
     b.addEventListener("click", () => logout());
+  });
+  document.querySelectorAll("[data-dismiss-game-error]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.gameError = null;
+      render();
+    });
   });
   document.querySelectorAll("[data-action]").forEach((b) => {
     b.addEventListener("click", () => actOnChallenge(b.dataset.action));
@@ -1989,6 +2108,28 @@ function render() {
   }
   document.querySelectorAll("[data-leave-queue]").forEach((b) => {
     b.addEventListener("click", () => leaveQuickMatch());
+  });
+  const emailForm = document.querySelector("[data-account-email]");
+  if (emailForm) {
+    emailForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(emailForm);
+      updateAccountEmail({ email: fd.get("email"), password: fd.get("password") });
+    });
+  }
+  const passwordForm = document.querySelector("[data-account-password]");
+  if (passwordForm) {
+    passwordForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(passwordForm);
+      updateAccountPassword({
+        currentPassword: fd.get("currentPassword"),
+        nextPassword: fd.get("nextPassword")
+      });
+    });
+  }
+  document.querySelectorAll("[data-logout-others]").forEach((b) => {
+    b.addEventListener("click", () => logoutOtherSessions());
   });
   document.querySelectorAll("[data-square]").forEach((square) => {
     square.addEventListener("click", () => {

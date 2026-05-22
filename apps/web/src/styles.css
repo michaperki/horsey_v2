@@ -730,9 +730,21 @@ p {
 }
 
 .turn-strip em {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--red);
   font-style: normal;
   font-weight: 800;
+}
+
+.inline-dismiss {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-decoration: underline;
+  font-size: 12px;
 }
 
 .action-error {
@@ -770,6 +782,36 @@ p {
 
 .ledger-row small {
   grid-column: 1 / -1;
+}
+
+.account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.compact-form {
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.account-notice,
+.account-error {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.account-notice {
+  background: rgba(38, 122, 75, 0.12);
+  color: var(--green);
+}
+
+.account-error {
+  background: rgba(181, 58, 45, 0.12);
+  color: var(--red);
 }
 
 .player-strip {

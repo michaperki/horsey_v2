@@ -236,6 +236,8 @@ function makeApi(db) {
       INSERT INTO users (id, email, handle, password_hash, password_salt, rating, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
+    updateUserEmail: db.prepare("UPDATE users SET email = ? WHERE id = ?"),
+    updateUserPassword: db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?"),
     updateUserRating: db.prepare("UPDATE users SET rating = ? WHERE id = ?"),
 
     getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
@@ -244,6 +246,7 @@ function makeApi(db) {
       VALUES (?, ?, ?, ?)
     `),
     deleteSession: db.prepare("DELETE FROM sessions WHERE id = ?"),
+    deleteOtherSessions: db.prepare("DELETE FROM sessions WHERE user_id = ? AND id != ?"),
     deleteExpiredSessions: db.prepare("DELETE FROM sessions WHERE expires_at <= ?"),
 
     getChallenge: db.prepare("SELECT * FROM challenges WHERE id = ?"),
@@ -345,6 +348,7 @@ function makeApi(db) {
     },
 
     getUser(id) { return rowToPublicUser(stmts.getUser.get(id)); },
+    getPrivateUser(id) { return stmts.getUser.get(id) || null; },
     getUserByEmail(email) { return stmts.getUserByEmail.get(email) || null; },
     getUserByHandle(handle) { return stmts.getUserByHandle.get(handle) || null; },
     listUsers() { return stmts.listUsers.all().map(rowToPublicUser); },
@@ -362,6 +366,12 @@ function makeApi(db) {
     updateUserRating(userId, rating) {
       stmts.updateUserRating.run(rating, userId);
     },
+    updateUserEmail(userId, email) {
+      stmts.updateUserEmail.run(email, userId);
+    },
+    updateUserPassword(userId, { passwordHash, passwordSalt }) {
+      stmts.updateUserPassword.run(passwordHash, passwordSalt, userId);
+    },
 
     getSession(id) {
       const row = stmts.getSession.get(id);
@@ -372,6 +382,7 @@ function makeApi(db) {
       stmts.insertSession.run(session.id, session.userId, session.createdAt, session.expiresAt);
     },
     deleteSession(id) { stmts.deleteSession.run(id); },
+    deleteOtherSessions(userId, keepSessionId) { stmts.deleteOtherSessions.run(userId, keepSessionId); },
     deleteExpiredSessions(nowIso = new Date().toISOString()) {
       stmts.deleteExpiredSessions.run(nowIso);
     },

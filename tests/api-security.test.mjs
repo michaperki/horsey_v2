@@ -78,6 +78,45 @@ test("expired open challenges cannot be accepted", async (t) => {
   assert.equal(bootstrap.body.lobby.openChallenges.some((c) => c.id === created.body.challenge.id), false);
 });
 
+test("signup conflicts use generic messaging", async (t) => {
+  const fixture = await startFixture(t);
+  const first = await fixture.post(null, "/api/auth/signup", {
+    email: "same@example.com",
+    handle: "same_one",
+    password: "password123"
+  });
+  assert.equal(first.status, 201);
+
+  const duplicate = await fixture.post(null, "/api/auth/signup", {
+    email: "same@example.com",
+    handle: "same_two",
+    password: "password123"
+  });
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.error, "email_taken");
+  assert.equal(duplicate.body.message, "We couldn't create that account. Try another email or handle.");
+});
+
+test("auth endpoints rate-limit repeated attempts", async (t) => {
+  const fixture = await startFixture(t);
+  for (let i = 0; i < 12; i++) {
+    const response = await fixture.post(null, "/api/auth/signup", {
+      email: `rate-${i}@example.com`,
+      handle: `rate_${i}`,
+      password: "password123"
+    });
+    assert.equal(response.status, 201);
+  }
+
+  const limited = await fixture.post(null, "/api/auth/signup", {
+    email: "rate-limit@example.com",
+    handle: "rate_limit",
+    password: "password123"
+  });
+  assert.equal(limited.status, 429);
+  assert.equal(limited.body.error, "rate_limited");
+});
+
 test("scholar's mate via /moves updates ratings and surfaces ratingDelta", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

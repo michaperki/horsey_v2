@@ -14,6 +14,7 @@ import {
   newSessionExpiry,
   SESSION_TTL_MS,
   validateLoginInput,
+  validateEmailInput,
   validateSignupInput,
   verifyPassword
 } from "./auth.mjs";
@@ -53,6 +54,13 @@ const db = openDatabase(dbPath);
 const broker = createBroker();
 const presence = createPresenceRegistry();
 const enableDevFinalize = process.env.HORSEY_ENABLE_DEV_FINALIZE === "1";
+const rateLimits = new Map();
+
+const RATE_LIMITS = {
+  auth: { limit: 12, windowMs: 60_000 },
+  challenge: { limit: 30, windowMs: 60_000 },
+  matchmaking: { limit: 40, windowMs: 60_000 }
+};
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -72,6 +80,31 @@ function json(res, status, payload) {
 }
 
 function notFound(res) { json(res, 404, { error: "not_found" }); }
+
+function clientKey(req) {
+  const forwarded = req.headers["x-forwarded-for"];
+  const firstForwarded = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return String(firstForwarded || req.socket?.remoteAddress || "local").split(",")[0].trim();
+}
+
+function checkRateLimit(req, bucket) {
+  const config = RATE_LIMITS[bucket];
+  if (!config) return;
+  const key = `${bucket}:${clientKey(req)}`;
+  const now = Date.now();
+  const current = rateLimits.get(key);
+  if (!current || current.resetAt <= now) {
+    rateLimits.set(key, { count: 1, resetAt: now + config.windowMs });
+    return;
+  }
+  current.count += 1;
+  if (current.count > config.limit) {
+    const e = new RangeError("Too many attempts. Try again shortly.");
+    e.code = "rate_limited";
+    e.retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
+    throw e;
+  }
+}
 
 async function readJson(req) {
   const chunks = [];
@@ -340,6 +373,7 @@ function handleDomainError(error, res) {
     invalid_handle: 400,
     invalid_password: 400,
     invalid_credentials: 401,
+    rate_limited: 429,
     cannot_match_self: 400,
     negative_wallet: 500,
     draw_already_offered: 409,
@@ -349,10 +383,20 @@ function handleDomainError(error, res) {
     not_your_offer_to_decline: 409,
     dev_finalize_disabled: 403
   };
-  return json(res, statuses[error.code] || 400, {
+  const headers = {};
+  if (error.code === "rate_limited" && error.retryAfterSeconds) {
+    headers["retry-after"] = String(error.retryAfterSeconds);
+  }
+  const body = JSON.stringify({
     error: error.code || "invalid_request",
     message: error.message
   });
+  res.writeHead(statuses[error.code] || 400, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    ...headers
+  });
+  res.end(body);
 }
 
 function settlementPayload(game, viewerId) {
@@ -748,11 +792,11 @@ function quickMatch(viewer, { stakeCents, timeControl }) {
 async function signupAccount({ email, handle, password }) {
   const clean = validateSignupInput({ email, handle, password });
   if (db.getUserByEmail(clean.email)) {
-    const e = new RangeError("email already registered");
+    const e = new RangeError("We couldn't create that account. Try another email or handle.");
     e.code = "email_taken"; throw e;
   }
   if (db.getUserByHandle(clean.handle)) {
-    const e = new RangeError("handle already taken");
+    const e = new RangeError("We couldn't create that account. Try another email or handle.");
     e.code = "handle_taken"; throw e;
   }
   const { passwordHash, passwordSalt } = await hashPassword(clean.password);
@@ -782,6 +826,56 @@ async function signupAccount({ email, handle, password }) {
     session = startSession(userId, now);
   })();
   return { user: db.getUser(userId), session };
+}
+
+function currentSessionId(req) {
+  return parseCookies(req)[SESSION_COOKIE] || null;
+}
+
+function requirePassword(value, message = "password is required") {
+  if (typeof value !== "string" || !value) {
+    const e = new RangeError(message);
+    e.code = "invalid_password";
+    throw e;
+  }
+  return value;
+}
+
+async function updateAccountEmail(viewer, { email, password }) {
+  const nextEmail = validateEmailInput(email);
+  const privateUser = db.getPrivateUser(viewer.id);
+  const ok = await verifyPassword(requirePassword(password, "current password is required"), privateUser.password_hash, privateUser.password_salt);
+  if (!ok) {
+    const e = new RangeError("invalid email or password");
+    e.code = "invalid_credentials"; throw e;
+  }
+  const existing = db.getUserByEmail(nextEmail);
+  if (existing && existing.id !== viewer.id) {
+    const e = new RangeError("We couldn't update that email. Try another address.");
+    e.code = "email_taken"; throw e;
+  }
+  db.updateUserEmail(viewer.id, nextEmail);
+  return db.getUser(viewer.id);
+}
+
+async function updateAccountPassword(viewer, { currentPassword, nextPassword }) {
+  const privateUser = db.getPrivateUser(viewer.id);
+  const ok = await verifyPassword(
+    requirePassword(currentPassword, "current password is required"),
+    privateUser.password_hash,
+    privateUser.password_salt
+  );
+  if (!ok) {
+    const e = new RangeError("invalid email or password");
+    e.code = "invalid_credentials"; throw e;
+  }
+  if (typeof nextPassword !== "string" || nextPassword.length < 8) {
+    const e = new RangeError("password must be at least 8 characters");
+    e.code = "invalid_password"; throw e;
+  }
+  const next = await hashPassword(nextPassword);
+  db.updateUserPassword(viewer.id, next);
+  return db.getUser(viewer.id);
 }
 
 async function loginAccount({ email, password }) {
@@ -886,6 +980,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && pathname === "/api/auth/signup") {
     try {
+      checkRateLimit(req, "auth");
       const body = await readJson(req);
       const { user, session } = await signupAccount(body);
       setSessionCookie(res, session.id);
@@ -895,6 +990,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && pathname === "/api/auth/login") {
     try {
+      checkRateLimit(req, "auth");
       const body = await readJson(req);
       const { user, session } = await loginAccount(body);
       setSessionCookie(res, session.id);
@@ -920,6 +1016,28 @@ async function routeApi(req, res) {
     return json(res, 200, { viewer: viewerPayload(viewer.id) });
   }
 
+  if (req.method === "PATCH" && pathname === "/api/auth/account/email") {
+    try {
+      const body = await readJson(req);
+      const user = await updateAccountEmail(viewer, body);
+      return json(res, 200, { viewer: viewerPayload(user.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "PATCH" && pathname === "/api/auth/account/password") {
+    try {
+      const body = await readJson(req);
+      const user = await updateAccountPassword(viewer, body);
+      return json(res, 200, { viewer: viewerPayload(user.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/logout-others") {
+    const token = currentSessionId(req);
+    db.deleteOtherSessions(viewer.id, token);
+    return json(res, 200, { ok: true });
+  }
+
   if (req.method === "GET" && pathname === "/api/bootstrap") {
     return json(res, 200, bootstrapPayload(viewer));
   }
@@ -939,6 +1057,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && pathname === "/api/challenges") {
     try {
+      checkRateLimit(req, "challenge");
       const body = await readJson(req);
       const challenge = createChallenge({
         challengerId: viewer.id,
@@ -1223,6 +1342,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && pathname === "/api/matchmaking/quick") {
     try {
+      checkRateLimit(req, "matchmaking");
       const body = await readJson(req);
       const result = quickMatch(viewer, body);
       if (result.matched && result.game) {

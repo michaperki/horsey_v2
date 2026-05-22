@@ -54,6 +54,15 @@ export function validateSignupInput({ email, handle, password }) {
   return { email: email.toLowerCase().trim(), handle: handle.trim(), password };
 }
 
+export function validateEmailInput(email) {
+  if (typeof email !== "string" || !EMAIL_RE.test(email)) {
+    const err = new RangeError("email must look like name@example.com");
+    err.code = "invalid_email";
+    throw err;
+  }
+  return email.toLowerCase().trim();
+}
+
 export function validateLoginInput({ email, password }) {
   if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
     const err = new RangeError("email and password are required");

@@ -56,7 +56,7 @@ Phase: **3** scaffold done; **4** prod store + migrations + multi-game indexing 
 ### 2. Header-based identity → real auth
 
 Today: email + password signup/login via `POST /api/auth/signup|login|logout`, with `crypto.scrypt`-hashed passwords and DB-backed sessions cookie'd as `horsey_session` (HttpOnly, SameSite=Lax, 30-day TTL). `resolveViewer` reads the cookie. The WebSocket `/ws` upgrade reads the same cookie instead of the prior `?as=<userId>` query string. Downstream guards (`requireRecipient`, `requireTurnOwner`, `requirePlayer`) are unchanged. Viewer-switch UI and `?as=` query string are gone. New accounts are granted $1,000 fake-money on signup. See ADR 0005. Status: **done** for the dev scaffold.
-Real version remaining: rate limiting on signup/login, password reset, email verification, `Secure` cookie flag once the server runs over TLS, CSRF token if the API ever serves a cross-origin caller. Targeted challenges still work server-side but the lobby picker is gone (re-introduce via handle lookup when rivals/friends land).
+Real version remaining: password reset, email verification, `Secure` cookie flag once the server runs over TLS, CSRF token if the API ever serves a cross-origin caller. Basic in-memory rate limiting now covers signup/login, challenge creation, and quick matchmaking; production will still need a shared store and abuse analytics. Profile now exposes email change, password change, and log-out-other-sessions actions. Targeted challenges still work server-side but the lobby picker is gone (re-introduce via handle lookup when rivals/friends land).
 Phase: **3** scaffold done; hardening pending under Phase 6.
 
 ### 3. Manual refresh → realtime push
