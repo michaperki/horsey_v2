@@ -89,6 +89,16 @@ function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
 }
 
+function recordGameEvent(gameId, type, payload = {}) {
+  db.appendGameEvent({
+    id: newId("evt"),
+    gameId,
+    type,
+    payload,
+    occurredAt: new Date().toISOString()
+  });
+}
+
 function enrichGame(game) {
   if (!game) return null;
   const moves = game.moves || [];
@@ -383,6 +393,30 @@ function settlementPayload(game, viewerId) {
   };
 }
 
+function replayPayload(game) {
+  let fen = STARTING_FEN;
+  const moves = game.moves.map((stored, index) => {
+    const ply = index + 1;
+    const color = ply % 2 === 1 ? "white" : "black";
+    const applied = applyMove(fen, { from: stored.from, to: stored.to, promotion: stored.promotion ?? null });
+    fen = applied.fen;
+    return {
+      ply,
+      color,
+      san: stored.san,
+      from: stored.from,
+      to: stored.to,
+      promotion: stored.promotion ?? null,
+      fenAfter: fen
+    };
+  });
+  return {
+    gameId: game.id,
+    startingFen: STARTING_FEN,
+    moves
+  };
+}
+
 function historyEntry(game, viewerId) {
   const settlement = settlementPayload(game, viewerId);
   const viewerPlayer = game.players.find((p) => p.id === viewerId);
@@ -546,12 +580,20 @@ function finalizeGame(game, { result, reason }) {
       });
       db.updateUserRating(white.id, ratingChange.whiteAfter);
       db.updateUserRating(black.id, ratingChange.blackAfter);
+      const endReason = reason || defaultReason;
+      const endedAt = new Date().toISOString();
       db.saveGame({
         ...game,
         state: "finalized",
         winnerId,
-        endReason: reason || defaultReason,
-        endedAt: new Date().toISOString(),
+        endReason,
+        endedAt,
+        ratingChange
+      });
+      recordGameEvent(game.id, "finalized", {
+        result,
+        reason: endReason,
+        winnerId,
         ratingChange
       });
     }
@@ -566,6 +608,7 @@ function resignGame(viewer, game) {
   }
   const resigning = game.players.find((p) => p.id === viewer.id);
   const result = resigning.color === "white" ? "black_win" : "white_win";
+  recordGameEvent(game.id, "resigned", { byUserId: viewer.id, color: resigning.color });
   finalizeGame(game, { result, reason: "resignation" });
 }
 
@@ -947,6 +990,14 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
+  if (req.method === "GET" && (m = pathname.match(/^\/api\/games\/([^/]+)\/replay$/))) {
+    try {
+      const game = getGameOr404(m[1]);
+      requirePlayer(viewer, game);
+      return json(res, 200, { replay: replayPayload(game) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   if (req.method === "POST" && (m = pathname.match(/^\/api\/games\/([^/]+)\/resign$/))) {
     try {
       const game = getGameOr404(m[1]);
@@ -975,6 +1026,7 @@ async function routeApi(req, res) {
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       const nextOffer = offerDraw(game.drawOffer, viewerColor, new Date());
       db.saveGame({ ...game, drawOffer: nextOffer });
+      recordGameEvent(game.id, "draw_offered", { byUserId: viewer.id, color: viewerColor });
       const refreshed = getGameOr404(m[1]);
       publishGameUpdated(refreshed);
       return json(res, 200, { game: enrichGame(refreshed) });
@@ -990,6 +1042,7 @@ async function routeApi(req, res) {
       if (timeoutPayload) return json(res, 200, timeoutPayload);
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       acceptDraw(game.drawOffer, viewerColor); // throws if invalid; result.settle is implicit
+      recordGameEvent(game.id, "draw_accepted", { byUserId: viewer.id, color: viewerColor });
       finalizeGame(game, { result: "draw", reason: "agreement" });
       const refreshed = getGameOr404(m[1]);
       publishGameFinalized(refreshed);
@@ -1011,6 +1064,7 @@ async function routeApi(req, res) {
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       const nextOffer = declineDraw(game.drawOffer, viewerColor);
       db.saveGame({ ...game, drawOffer: nextOffer });
+      recordGameEvent(game.id, "draw_declined", { byUserId: viewer.id, color: viewerColor });
       const refreshed = getGameOr404(m[1]);
       publishGameUpdated(refreshed);
       return json(res, 200, { game: enrichGame(refreshed) });
@@ -1063,6 +1117,17 @@ async function routeApi(req, res) {
       const nextDrawOffer = clearOwnOffer(game.drawOffer, movingColor);
       db.transaction(() => {
         db.saveGame({ ...game, fen: result.fen, moves, clock: nextClock, drawOffer: nextDrawOffer });
+        recordGameEvent(game.id, "move", {
+          ply: moves.length,
+          byUserId: viewer.id,
+          color: movingColor,
+          san: result.move.san,
+          from: result.move.from,
+          to: result.move.to,
+          promotion: result.move.promotion ?? null,
+          fenAfter: result.fen,
+          clockMs: nextClock ? (movingColor === "white" ? nextClock.whiteMs : nextClock.blackMs) : null
+        });
       })();
 
       let autoSettled = false;

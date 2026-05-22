@@ -1202,3 +1202,91 @@ p {
   .history-vs     { grid-area: vs; }
   .history-when   { grid-area: when; }
 }
+
+.replay {
+  margin-top: 20px;
+}
+
+.replay-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.replay-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 20px;
+  align-items: start;
+}
+
+.board.replay-board > div {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+}
+
+.replay-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.replay-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.replay-controls button {
+  flex: 1;
+  padding: 8px 4px;
+  font-size: 16px;
+}
+
+.replay-controls button[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.replay-moves {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.replay-moves .replay-move {
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.replay-moves .replay-move:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.replay-moves .replay-move.active {
+  background: rgba(241, 201, 107, 0.18);
+  border-color: rgba(241, 201, 107, 0.4);
+}
+
+@media (max-width: 640px) {
+  .replay-body {
+    grid-template-columns: 1fr;
+  }
+}

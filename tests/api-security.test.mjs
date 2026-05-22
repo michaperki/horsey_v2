@@ -156,6 +156,88 @@ test("settlement reports a rating change after a decisive game", async (t) => {
   assert.equal(winnerBootstrap.body.viewer.rating, 1516);
 });
 
+test("replay endpoint walks the move sequence with FEN per ply", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = whiteClient === alice ? bob : alice;
+
+  const moves = [["e2", "e4"], ["e7", "e5"], ["d1", "h5"], ["b8", "c6"]];
+  for (let i = 0; i < moves.length; i++) {
+    const [from, to] = moves[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    const resp = await fixture.post(client, `/api/games/${game.id}/moves`, { from, to });
+    assert.equal(resp.status, 200);
+  }
+
+  const replay = await fixture.get(whiteClient, `/api/games/${game.id}/replay`);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.replay.moves.length, 4);
+  assert.equal(replay.body.replay.moves[0].san, "e4");
+  assert.equal(replay.body.replay.moves[0].color, "white");
+  assert.equal(replay.body.replay.moves[3].san, "Nc6");
+  assert.equal(replay.body.replay.moves[3].color, "black");
+  assert.ok(replay.body.replay.moves[0].fenAfter.startsWith("rnbqkbnr/pppppppp/8/8/4P3"));
+
+  const outsider = await fixture.get(carol, `/api/games/${game.id}/replay`);
+  assert.equal(outsider.status, 403);
+});
+
+test("game_events records moves and the finalized event", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = whiteClient === alice ? bob : alice;
+
+  const scholarsMate = [
+    ["e2", "e4"], ["e7", "e5"],
+    ["d1", "h5"], ["b8", "c6"],
+    ["f1", "c4"], ["g8", "f6"],
+    ["h5", "f7"]
+  ];
+  for (let i = 0; i < scholarsMate.length; i++) {
+    const [from, to] = scholarsMate[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    const resp = await fixture.post(client, `/api/games/${game.id}/moves`, { from, to });
+    assert.equal(resp.status, 200);
+  }
+
+  const db = new Database(fixture.dbPath);
+  const rows = db.prepare("SELECT type, payload_json FROM game_events WHERE game_id = ? ORDER BY rowid").all(game.id);
+  db.close();
+
+  const moveEvents = rows.filter((r) => r.type === "move");
+  const finalizedEvents = rows.filter((r) => r.type === "finalized");
+  assert.equal(moveEvents.length, 7);
+  assert.equal(finalizedEvents.length, 1);
+
+  const finalizedPayload = JSON.parse(finalizedEvents[0].payload_json);
+  assert.equal(finalizedPayload.result, "white_win");
+  assert.equal(finalizedPayload.reason, "checkmate");
+  assert.equal(finalizedPayload.ratingChange.whiteDelta, 16);
+});
+
 test("flagged players lose before taking live actions", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

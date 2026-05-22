@@ -206,7 +206,7 @@ Deliverables:
 - Game history and profile stats. Status: **partial** — viewer-scoped finalized games list shipped at `GET /api/games/history` with a History route + detail view (reusing the settlement renderer); per-game stats aggregation and profile stats still pending.
 - Rivalry/head-to-head tracking. Status: **pending**.
 - Rematch, double-or-nothing, auto-requeue flows. Status: **partial** — rematch now issues a real challenge against the prior opponent at the same stake + time control; double-or-nothing and auto-requeue still pending.
-- Review/replay view for finished games. Status: **pending**.
+- Review/replay view for finished games. Status: **done** for the dev scaffold — `GET /api/games/:id/replay` returns ordered moves with FEN-after-each-ply; the history detail page renders a read-only replay board with first/prev/next/last controls and a clickable move list. Future polish: keyboard arrow navigation, evaluation overlays.
 
 Key decisions:
 - Rating system.
@@ -224,7 +224,7 @@ Deliverables:
 - Trust profile model and UI hooks. Status: **partial** (UI only, seed data).
 - Report player/game flow. Status: **pending**.
 - Admin/support views for users, games, ledger, escrow, settlements, reports, fair-play review. Status: **pending** — mock #8.
-- Event log for game, wallet, trust, admin actions. Status: **partial** — wallet ledger is append-only; no cross-domain event log yet.
+- Event log for game, wallet, trust, admin actions. Status: **partial** — wallet ledger is append-only; a `game_events` table now records `move`, `resigned`, `draw_offered`/`accepted`/`declined`, and `finalized` (with `ratingChange` payload). Nothing reads from it yet, but it's the seed of a cross-domain audit log. Wallet/trust/admin events still pending.
 - Basic anti-cheat signal ingestion points. Status: **pending**.
 - Manual settlement correction workflow with audit trail. Status: **pending** — the ledger schema supports compensating entries; tooling does not exist.
 

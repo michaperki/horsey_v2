@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -87,6 +87,15 @@ const SCHEMA = `
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_matchmaking_match ON matchmaking_tickets(stake_cents, time_control);
+
+  CREATE TABLE IF NOT EXISTS game_events (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_game_events_game ON game_events(game_id, occurred_at);
 `;
 
 function rowToPublicUser(row) {
@@ -177,20 +186,24 @@ function migrateSchema(db) {
   const currentVersion = db.pragma("user_version", { simple: true });
   if (currentVersion >= SCHEMA_VERSION) return;
 
-  // v0 → v1: introduced email/password auth + sessions. The pre-auth users
-  // had no credentials, so the only safe migration is to drop every
-  // user-keyed table and let the empty schema rebuild. The seed data was a
-  // mock and is replaced by per-signup wallet grants.
-  db.exec(`
-    DROP TABLE IF EXISTS sessions;
-    DROP TABLE IF EXISTS matchmaking_tickets;
-    DROP TABLE IF EXISTS game_players;
-    DROP TABLE IF EXISTS games;
-    DROP TABLE IF EXISTS challenges;
-    DROP TABLE IF EXISTS ledger_entries;
-    DROP TABLE IF EXISTS users;
-    DROP TABLE IF EXISTS lobby;
-  `);
+  if (currentVersion < 1) {
+    // v0 → v1: introduced email/password auth + sessions. The pre-auth users
+    // had no credentials, so the only safe migration is to drop every
+    // user-keyed table and let the empty schema rebuild. The seed data was a
+    // mock and is replaced by per-signup wallet grants.
+    db.exec(`
+      DROP TABLE IF EXISTS sessions;
+      DROP TABLE IF EXISTS matchmaking_tickets;
+      DROP TABLE IF EXISTS game_players;
+      DROP TABLE IF EXISTS games;
+      DROP TABLE IF EXISTS challenges;
+      DROP TABLE IF EXISTS ledger_entries;
+      DROP TABLE IF EXISTS users;
+      DROP TABLE IF EXISTS lobby;
+    `);
+  }
+
+  // v1 → v2: game_events table is created by the SCHEMA exec on the next line.
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -294,6 +307,14 @@ function makeApi(db) {
     `),
 
     getLobby: db.prepare("SELECT data_json FROM lobby WHERE id = 1"),
+
+    insertGameEvent: db.prepare(`
+      INSERT INTO game_events (id, game_id, type, payload_json, occurred_at)
+      VALUES (?, ?, ?, ?, ?)
+    `),
+    listGameEvents: db.prepare(`
+      SELECT * FROM game_events WHERE game_id = ? ORDER BY occurred_at ASC, rowid ASC
+    `),
 
     insertTicket: db.prepare(`
       INSERT INTO matchmaking_tickets (user_id, stake_cents, time_control, created_at)
@@ -427,6 +448,25 @@ function makeApi(db) {
     listLiveGames() { return stmts.listLiveGames.all().map(rowToGame); },
 
     getLobby() { return JSON.parse(stmts.getLobby.get().data_json); },
+
+    appendGameEvent(event) {
+      stmts.insertGameEvent.run(
+        event.id,
+        event.gameId,
+        event.type,
+        JSON.stringify(event.payload ?? {}),
+        event.occurredAt
+      );
+    },
+    listGameEvents(gameId) {
+      return stmts.listGameEvents.all(gameId).map((row) => ({
+        id: row.id,
+        gameId: row.game_id,
+        type: row.type,
+        payload: JSON.parse(row.payload_json),
+        occurredAt: row.occurred_at
+      }));
+    },
 
     upsertTicket(ticket) {
       stmts.insertTicket.run(ticket.userId, ticket.stakeCents, ticket.timeControl, ticket.createdAt);

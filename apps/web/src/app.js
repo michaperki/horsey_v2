@@ -20,6 +20,7 @@ const state = {
   activeSettlement: null,
   liveGame: null,
   historyList: null,
+  replay: null,
   walletLedger: [],
   selectedSquare: null,
   dragFromSquare: null,
@@ -600,12 +601,19 @@ async function enterRoute(parsed) {
     state.actionError = null;
     try {
       const gameId = state.routeParam;
-      const [gameResp, settlementResp] = await Promise.all([
+      const [gameResp, settlementResp, replayResp] = await Promise.all([
         getJson(`/api/games/${gameId}`),
-        getJson(`/api/games/${gameId}/settlement`)
+        getJson(`/api/games/${gameId}/settlement`),
+        getJson(`/api/games/${gameId}/replay`)
       ]);
       state.activeGame = gameResp.game;
       state.activeSettlement = settlementResp.settlement;
+      state.replay = {
+        gameId,
+        startingFen: replayResp.replay.startingFen,
+        moves: replayResp.replay.moves,
+        currentPly: replayResp.replay.moves.length
+      };
     } catch (error) {
       if (authGuard(error)) return;
       state.actionError = error.message;
@@ -1111,6 +1119,112 @@ function boardOrientation(game) {
   return viewer?.color === "black" ? "black" : "white";
 }
 
+function parseBoardFromFen(fen) {
+  const placement = fen.split(" ")[0];
+  const ranks = placement.split("/");
+  const squares = [];
+  for (let row = 0; row < 8; row++) {
+    const rank = ranks[row];
+    let col = 0;
+    for (const ch of rank) {
+      if (/[1-8]/.test(ch)) {
+        const skip = Number(ch);
+        for (let i = 0; i < skip; i++) {
+          const file = String.fromCharCode("a".charCodeAt(0) + col);
+          const rankNumber = 8 - row;
+          squares.push({ square: `${file}${rankNumber}`, row, col, color: null, type: null });
+          col += 1;
+        }
+      } else {
+        const color = ch === ch.toUpperCase() ? "w" : "b";
+        const type = ch.toLowerCase();
+        const file = String.fromCharCode("a".charCodeAt(0) + col);
+        const rankNumber = 8 - row;
+        squares.push({ square: `${file}${rankNumber}`, row, col, color, type });
+        col += 1;
+      }
+    }
+  }
+  return squares;
+}
+
+function replayBoard(fen, orientation, lastMove) {
+  const squares = parseBoardFromFen(fen);
+  const lastSquares = new Set(lastMove ? [lastMove.from, lastMove.to] : []);
+  const displaySquares = orientation === "black" ? [...squares].reverse() : squares;
+  const cells = displaySquares.map((square) => {
+    const classes = [
+      (square.row + square.col) % 2 ? "dark" : "light",
+      lastSquares.has(square.square) ? "last-move" : ""
+    ].filter(Boolean).join(" ");
+    const pieceColor = colorNameFromBoardPiece(square);
+    const piece = pieceColor && square.type ? pieceImg(pieceColor, square.type) : "";
+    const showRank = orientation === "white" ? square.col === 0 : square.col === 7;
+    const showFile = orientation === "white" ? square.row === 7 : square.row === 0;
+    const coords = [
+      showRank ? `<span class="coord rank">${square.square[1]}</span>` : "",
+      showFile ? `<span class="coord file">${square.square[0]}</span>` : ""
+    ].join("");
+    return `<div class="${classes}" data-square="${square.square}" aria-hidden="true">${piece}${coords}</div>`;
+  });
+  return `<div class="board replay-board ${orientation === "black" ? "flipped" : ""}" aria-label="Replay board">${cells.join("")}</div>`;
+}
+
+function setReplayPly(ply) {
+  if (!state.replay) return;
+  const total = state.replay.moves.length;
+  const clamped = Math.max(0, Math.min(total, ply));
+  if (clamped === state.replay.currentPly) return;
+  state.replay = { ...state.replay, currentPly: clamped };
+  render();
+}
+
+function jumpReplay(target) {
+  if (!state.replay) return;
+  const total = state.replay.moves.length;
+  const current = state.replay.currentPly;
+  const next = target === "first" ? 0
+    : target === "last" ? total
+    : target === "prev" ? current - 1
+    : target === "next" ? current + 1
+    : current;
+  setReplayPly(next);
+}
+
+function replayPanel() {
+  const replay = state.replay;
+  if (!replay) return "";
+  const ply = replay.currentPly;
+  const total = replay.moves.length;
+  const fen = ply === 0 ? replay.startingFen : replay.moves[ply - 1].fenAfter;
+  const lastMove = ply > 0 ? replay.moves[ply - 1] : null;
+  const orientation = boardOrientation(state.activeGame || { players: [] });
+  const moveListItems = replay.moves.map((move) => {
+    const isActive = move.ply === ply;
+    return `<li><button class="replay-move${isActive ? " active" : ""}" type="button" data-replay-ply="${move.ply}">${move.ply}. ${escapeHtml(move.san)}</button></li>`;
+  }).join("");
+  return `
+    <section class="card replay">
+      <header class="replay-header">
+        <h2>Replay</h2>
+        <small class="muted">Ply ${ply} / ${total}</small>
+      </header>
+      <div class="replay-body">
+        ${replayBoard(fen, orientation, lastMove)}
+        <aside class="replay-side">
+          <div class="replay-controls" role="group" aria-label="Replay controls">
+            <button type="button" data-replay-jump="first" aria-label="First position" ${ply === 0 ? "disabled" : ""}>⏮</button>
+            <button type="button" data-replay-jump="prev" aria-label="Previous move" ${ply === 0 ? "disabled" : ""}>◀</button>
+            <button type="button" data-replay-jump="next" aria-label="Next move" ${ply >= total ? "disabled" : ""}>▶</button>
+            <button type="button" data-replay-jump="last" aria-label="Last position" ${ply >= total ? "disabled" : ""}>⏭</button>
+          </div>
+          <ol class="replay-moves">${moveListItems}</ol>
+        </aside>
+      </div>
+    </section>
+  `;
+}
+
 function promotionMoveFor(from, to) {
   return state.activeGame?.legalMoves.find((move) => move.from === from && move.to === to && move.promotion) || null;
 }
@@ -1307,6 +1421,7 @@ function renderSettlement() {
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
+    ${replayPanel()}
   `;
 }
 
@@ -1480,6 +1595,12 @@ function render() {
   });
   document.querySelectorAll("[data-rematch]").forEach((b) => {
     b.addEventListener("click", () => requestRematch());
+  });
+  document.querySelectorAll("[data-replay-jump]").forEach((b) => {
+    b.addEventListener("click", () => jumpReplay(b.dataset.replayJump));
+  });
+  document.querySelectorAll("[data-replay-ply]").forEach((b) => {
+    b.addEventListener("click", () => setReplayPly(Number(b.dataset.replayPly)));
   });
   document.querySelectorAll("[data-draw-action]").forEach((b) => {
     b.addEventListener("click", () => submitDrawAction(b.dataset.drawAction));
