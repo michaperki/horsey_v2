@@ -1,0 +1,21 @@
+{
+  "name": "horsey",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Horsey wagered chess product baseline.",
+  "scripts": {
+    "dev": "node apps/api/server.mjs",
+    "start": "node apps/api/server.mjs",
+    "test": "node --test",
+    "check": "node scripts/check-project.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "chess.js": "^1.4.0",
+    "ws": "^8.20.1"
+  }
+}
