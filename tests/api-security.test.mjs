@@ -78,6 +78,51 @@ test("expired open challenges cannot be accepted", async (t) => {
   assert.equal(bootstrap.body.lobby.openChallenges.some((c) => c.id === created.body.challenge.id), false);
 });
 
+test("scholar's mate via /moves updates ratings and surfaces ratingDelta", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const black = game.players.find((p) => p.color === "black");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = black.id === alice.user.id ? alice : bob;
+
+  const moves = [
+    ["e2", "e4"], ["e7", "e5"],
+    ["d1", "h5"], ["b8", "c6"],
+    ["f1", "c4"], ["g8", "f6"],
+    ["h5", "f7"]
+  ];
+
+  let lastResponse;
+  for (let i = 0; i < moves.length; i++) {
+    const [from, to] = moves[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    lastResponse = await fixture.post(client, `/api/games/${game.id}/moves`, { from, to });
+    assert.equal(lastResponse.status, 200, `move ${i} (${from}->${to}) status`);
+  }
+
+  assert.equal(lastResponse.body.game.state, "finalized");
+  assert.equal(lastResponse.body.game.endReason, "checkmate");
+  assert.equal(lastResponse.body.settlement.ratingDelta, 16);
+
+  const blackSettlement = await fixture.get(blackClient, `/api/games/${game.id}/settlement`);
+  assert.equal(blackSettlement.body.settlement.ratingDelta, -16);
+
+  const whiteBootstrap = await fixture.get(whiteClient, "/api/bootstrap");
+  const blackBootstrap = await fixture.get(blackClient, "/api/bootstrap");
+  assert.equal(whiteBootstrap.body.viewer.rating, 1516);
+  assert.equal(blackBootstrap.body.viewer.rating, 1484);
+});
+
 test("settlement reports a rating change after a decisive game", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
