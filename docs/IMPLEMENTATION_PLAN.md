@@ -147,10 +147,10 @@ Deliverables:
 - Legal move validation, turn enforcement, check/checkmate/stalemate/draw detection. Status: **done** via `chess.js` wrapper.
 - Client board: orientation, click-to-move, drag/drop, keyboard navigation, accessible square labels, legal-move hints, last-move/check highlight, captures, edge coordinates, responsive sizing, and mobile-safe tap behavior. Status: **done** for the current milestone baseline.
 - Move history / notation display. Status: **partial** — basic SAN rows.
-- Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **partial** — legal/illegal/auto-finalize and threefold repetition covered (the chess wrapper now replays move history through chess.js so `isThreefoldRepetition` is reachable); castling, en passant, promotion, stalemate not yet explicit.
+- Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **done** — wrapper-level unit tests cover legal, illegal, castling, en passant, promotion, stalemate, and checkmate; API integration tests cover Scholar's Mate, threefold repetition, stalemate auto-finalize, and promotion through `/api/games/:id/moves`.
 
 Remaining Phase 2 work:
-- Explicit tests for stalemate, castling, en passant, and promotion; threefold repetition is now covered (and the chess wrapper bug that hid threefold from auto-finalize is fixed by replaying history through chess.js).
+- Phase 2 test gaps closed: castling, en passant, promotion, stalemate, and checkmate are covered at the chess wrapper level; threefold repetition, stalemate auto-finalize, and promotion are also covered as API integration tests. The chess wrapper bug that hid threefold from auto-finalize is fixed by replaying history through chess.js.
 - Treat further board work as named product features, not open-ended polish. Examples: premoves, move animation, richer mobile drag gestures, replay scrubber, or replacing the custom board after a documented permissive-license review.
 
 Exit criteria:
@@ -297,7 +297,7 @@ Out of scope for this milestone:
 - Advanced engine evaluation unless a low-risk permissive dependency is chosen.
 
 What stands between now and the milestone being complete:
-1. Phase 2 remaining — explicit tests for stalemate, castling, en passant, and promotion. Threefold repetition is now covered and the chess wrapper correctly auto-finalizes on it.
+1. Phase 2 is complete for the dev scaffold. Remaining named follow-ups are scoped product features (premoves, animation, replay polish, etc.), not generic gaps.
 
 Safety note: the manual `POST /api/games/:id/finalize` endpoint is now explicitly dev-gated by `HORSEY_ENABLE_DEV_FINALIZE=1` and still requires the caller to be a player. Normal game completion should flow through moves, resignation, draw agreement, or timeout settlement.
 

@@ -238,6 +238,95 @@ test("game_events records moves and the finalized event", async (t) => {
   assert.equal(finalizedPayload.ratingChange.whiteDelta, 16);
 });
 
+test("stalemate auto-finalizes as a draw and splits the pot", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = whiteClient === alice ? bob : alice;
+
+  // Sam Loyd's 10-move forced stalemate.
+  const moves = [
+    ["e2", "e3"], ["a7", "a5"],
+    ["d1", "h5"], ["a8", "a6"],
+    ["h5", "a5"], ["h7", "h5"],
+    ["a5", "c7"], ["a6", "h6"],
+    ["h2", "h4"], ["f7", "f6"],
+    ["c7", "d7"], ["e8", "f7"],
+    ["d7", "b7"], ["d8", "d3"],
+    ["b7", "b8"], ["d3", "h7"],
+    ["b8", "c8"], ["f7", "g6"],
+    ["c8", "e6"]
+  ];
+
+  let lastResponse;
+  for (let i = 0; i < moves.length; i++) {
+    const [from, to] = moves[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    lastResponse = await fixture.post(client, `/api/games/${game.id}/moves`, { from, to });
+    assert.equal(lastResponse.status, 200, `move ${i} status (${from}->${to})`);
+  }
+
+  assert.equal(lastResponse.body.game.state, "finalized");
+  assert.equal(lastResponse.body.game.endReason, "stalemate");
+  assert.equal(lastResponse.body.settlement.result, "draw");
+  assert.equal(lastResponse.body.settlement.ratingDelta, 0);
+});
+
+test("promotion is preserved through the API for both colors", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = whiteClient === alice ? bob : alice;
+
+  const moves = [
+    ["h2", "h4", null], ["a7", "a5", null],
+    ["h4", "h5", null], ["a5", "a4", null],
+    ["h5", "h6", null], ["a4", "a3", null],
+    ["h6", "g7", null], ["a3", "b2", null],
+    ["g7", "h8", "q"], ["b2", "a1", "q"]
+  ];
+
+  let lastResponse;
+  for (let i = 0; i < moves.length; i++) {
+    const [from, to, promotion] = moves[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    const body = promotion ? { from, to, promotion } : { from, to };
+    lastResponse = await fixture.post(client, `/api/games/${game.id}/moves`, body);
+    assert.equal(lastResponse.status, 200, `move ${i} status (${from}->${to})`);
+  }
+
+  const lastTwo = lastResponse.body.game.moves.slice(-2);
+  assert.equal(lastTwo[0].promotion, "q");
+  assert.equal(lastTwo[0].san, "gxh8=Q");
+  assert.equal(lastTwo[1].promotion, "q");
+  assert.equal(lastTwo[1].san, "bxa1=Q");
+  assert.ok(lastResponse.body.game.fen.startsWith("rnbqkbnQ/1ppppp1p/8/8/8/8/P1PPPPP1/qNBQKBNR"));
+
+  const replay = await fixture.get(whiteClient, `/api/games/${game.id}/replay`);
+  const promotionPly = replay.body.replay.moves.find((m) => m.san === "gxh8=Q");
+  assert.equal(promotionPly.promotion, "q");
+});
+
 test("threefold repetition auto-finalizes as a draw", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
