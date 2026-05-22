@@ -363,6 +363,30 @@ test("threefold repetition auto-finalizes as a draw", async (t) => {
   assert.equal(lastResponse.body.settlement.result, "draw");
 });
 
+test("sub-minute bullet time control is accepted end-to-end", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "30s+0"
+  });
+  assert.equal(created.status, 201);
+
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.game.clock.whiteMs, 30_000);
+  assert.equal(accepted.body.game.clock.incrementMs, 0);
+
+  const rejected = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "5s+0"
+  });
+  assert.equal(rejected.status, 400);
+  assert.equal(rejected.body.error, "invalid_challenge_input");
+});
+
 test("flagged players lose before taking live actions", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

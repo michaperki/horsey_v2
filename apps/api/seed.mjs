@@ -12,7 +12,7 @@ export function initialSeed() {
         amountCents: cents(amount),
         label: amount >= 1000 ? "$1K" : formatMoney(cents(amount)).replace(".00", "")
       })),
-      timeControls: ["1+0", "2+1", "3+0", "3+2", "5+0", "10+0", "15+10"],
+      timeControls: ["30s+0", "45s+0", "1+0", "2+1", "3+0", "3+2", "5+0", "10+0", "15+10"],
       rivals: []
     }
   };

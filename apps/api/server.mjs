@@ -30,7 +30,8 @@ import {
   applyMoveToClock,
   flaggedSide,
   initClockState,
-  msUntilFlag
+  msUntilFlag,
+  parseTimeControl
 } from "../../packages/shared/clocks.mjs";
 import { computeRatingChange } from "../../packages/shared/rating.mjs";
 import { createPresenceRegistry } from "../../packages/shared/presence.mjs";
@@ -468,6 +469,10 @@ function createChallenge({ challengerId, recipientId, stakeCents, timeControl })
     const e = new RangeError("timeControl is required");
     e.code = "invalid_challenge_input"; throw e;
   }
+  try { parseTimeControl(timeControl); } catch (err) {
+    const e = new RangeError(err.message);
+    e.code = "invalid_challenge_input"; throw e;
+  }
   if (recipientId === challengerId) {
     const e = new RangeError("cannot challenge yourself");
     e.code = "invalid_challenge_input"; throw e;
@@ -702,6 +707,10 @@ function quickMatch(viewer, { stakeCents, timeControl }) {
   }
   if (typeof timeControl !== "string" || !timeControl) {
     const e = new RangeError("timeControl is required");
+    e.code = "invalid_challenge_input"; throw e;
+  }
+  try { parseTimeControl(timeControl); } catch (err) {
+    const e = new RangeError(err.message);
     e.code = "invalid_challenge_input"; throw e;
   }
 

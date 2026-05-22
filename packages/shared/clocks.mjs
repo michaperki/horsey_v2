@@ -16,19 +16,27 @@
 // (now - lastMoveAt). The opponent's clock is paused, so their number is
 // already live.
 
-const TIME_CONTROL_RE = /^(\d+)\+(\d+)$/;
+const TIME_CONTROL_RE = /^(\d+)(s?)\+(\d+)$/;
+const MIN_BASE_MS = 10_000;
 
 export function parseTimeControl(timeControl) {
   const m = TIME_CONTROL_RE.exec(String(timeControl ?? "").trim());
   if (!m) {
-    const error = new RangeError(`time control must look like "min+inc"; got: ${timeControl}`);
+    const error = new RangeError(`time control must look like "min+inc" or "Ns+inc"; got: ${timeControl}`);
     error.code = "invalid_time_control";
     throw error;
   }
-  const minutes = Number(m[1]);
-  const incrementSeconds = Number(m[2]);
+  const value = Number(m[1]);
+  const inSeconds = m[2] === "s";
+  const incrementSeconds = Number(m[3]);
+  const baseMs = inSeconds ? value * 1000 : value * 60 * 1000;
+  if (baseMs < MIN_BASE_MS) {
+    const error = new RangeError(`time control base must be at least 10 seconds; got: ${timeControl}`);
+    error.code = "invalid_time_control";
+    throw error;
+  }
   return {
-    baseMs: minutes * 60 * 1000,
+    baseMs,
     incrementMs: incrementSeconds * 1000
   };
 }

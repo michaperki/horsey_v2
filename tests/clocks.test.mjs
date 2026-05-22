@@ -21,6 +21,18 @@ test("parseTimeControl parses min+inc and rejects garbage", () => {
   assert.throws(() => parseTimeControl("3"), /time control/);
 });
 
+test("parseTimeControl parses sub-minute Ns+inc bullet formats", () => {
+  assert.deepEqual(parseTimeControl("30s+0"), { baseMs: 30_000, incrementMs: 0 });
+  assert.deepEqual(parseTimeControl("45s+1"), { baseMs: 45_000, incrementMs: 1000 });
+  assert.deepEqual(parseTimeControl("15s+0"), { baseMs: 15_000, incrementMs: 0 });
+});
+
+test("parseTimeControl rejects bases shorter than 10 seconds", () => {
+  assert.throws(() => parseTimeControl("5s+0"), /at least 10 seconds/);
+  assert.throws(() => parseTimeControl("0s+0"), /at least 10 seconds/);
+  assert.throws(() => parseTimeControl("0+0"), /at least 10 seconds/);
+});
+
 test("initClockState seeds both sides equally and starts white's clock", () => {
   const clock = initClockState("3+0", T0);
   assert.equal(clock.whiteMs, 180_000);
