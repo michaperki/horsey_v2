@@ -147,10 +147,10 @@ Deliverables:
 - Legal move validation, turn enforcement, check/checkmate/stalemate/draw detection. Status: **done** via `chess.js` wrapper.
 - Client board: orientation, click-to-move, drag/drop, keyboard navigation, accessible square labels, legal-move hints, last-move/check highlight, captures, edge coordinates, responsive sizing, and mobile-safe tap behavior. Status: **done** for the current milestone baseline.
 - Move history / notation display. Status: **partial** — basic SAN rows.
-- Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **partial** — legal/illegal/auto-finalize covered; castling, en passant, promotion, stalemate, threefold not yet explicit.
+- Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **partial** — legal/illegal/auto-finalize and threefold repetition covered (the chess wrapper now replays move history through chess.js so `isThreefoldRepetition` is reachable); castling, en passant, promotion, stalemate not yet explicit.
 
 Remaining Phase 2 work:
-- Explicit tests for threefold repetition and move history; castling, en passant, promotion, checkmate, and stalemate are covered.
+- Explicit tests for stalemate, castling, en passant, and promotion; threefold repetition is now covered (and the chess wrapper bug that hid threefold from auto-finalize is fixed by replaying history through chess.js).
 - Treat further board work as named product features, not open-ended polish. Examples: premoves, move animation, richer mobile drag gestures, replay scrubber, or replacing the custom board after a documented permissive-license review.
 
 Exit criteria:
@@ -206,7 +206,7 @@ Deliverables:
 - Game history and profile stats. Status: **partial** — viewer-scoped finalized games list shipped at `GET /api/games/history` with a History route + detail view (reusing the settlement renderer); per-game stats aggregation and profile stats still pending.
 - Rivalry/head-to-head tracking. Status: **pending**.
 - Rematch, double-or-nothing, auto-requeue flows. Status: **partial** — rematch now issues a real challenge against the prior opponent at the same stake + time control; double-or-nothing and auto-requeue still pending.
-- Review/replay view for finished games. Status: **done** for the dev scaffold — `GET /api/games/:id/replay` returns ordered moves with FEN-after-each-ply; the history detail page renders a read-only replay board with first/prev/next/last controls and a clickable move list. Future polish: keyboard arrow navigation, evaluation overlays.
+- Review/replay view for finished games. Status: **done** for the dev scaffold — `GET /api/games/:id/replay` returns ordered moves with FEN-after-each-ply; settlement (immediate post-game) and history detail (revisited) both render the same read-only replay board with first/prev/next/last controls and a clickable move list. Future polish: keyboard arrow navigation, evaluation overlays.
 
 Key decisions:
 - Rating system.
@@ -297,7 +297,7 @@ Out of scope for this milestone:
 - Advanced engine evaluation unless a low-risk permissive dependency is chosen.
 
 What stands between now and the milestone being complete:
-1. Phase 2 remaining — targeted chess coverage for threefold repetition and move-history behavior.
+1. Phase 2 remaining — explicit tests for stalemate, castling, en passant, and promotion. Threefold repetition is now covered and the chess wrapper correctly auto-finalizes on it.
 
 Safety note: the manual `POST /api/games/:id/finalize` endpoint is now explicitly dev-gated by `HORSEY_ENABLE_DEV_FINALIZE=1` and still requires the caller to be a player. Normal game completion should flow through moves, resignation, draw agreement, or timeout settlement.
 

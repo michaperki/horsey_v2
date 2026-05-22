@@ -90,10 +90,22 @@ export function summarizeGame(fen = STARTING_FEN, extra = {}) {
   };
 }
 
-export function applyMove(fen, move) {
-  const chess = createChess(fen);
-  let applied;
+export function applyMove(fen, move, priorMoves = null) {
+  let chess;
+  if (priorMoves) {
+    chess = createChess(STARTING_FEN);
+    for (const prior of priorMoves) {
+      chess.move({
+        from: prior.from,
+        to: prior.to,
+        promotion: prior.promotion || "q"
+      });
+    }
+  } else {
+    chess = createChess(fen);
+  }
 
+  let applied;
   try {
     applied = chess.move({
       from: move.from,
@@ -121,7 +133,14 @@ export function applyMove(fen, move) {
       promotion: applied.promotion ?? null,
       flags: applied.flags
     },
-    ...summarizeGame(chess.fen())
+    fen: chess.fen(),
+    turn: turnName(chess.turn()),
+    status: gameStatus(chess),
+    result: resultFor(chess),
+    inCheck: chess.isCheck(),
+    isGameOver: chess.isGameOver(),
+    legalMoves: legalMoves(chess.fen()),
+    board: boardSquares(chess.fen())
   };
 }
 

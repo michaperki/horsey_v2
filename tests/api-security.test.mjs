@@ -238,6 +238,42 @@ test("game_events records moves and the finalized event", async (t) => {
   assert.equal(finalizedPayload.ratingChange.whiteDelta, 16);
 });
 
+test("threefold repetition auto-finalizes as a draw", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const blackClient = whiteClient === alice ? bob : alice;
+
+  const shuffle = [
+    ["g1", "f3"], ["g8", "f6"],
+    ["f3", "g1"], ["f6", "g8"],
+    ["g1", "f3"], ["g8", "f6"],
+    ["f3", "g1"], ["f6", "g8"]
+  ];
+
+  let lastResponse;
+  for (let i = 0; i < shuffle.length; i++) {
+    const [from, to] = shuffle[i];
+    const client = i % 2 === 0 ? whiteClient : blackClient;
+    lastResponse = await fixture.post(client, `/api/games/${game.id}/moves`, { from, to });
+    assert.equal(lastResponse.status, 200, `move ${i} status`);
+  }
+
+  assert.equal(lastResponse.body.game.state, "finalized");
+  assert.equal(lastResponse.body.game.endReason, "threefold_repetition");
+  assert.equal(lastResponse.body.settlement.result, "draw");
+});
+
 test("flagged players lose before taking live actions", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

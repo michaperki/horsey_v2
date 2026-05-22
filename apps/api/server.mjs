@@ -1110,7 +1110,7 @@ async function routeApi(req, res) {
         });
       }
 
-      const result = applyMove(game.fen, body);
+      const result = applyMove(game.fen, body, game.moves);
       const moves = [...game.moves, result.move];
       const nextClock = game.clock ? applyMoveToClock(game.clock, now) : null;
       const movingColor = game.players.find((p) => p.id === viewer.id).color;

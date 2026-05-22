@@ -102,6 +102,25 @@ async function postJson(url, body = {}, method = "POST") {
   return payload;
 }
 
+async function loadReplay(gameId) {
+  if (!gameId) {
+    state.replay = null;
+    return;
+  }
+  try {
+    const resp = await getJson(`/api/games/${gameId}/replay`);
+    state.replay = {
+      gameId,
+      startingFen: resp.replay.startingFen,
+      moves: resp.replay.moves,
+      currentPly: resp.replay.moves.length
+    };
+  } catch (error) {
+    console.warn("failed to load replay", error);
+    state.replay = null;
+  }
+}
+
 async function loadBootstrap() {
   const data = await getJson("/api/bootstrap");
   state.bootstrap = data;
@@ -110,6 +129,11 @@ async function loadBootstrap() {
   if (!viewingHistoryDetail) {
     state.activeGame = data.activeGame || data.recentGame || null;
     state.activeSettlement = data.recentSettlement || null;
+    if (data.recentSettlement?.state === "finalized" && data.recentSettlement.gameId) {
+      await loadReplay(data.recentSettlement.gameId);
+    } else if (!data.recentSettlement) {
+      state.replay = null;
+    }
   }
   if (!state.activeChallenge) {
     state.activeChallenge = data.incomingChallenges[0] || data.sentChallenges[0] || data.lobby.openChallenges[0] || null;
@@ -376,6 +400,7 @@ async function handleRealtimeMessage(msg) {
         state.activeSettlement = settlementResp.settlement;
         state.bootstrap.viewer = wallet.viewer;
         state.walletLedger = wallet.ledger;
+        await loadReplay(id);
         navigate("settlement");
       } catch (error) {
         console.warn("failed to load settlement after finalize", error);
@@ -428,6 +453,7 @@ async function submitMove(from, to, promotion = "q") {
     const wallet = await getJson("/api/wallet");
     state.bootstrap.viewer = wallet.viewer;
     state.walletLedger = wallet.ledger;
+    await loadReplay(state.activeGame.id);
     navigate("settlement");
     return;
   }
@@ -447,6 +473,7 @@ async function resignGame() {
     const wallet = await getJson("/api/wallet");
     state.bootstrap.viewer = wallet.viewer;
     state.walletLedger = wallet.ledger;
+    await loadReplay(state.activeGame.id);
     navigate("settlement");
   } catch (error) {
     if (authGuard(error)) return;
@@ -466,6 +493,7 @@ async function submitDrawAction(action) {
       const wallet = await getJson("/api/wallet");
       state.bootstrap.viewer = wallet.viewer;
       state.walletLedger = wallet.ledger;
+      await loadReplay(state.activeGame.id);
       navigate("settlement");
     } else {
       render();
