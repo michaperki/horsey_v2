@@ -26,8 +26,10 @@ const state = {
   dragFromSquare: null,
   focusSquare: null,
   pendingPromotion: null,
+  resignConfirmOpen: false,
   gameError: null,
   actionError: null,
+  inFlight: new Set(),
   matchmakingPoll: null,
   route: initialRoute.name,
   routeParam: initialRoute.param,
@@ -67,6 +69,20 @@ function setActiveGame(game) {
 
 function liveGameForShell() {
   return state.liveGame?.state === "live" ? state.liveGame : null;
+}
+
+function actionKey(scope, id = "") {
+  return id ? `${scope}:${id}` : scope;
+}
+
+function actionInFlight(scope, id = "") {
+  return state.inFlight.has(actionKey(scope, id));
+}
+
+function setActionInFlight(scope, id, value) {
+  const key = actionKey(scope, id);
+  if (value) state.inFlight.add(key);
+  else state.inFlight.delete(key);
 }
 
 function localRemainingForSide(side) {
@@ -321,6 +337,16 @@ function challengeSecondsRemaining(challenge) {
   return Math.max(0, Math.ceil((base + seconds * 1000 - Date.now()) / 1000));
 }
 
+function visibleCountdownChallenges() {
+  if (state.route === "wager" && state.activeChallenge) return [state.activeChallenge];
+  if (state.route !== "play" || !state.bootstrap) return [];
+  return [
+    ...state.bootstrap.incomingChallenges,
+    ...state.bootstrap.sentChallenges,
+    ...state.bootstrap.lobby.openChallenges
+  ];
+}
+
 function challengeExpiryLabel(challenge) {
   const remaining = challengeSecondsRemaining(challenge);
   if (remaining == null) return "";
@@ -328,14 +354,14 @@ function challengeExpiryLabel(challenge) {
 }
 
 function manageChallengeCountdown() {
-  const remaining = challengeSecondsRemaining(state.activeChallenge);
-  const shouldTick = state.route === "wager"
-    && state.activeChallenge
-    && remaining !== null
-    && remaining > 0;
+  const shouldTick = visibleCountdownChallenges()
+    .some((challenge) => {
+      const remaining = challengeSecondsRemaining(challenge);
+      return remaining !== null && remaining > 0;
+    });
   if (shouldTick && !state.challengeCountdownTimer) {
     state.challengeCountdownTimer = setInterval(() => {
-      if (state.route !== "wager" || !state.activeChallenge) {
+      if (visibleCountdownChallenges().length === 0) {
         manageChallengeCountdown();
         return;
       }
@@ -395,7 +421,7 @@ function connectRealtime() {
       sendRealtime({ type: "subscribe", channel: `game:${state.activeGame.id}` });
       state.rt.subscribedGameId = state.activeGame.id;
     }
-    if (state.route === "game") render();
+    if (state.view === "app") render();
   });
 
   ws.addEventListener("message", (event) => {
@@ -407,7 +433,7 @@ function connectRealtime() {
   ws.addEventListener("close", () => {
     state.rt.subscribedGameId = null;
     scheduleReconnect();
-    if (state.route === "game") render();
+    if (state.view === "app") render();
   });
 
   ws.addEventListener("error", () => {
@@ -557,13 +583,15 @@ async function submitMove(from, to, promotion = "q") {
 }
 
 async function resignGame() {
-  const stake = state.activeGame?.pot?.stakeCents;
-  const consequence = stake ? ` You concede your ${money(stake)} stake.` : "";
-  if (!window.confirm(`Resign this game? Your opponent will receive the pot.${consequence}`)) return;
+  const gameId = state.activeGame?.id;
+  if (!gameId || actionInFlight("resign", gameId)) return;
   state.gameError = null;
+  setActionInFlight("resign", gameId, true);
+  render();
   try {
-    const payload = await postJson(`/api/games/${state.activeGame.id}/resign`, {});
+    const payload = await postJson(`/api/games/${gameId}/resign`, {});
     setActiveGame(payload.game);
+    state.resignConfirmOpen = false;
     state.activeSettlement = payload.settlement;
     if (payload.viewer) state.bootstrap.viewer = payload.viewer;
     const wallet = await getJson("/api/wallet");
@@ -575,13 +603,20 @@ async function resignGame() {
     if (authGuard(error)) return;
     state.gameError = error.message;
     render();
+  } finally {
+    setActionInFlight("resign", gameId, false);
+    if (state.view === "app") render();
   }
 }
 
 async function submitDrawAction(action) {
+  const gameId = state.activeGame?.id;
+  if (!gameId || actionInFlight(action, gameId)) return;
   state.gameError = null;
+  setActionInFlight(action, gameId, true);
+  render();
   try {
-    const payload = await postJson(`/api/games/${state.activeGame.id}/${action}`, {});
+    const payload = await postJson(`/api/games/${gameId}/${action}`, {});
     setActiveGame(payload.game);
     if (action === "draw-accept") {
       state.activeSettlement = payload.settlement;
@@ -598,13 +633,19 @@ async function submitDrawAction(action) {
     if (authGuard(error)) return;
     state.gameError = error.message;
     render();
+  } finally {
+    setActionInFlight(action, gameId, false);
+    if (state.view === "app") render();
   }
 }
 
 async function actOnChallenge(action) {
+  const challengeId = state.activeChallenge?.id;
+  if (!challengeId || actionInFlight("challenge", `${challengeId}:${action}`)) return;
   state.actionError = null;
+  setActionInFlight("challenge", `${challengeId}:${action}`, true);
+  render();
   try {
-    const challengeId = state.activeChallenge.id;
     const payload = action === "counter"
       ? await postJson(`/api/challenges/${challengeId}/counter`, {
           stakeCents: state.activeChallenge.stakeCents,
@@ -627,6 +668,9 @@ async function actOnChallenge(action) {
     if (authGuard(error)) return;
     state.actionError = error.message;
     render();
+  } finally {
+    setActionInFlight("challenge", `${challengeId}:${action}`, false);
+    if (state.view === "app") render();
   }
 }
 
@@ -664,7 +708,10 @@ async function createChallenge({ stakeCents, timeControl }) {
 }
 
 async function joinQuickMatch({ stakeCents, timeControl }) {
+  if (actionInFlight("quick-match")) return;
   state.actionError = null;
+  setActionInFlight("quick-match", "", true);
+  render();
   try {
     const payload = await postJson("/api/matchmaking/quick", { stakeCents, timeControl });
     if (payload.matched && payload.game) {
@@ -683,6 +730,9 @@ async function joinQuickMatch({ stakeCents, timeControl }) {
     if (authGuard(error)) return;
     state.actionError = error.message;
     render();
+  } finally {
+    setActionInFlight("quick-match", "", false);
+    if (state.view === "app") render();
   }
 }
 
@@ -788,7 +838,14 @@ window.addEventListener("hashchange", () => {
 });
 
 window.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape" || !state.pendingPromotion) return;
+  if (event.key !== "Escape") return;
+  if (state.resignConfirmOpen) {
+    event.preventDefault();
+    state.resignConfirmOpen = false;
+    render();
+    return;
+  }
+  if (!state.pendingPromotion) return;
   event.preventDefault();
   state.pendingPromotion = null;
   render();
@@ -806,6 +863,7 @@ function shell(content) {
         ${navLink("profile", "Profile")}
       </nav>
       <div class="topbar-actions">
+        ${connectionPill()}
         ${liveGame ? `<a class="resume-pill" href="#game"><span class="dot"></span>Resume game</a>` : ""}
         <a class="wallet-pill" href="#profile" title="Wallet detail in Profile">
           <span>${money(viewer.balanceCents)}</span>
@@ -818,6 +876,7 @@ function shell(content) {
       </div>
     </header>
     <main>${content}</main>
+    ${resignConfirmDialog()}
   `;
 }
 
@@ -848,6 +907,7 @@ function renderPlay() {
   const me = viewerId();
   const openChallenges = lobby.openChallenges.filter((c) => c.challengerId !== me);
   const liveGame = liveGameForShell();
+  const quickMatchBusy = actionInFlight("quick-match");
 
   return `
     ${liveGame ? liveGameBanner(liveGame) : ""}
@@ -871,7 +931,7 @@ function renderPlay() {
                 ${lobby.timeControls.map((t) => `<option value="${t}">${t}</option>`).join("")}
               </select>
             </label>
-            <button class="primary" type="submit">Join quick match</button>
+            <button class="primary" type="submit" ${quickMatchBusy ? "disabled" : ""}>${quickMatchBusy ? "Joining..." : "Join quick match"}</button>
           </form>
         `}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
@@ -918,11 +978,17 @@ function challengeRow(challenge) {
   const opponent = challenge.opponent;
   const isMine = challenge.challengerId === viewerId();
   const label = isMine ? `→ ${challenge.recipient ? challenge.recipient.handle : "anyone"}` : `from ${opponent.handle}`;
+  const remaining = challengeSecondsRemaining(challenge);
+  const timeHint = remaining === null
+    ? ""
+    : remaining > 0
+      ? `${remaining}s left`
+      : "expired";
   return `
     <button class="table-row" data-select-challenge="${challenge.id}">
       <strong>${escapeHtml(label)}</strong>
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
-      <em>${escapeHtml(challenge.state)}</em>
+      <em>${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
       <span>→</span>
     </button>
   `;
@@ -942,6 +1008,9 @@ function renderWager() {
   const canWithdraw = viewerIsChallenger
     && (challenge.state === "incoming" || challenge.state === "countered")
     && !isExpired;
+  const accepting = actionInFlight("challenge", `${challenge.id}:accept`);
+  const countering = actionInFlight("challenge", `${challenge.id}:counter`);
+  const declining = actionInFlight("challenge", `${challenge.id}:decline`);
 
   let actionLabel = "Accept and lock";
   if (challenge.state === "accepted") actionLabel = "Escrow locked";
@@ -973,9 +1042,9 @@ function renderWager() {
         <h2>${money(challenge.stakeCents)} each</h2>
         <p>${challenge.timeControl} blitz · ${money(challenge.pot.netPotCents)} pot after ${money(challenge.pot.rakeCents)} rake.</p>
         <div class="escrow">Stakes lock in fake-money escrow for this milestone.</div>
-        <button class="primary" ${canAct ? 'data-action="accept"' : "disabled"}>${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}</button>
-        <button ${canAct ? 'data-action="counter"' : "disabled"}>Counter same stake</button>
-        <button ${canAct ? 'data-action="decline"' : "disabled"}>Decline</button>
+        <button class="primary" ${canAct && !accepting ? 'data-action="accept"' : "disabled"}>${accepting ? "Locking..." : `${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}`}</button>
+        <button ${canAct && !countering ? 'data-action="counter"' : "disabled"}>${countering ? "Countering..." : "Counter same stake"}</button>
+        <button ${canAct && !declining ? 'data-action="decline"' : "disabled"}>${declining ? "Declining..." : "Decline"}</button>
         ${canWithdraw ? `<button class="danger" data-withdraw-challenge>Withdraw invite</button>` : ""}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
@@ -1065,7 +1134,7 @@ function renderGame() {
           </div>
         </article>
         ${drawSection}
-        ${canResign ? `<button class="danger resign-button" data-resign>Resign · concede ${money(game.pot.stakeCents)}</button>` : ""}
+        ${canResign ? `<button class="danger resign-button" data-open-resign ${actionInFlight("resign", game.id) ? "disabled" : ""}>${actionInFlight("resign", game.id) ? "Resigning..." : `Resign · concede ${money(game.pot.stakeCents)}`}</button>` : ""}
       </aside>
     </section>
   `;
@@ -1073,8 +1142,11 @@ function renderGame() {
 
 function drawControls(game, viewerColor) {
   const offer = game.drawOffer;
+  const drawOfferBusy = actionInFlight("draw-offer", game.id);
+  const drawAcceptBusy = actionInFlight("draw-accept", game.id);
+  const drawDeclineBusy = actionInFlight("draw-decline", game.id);
   if (!offer) {
-    return `<button class="draw-button" data-draw-action="draw-offer">Offer draw</button>`;
+    return `<button class="draw-button" data-draw-action="draw-offer" ${drawOfferBusy ? "disabled" : ""}>${drawOfferBusy ? "Offering..." : "Offer draw"}</button>`;
   }
   if (offer.offeredBy === viewerColor) {
     return `<div class="card draw-pending"><strong>Draw offered</strong><small>Waiting on opponent. Your offer clears on your next move.</small></div>`;
@@ -1084,9 +1156,42 @@ function drawControls(game, viewerColor) {
     <div class="card draw-incoming">
       <strong>${escapeHtml(opponent)} offers a draw</strong>
       <div class="stack">
-        <button class="primary" data-draw-action="draw-accept">Accept draw</button>
-        <button data-draw-action="draw-decline">Decline</button>
+        <button class="primary" data-draw-action="draw-accept" ${drawAcceptBusy ? "disabled" : ""}>${drawAcceptBusy ? "Accepting..." : "Accept draw"}</button>
+        <button data-draw-action="draw-decline" ${drawDeclineBusy ? "disabled" : ""}>${drawDeclineBusy ? "Declining..." : "Decline"}</button>
       </div>
+    </div>
+  `;
+}
+
+function openResignConfirm() {
+  if (!state.activeGame || actionInFlight("resign", state.activeGame.id)) return;
+  state.gameError = null;
+  state.resignConfirmOpen = true;
+  render();
+}
+
+function closeResignConfirm() {
+  state.resignConfirmOpen = false;
+  render();
+}
+
+function resignConfirmDialog() {
+  const game = state.activeGame;
+  if (!state.resignConfirmOpen || !game || game.state !== "live") return "";
+  const stake = game.pot?.stakeCents ?? 0;
+  const opponent = game.players?.find((player) => player.id !== viewerId());
+  const busy = actionInFlight("resign", game.id);
+  return `
+    <div class="modal-backdrop" role="presentation" data-resign-cancel>
+      <section class="card confirm-modal" role="dialog" aria-modal="true" aria-labelledby="resign-title">
+        <div class="eyebrow danger">Resign game</div>
+        <h2 id="resign-title">Concede this table?</h2>
+        <p>${escapeHtml(opponent?.handle || "Your opponent")} receives the pot. You concede your ${money(stake)} stake.</p>
+        <div class="modal-actions">
+          <button type="button" data-resign-cancel ${busy ? "disabled" : ""}>Keep playing</button>
+          <button type="button" class="danger resign-button" data-resign-confirm ${busy ? "disabled" : ""}>${busy ? "Resigning..." : "Resign game"}</button>
+        </div>
+      </section>
     </div>
   `;
 }
@@ -1628,17 +1733,32 @@ function renderHistoryList() {
       </section>
     `;
   }
+  const stats = historyResultStats(items);
   return `
     <section class="history">
       <header class="history-header">
         <h1>History</h1>
         <p class="muted">${items.length} finished game${items.length === 1 ? "" : "s"}</p>
       </header>
+      <div class="history-stats" aria-label="History result counts">
+        <div><small>Wins</small><strong>${stats.wins}</strong></div>
+        <div><small>Losses</small><strong>${stats.losses}</strong></div>
+        <div><small>Draws</small><strong>${stats.draws}</strong></div>
+      </div>
       <div class="history-list">
         ${items.map(historyRow).join("")}
       </div>
     </section>
   `;
+}
+
+function historyResultStats(items) {
+  return items.reduce((stats, entry) => {
+    if (entry.result === "win") stats.wins += 1;
+    else if (entry.result === "loss") stats.losses += 1;
+    else if (entry.result === "draw") stats.draws += 1;
+    return stats;
+  }, { wins: 0, losses: 0, draws: 0 });
 }
 
 function historyRow(entry) {
@@ -1792,8 +1912,16 @@ function render() {
   document.querySelectorAll("[data-withdraw-challenge]").forEach((b) => {
     b.addEventListener("click", () => withdrawChallenge());
   });
-  document.querySelectorAll("[data-resign]").forEach((b) => {
+  document.querySelectorAll("[data-open-resign]").forEach((b) => {
+    b.addEventListener("click", () => openResignConfirm());
+  });
+  document.querySelectorAll("[data-resign-confirm]").forEach((b) => {
     b.addEventListener("click", () => resignGame());
+  });
+  document.querySelectorAll("[data-resign-cancel]").forEach((b) => {
+    b.addEventListener("click", (event) => {
+      if (event.target === b || b.tagName === "BUTTON") closeResignConfirm();
+    });
   });
   document.querySelectorAll("[data-rematch]").forEach((b) => {
     b.addEventListener("click", () => requestRematch());

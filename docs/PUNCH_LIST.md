@@ -9,7 +9,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 - [x] **Live game doesn't surface on `/play`.** The header Resume pill was the only entry back to a game in progress. Added a "Live game" banner on the Play page that links to the board, and guarded both banner + shell pill so finalized games cannot linger as resumable. (`app.js:renderPlay`)
 - [ ] **Your own open invite doesn't show in "Open tables".** Filtered out in `renderPlay` (`c.challengerId !== me`). It only appears under "Your sent". Decide on one canonical home, or show in both with a "yours" tag.
 - [x] **No way to cancel a sent open invite.** Added a challenger-only `DELETE /api/challenges/:id` route and a Wager-screen "Withdraw invite" action for pending sent invites.
-- [ ] **Sent/incoming rows show no time-remaining hint.** A state badge ("incoming"/"countered") is there but not how long until expiry.
+- [x] **Sent/incoming rows show no time-remaining hint.** Play rows now include a live seconds-left / expired hint beside the challenge state.
 
 ## Wager screen
 
@@ -17,21 +17,21 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 ## In-game polish
 
-- [ ] **`window.confirm` for resign** (`resignGame`) breaks the design language. Replace with the existing card/modal pattern.
+- [x] **`window.confirm` for resign** (`resignGame`) breaks the design language. Replaced with an in-app confirmation dialog.
 - [x] **Promotion dialog has no Escape-to-cancel.** Global Escape handling now cancels an open promotion choice.
 - [x] **Move history isn't numbered.** Move rows now include an explicit move number column.
 - [ ] **`gameError` persists in the turn strip with no dismissal.** Only clears when the next action fires.
-- [ ] **Buttons don't disable during in-flight requests.** Double-clicking Accept / Resign / Offer draw / Join quick match fires duplicate POSTs (the server is idempotent on most, but the UX is jittery).
+- [x] **Buttons don't disable during in-flight requests.** Accept / Resign / Offer draw / Join quick match now disable while their POST is in flight.
 
 ## Realtime / connection
 
-- [ ] **"Reconnecting" pill is only rendered on the game page.** Socket drops on Play / History / Profile give no signal.
+- [x] **"Reconnecting" pill is only rendered on the game page.** The shell now shows the realtime live/reconnecting/offline pill across Play / History / Profile.
 - [x] **`game.finalized` auto-navigates to settlement from any route** (`handleRealtimeMessage`). Realtime settlement still refreshes state, but only auto-navigates when the viewer is on the game page.
 
 ## Settlement / History
 
 - [x] **`endReason` is rendered raw** in history rows ("checkmate", "resignation", "timeout", "agreement"). Added friendly labels.
-- [ ] **History list has no filters/grouping.** A result counter (Wins / Losses / Draws) would help orientation. *(Watch the no-loss-advertising rule — show counts, not aggregate net-loss money.)*
+- [x] **History list has no filters/grouping.** Added Wins / Losses / Draws result counts without aggregate net-loss money.
 
 ## Profile
 
@@ -54,7 +54,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 - [x] Live-game card on Play dashboard
 - [x] Cancel a sent open invite (DELETE endpoint + Withdraw button)
-- [ ] Replace `window.confirm` resign
+- [x] Replace `window.confirm` resign
 - [x] Live auto-decline countdown on Wager
 - [x] Refresh `AGENTS.md` stale facts
 
@@ -69,3 +69,8 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 - Route-aware `game.finalized` realtime behavior.
 - Friendly history end-reason labels.
 - Environment and useful-check docs refresh.
+- In-app resign confirmation dialog.
+- Challenge row time-remaining hints.
+- In-flight disabling for accept, resign, draw, and quick-match actions.
+- Global realtime connection pill in the shell.
+- History Wins / Losses / Draws counts.

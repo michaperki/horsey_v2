@@ -44,6 +44,12 @@ a:hover {
   filter: brightness(0.96);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  filter: none;
+}
+
 .topbar {
   position: sticky;
   top: 0;
@@ -1049,6 +1055,11 @@ p {
   gap: 12px;
 }
 
+.topbar-actions .connection-pill {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
+
 .resume-pill {
   display: inline-flex;
   align-items: center;
@@ -1112,6 +1123,33 @@ p {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.history-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.history-stats div {
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+.history-stats small {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.history-stats strong {
+  font-size: 28px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .history-row {
@@ -1312,6 +1350,31 @@ p {
   .replay-body {
     grid-template-columns: 1fr;
   }
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(27, 24, 21, 0.42);
+}
+
+.confirm-modal {
+  width: min(100%, 420px);
+}
+
+.confirm-modal h2 {
+  margin-bottom: 8px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
 }
 
 .presence-dot {
