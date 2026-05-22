@@ -145,7 +145,8 @@ function rowToChallenge(row) {
     gameId: row.game_id,
     stakeCents: row.stake_cents,
     timeControl: row.time_control,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 

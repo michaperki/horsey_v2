@@ -23,6 +23,7 @@ const state = {
   walletLedger: [],
   selectedSquare: null,
   dragFromSquare: null,
+  focusSquare: null,
   pendingPromotion: null,
   gameError: null,
   actionError: null,
@@ -1029,6 +1030,18 @@ function legalMoveFor(from, to) {
   return state.activeGame?.legalMoves.find((move) => move.from === from && move.to === to) || null;
 }
 
+function squareLabel(game, square, pieceColor, target, isSource, isSelected) {
+  const parts = [square.square];
+  if (pieceColor && square.type) parts.push(pieceAlt(pieceColor, square.type));
+  if (isSelected) parts.push("selected");
+  if (isSource) parts.push("legal piece to move");
+  if (target) parts.push(target.captured ? "legal capture target" : "legal move target");
+  if (game.lastMove && (game.lastMove.from === square.square || game.lastMove.to === square.square)) {
+    parts.push("last move");
+  }
+  return parts.join(", ");
+}
+
 function remainingForSide(clock, side, now) {
   if (!clock) return null;
   const stored = side === "white" ? clock.whiteMs : clock.blackMs;
@@ -1065,9 +1078,10 @@ function board(game) {
   const cells = displaySquares.map((square) => {
     const isSource = canMoveFrom(game, square.square);
     const target = targetMoves.get(square.square);
+    const isSelected = square.square === selected;
     const classes = [
       (square.row + square.col) % 2 ? "dark" : "light",
-      square.square === selected ? "selected" : "",
+      isSelected ? "selected" : "",
       isSource ? "source" : "",
       target ? "target" : "",
       target?.captured ? "target-capture" : target ? "target-quiet" : "",
@@ -1082,7 +1096,7 @@ function board(game) {
       showRank ? `<span class="coord rank">${square.square[1]}</span>` : "",
       showFile ? `<span class="coord file">${square.square[0]}</span>` : ""
     ].join("");
-    return `<button class="${classes}" data-square="${square.square}" draggable="${isSource ? "true" : "false"}" aria-label="${square.square}">${piece}${coords}</button>`;
+    return `<button type="button" class="${classes}" data-square="${square.square}" draggable="${isSource ? "true" : "false"}" aria-label="${escapeHtml(squareLabel(game, square, pieceColor, target, isSource, isSelected))}" aria-pressed="${isSelected ? "true" : "false"}">${piece}${coords}</button>`;
   });
   return `<div class="board ${orientation === "black" ? "flipped" : ""}" aria-label="Chess board">${cells.join("")}</div>`;
 }
@@ -1132,6 +1146,7 @@ function queueOrSubmitMove(from, to) {
 function handleSquareIntent(clicked) {
   const game = state.activeGame;
   if (!game) return;
+  state.focusSquare = clicked;
   if (!state.selectedSquare) {
     if (canMoveFrom(game, clicked)) {
       state.selectedSquare = clicked;
@@ -1153,6 +1168,45 @@ function handleSquareIntent(clicked) {
     return;
   }
   queueOrSubmitMove(state.selectedSquare, clicked);
+}
+
+function adjacentSquare(squareName, key, orientation) {
+  const file = squareName.charCodeAt(0) - 97;
+  const rank = Number(squareName[1]) - 1;
+  const deltas = {
+    ArrowLeft: orientation === "black" ? [1, 0] : [-1, 0],
+    ArrowRight: orientation === "black" ? [-1, 0] : [1, 0],
+    ArrowUp: orientation === "black" ? [0, -1] : [0, 1],
+    ArrowDown: orientation === "black" ? [0, 1] : [0, -1]
+  };
+  const delta = deltas[key];
+  if (!delta) return null;
+  const nextFile = file + delta[0];
+  const nextRank = rank + delta[1];
+  if (nextFile < 0 || nextFile > 7 || nextRank < 0 || nextRank > 7) return null;
+  return `${String.fromCharCode(97 + nextFile)}${nextRank + 1}`;
+}
+
+function handleSquareKey(event, squareName) {
+  const game = state.activeGame;
+  if (!game) return;
+  state.focusSquare = squareName;
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    handleSquareIntent(squareName);
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    state.selectedSquare = null;
+    state.pendingPromotion = null;
+    render();
+    return;
+  }
+  const next = adjacentSquare(squareName, event.key, boardOrientation(game));
+  if (!next) return;
+  event.preventDefault();
+  document.querySelector(`[data-square="${next}"]`)?.focus();
 }
 
 function promotionDialog() {
@@ -1484,6 +1538,9 @@ function render() {
     square.addEventListener("click", () => {
       handleSquareIntent(square.dataset.square);
     });
+    square.addEventListener("keydown", (event) => {
+      handleSquareKey(event, square.dataset.square);
+    });
     square.addEventListener("dragstart", (event) => {
       const from = square.dataset.square;
       if (!canMoveFrom(state.activeGame, from)) {
@@ -1533,6 +1590,9 @@ function render() {
       queueOrSubmitMove(from, to);
     });
   });
+  if (state.focusSquare) {
+    document.querySelector(`[data-square="${state.focusSquare}"]`)?.focus({ preventScroll: true });
+  }
 }
 
 load().catch((error) => {

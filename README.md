@@ -30,6 +30,14 @@ http://127.0.0.1:8787
 
 The current baseline uses a built-in Node HTTP server, SQLite via `better-sqlite3`, `chess.js` behind Horsey's local chess wrapper, and `ws` for WebSockets. The backend serves the web app and local fake-money API endpoints.
 
+Useful checks:
+
+```bash
+npm test
+npm run lint
+npm run verify
+```
+
 ## Project Layout
 
 - `apps/api`: local backend API and static web server.

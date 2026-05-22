@@ -1,0 +1,191 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { Readable } from "node:stream";
+import test from "node:test";
+import Database from "better-sqlite3";
+
+const ROOT = path.resolve(import.meta.dirname, "..");
+
+test("API protects game reads and rejects moves after finalization", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  assert.equal(created.status, 201);
+  assert.equal("challengerWallet" in created.body.challenge, false);
+
+  const openRead = await fixture.get(carol, `/api/challenges/${created.body.challenge.id}`);
+  assert.equal(openRead.status, 200);
+
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 200);
+  const game = accepted.body.game;
+
+  const outsiderGame = await fixture.get(carol, `/api/games/${game.id}`);
+  assert.equal(outsiderGame.status, 403);
+  assert.equal(outsiderGame.body.error, "not_a_player");
+
+  const outsiderSettlement = await fixture.get(carol, `/api/games/${game.id}/settlement`);
+  assert.equal(outsiderSettlement.status, 403);
+  assert.equal(outsiderSettlement.body.error, "not_a_player");
+
+  const acceptedChallengeRead = await fixture.get(carol, `/api/challenges/${created.body.challenge.id}`);
+  assert.equal(acceptedChallengeRead.status, 403);
+  assert.equal(acceptedChallengeRead.body.error, "not_your_challenge");
+
+  const resigningClient = game.players[0].id === alice.user.id ? alice : bob;
+  const resigned = await fixture.post(resigningClient, `/api/games/${game.id}/resign`);
+  assert.equal(resigned.status, 200);
+  assert.equal(resigned.body.game.state, "finalized");
+
+  const currentTurnClient = game.turn === game.players.find((p) => p.id === alice.user.id).color ? alice : bob;
+  const move = game.turn === "white" ? { from: "e2", to: "e4" } : { from: "e7", to: "e5" };
+  const moveAfterFinalized = await fixture.post(currentTurnClient, `/api/games/${game.id}/moves`, move);
+  assert.equal(moveAfterFinalized.status, 409);
+  assert.equal(moveAfterFinalized.body.error, "game_already_finalized");
+});
+
+test("expired open challenges cannot be accepted", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  assert.equal(created.status, 201);
+
+  const db = new Database(fixture.dbPath);
+  const expiredAt = new Date(Date.now() - 120_000).toISOString();
+  db.prepare("UPDATE challenges SET updated_at = ? WHERE id = ?").run(expiredAt, created.body.challenge.id);
+  db.close();
+
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 409);
+  assert.equal(accepted.body.error, "invalid_challenge_transition");
+
+  const bootstrap = await fixture.get(bob, "/api/bootstrap");
+  assert.equal(bootstrap.status, 200);
+  assert.equal(bootstrap.body.lobby.openChallenges.some((c) => c.id === created.body.challenge.id), false);
+});
+
+test("flagged players lose before taking live actions", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 200);
+  const game = accepted.body.game;
+
+  const db = new Database(fixture.dbPath);
+  const row = db.prepare("SELECT data_json FROM games WHERE id = ?").get(game.id);
+  const data = JSON.parse(row.data_json);
+  data.clock = {
+    ...data.clock,
+    whiteMs: 1,
+    sideToMove: "white",
+    lastMoveAt: new Date(Date.now() - 1000).toISOString()
+  };
+  db.prepare("UPDATE games SET data_json = ? WHERE id = ?").run(JSON.stringify(data), game.id);
+  db.close();
+
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  const response = await fixture.post(whiteClient, `/api/games/${game.id}/draw-offer`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.timedOut, true);
+  assert.equal(response.body.game.state, "finalized");
+  assert.equal(response.body.game.endReason, "timeout");
+  assert.notEqual(response.body.game.winnerId, white.id);
+});
+
+async function startFixture(t) {
+  const dir = await mkdtemp(path.join(tmpdir(), "horsey-api-"));
+  const dbPath = path.join(dir, "test.db");
+  const previousDbPath = process.env.HORSEY_DB_PATH;
+  process.env.HORSEY_DB_PATH = dbPath;
+
+  const serverModuleUrl = pathToFileURL(path.join(ROOT, "apps/api/server.mjs"));
+  serverModuleUrl.search = `?test=${Date.now()}-${Math.random()}`;
+  const api = await import(serverModuleUrl.href);
+
+  t.after(async () => {
+    api.closeServerResources();
+    if (previousDbPath === undefined) delete process.env.HORSEY_DB_PATH;
+    else process.env.HORSEY_DB_PATH = previousDbPath;
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function request(client, method, pathname, body) {
+    const rawBody = body === undefined ? "" : JSON.stringify(body);
+    const req = Readable.from(rawBody ? [Buffer.from(rawBody)] : []);
+    req.method = method;
+    req.url = pathname;
+    req.headers = {
+      host: "127.0.0.1",
+      ...(client?.cookie ? { cookie: client.cookie } : {})
+    };
+
+    const response = await callRoute(api.routeApi, req);
+    return response;
+  }
+
+  return {
+    dbPath,
+    get: (client, pathname) => request(client, "GET", pathname),
+    post: (client, pathname, body = {}) => request(client, "POST", pathname, body),
+    async signup(prefix) {
+      const response = await request(null, "POST", "/api/auth/signup", {
+        email: `${prefix}-${Date.now()}@example.com`,
+        handle: `${prefix}_${Math.random().toString(16).slice(2, 8)}`,
+        password: "password123"
+      });
+      assert.equal(response.status, 201);
+      return { cookie: response.cookie, user: response.body.viewer };
+    }
+  };
+}
+
+function callRoute(routeApi, req) {
+  return new Promise((resolve, reject) => {
+    let status = 200;
+    const headers = {};
+    let raw = "";
+    const res = {
+      setHeader(name, value) {
+        headers[name.toLowerCase()] = value;
+      },
+      writeHead(nextStatus, nextHeaders = {}) {
+        status = nextStatus;
+        for (const [name, value] of Object.entries(nextHeaders)) {
+          headers[name.toLowerCase()] = value;
+        }
+      },
+      end(chunk = "") {
+        raw += chunk.toString();
+        resolve({
+          status,
+          headers,
+          body: raw ? JSON.parse(raw) : {},
+          cookie: String(headers["set-cookie"] ?? "").split(";")[0] || null
+        });
+      }
+    };
+    routeApi(req, res).catch(reject);
+  });
+}

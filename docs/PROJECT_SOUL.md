@@ -42,7 +42,7 @@ Do not capture:
 - We need a frontend and backend, and likely more systems around realtime play, money, trust, operations, and compliance.
 - We need to decide whether to build chess board and logic ourselves or use license-compatible open source. Chessground is considered undesirable because of its license implications for this project.
 - Decision update: use BSD-2-Clause `chess.js` for chess rules through Horsey's wrapper package, while keeping board UI custom for now.
-- Current board UI works but is crude. It is acceptable as a functional baseline, not as product-quality chess UX.
+- Current board UI is the accepted custom baseline for this milestone: server-backed rules, legal hints, drag/drop, keyboard navigation, edge coordinates, captured trays, promotion, and mobile-safe tap behavior. Future board work should be scoped as named features rather than reopening a generic "crude board" cleanup loop.
 - Keep this first pass high level.
 - Establish a clean working relationship between the user and future coding agents so agents retain the big picture and do not become overly narrow.
 - Working context such as WSL vs Windows PowerShell is valid project memory when it helps future agents operate smoothly.

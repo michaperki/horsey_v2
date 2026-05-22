@@ -479,12 +479,14 @@ p {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
   grid-template-rows: repeat(8, minmax(0, 1fr));
-  width: min(100%, 560px);
+  width: min(100%, 560px, calc(100vw - 32px));
   aspect-ratio: 1;
   border: 10px solid #33291e;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 24px 55px -32px rgba(0, 0, 0, 0.75);
+  user-select: none;
+  touch-action: manipulation;
 }
 
 .board button {
@@ -499,15 +501,31 @@ p {
   border: 0;
   border-radius: 0;
   padding: 0;
+  color: inherit;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .board .source {
   cursor: grab;
 }
 
+.board .source:hover {
+  box-shadow: inset 0 0 0 4px rgba(241, 201, 107, 0.48);
+}
+
 .board .source:active,
 .board .dragging {
   cursor: grabbing;
+}
+
+.board button:focus-visible {
+  z-index: 20;
+  outline: 3px solid #fff7e8;
+  outline-offset: -6px;
+  box-shadow:
+    inset 0 0 0 999px rgba(241, 201, 107, 0.18),
+    0 0 0 3px rgba(27, 24, 21, 0.55);
 }
 
 .board .drop-ready {
@@ -522,6 +540,7 @@ p {
   object-fit: contain;
   pointer-events: none;
   user-select: none;
+  -webkit-user-drag: none;
   filter: drop-shadow(0 5px 4px rgba(0, 0, 0, 0.18));
   z-index: 10;
 }
@@ -545,10 +564,12 @@ p {
 
 .board .target-quiet::after {
   content: "";
+  position: absolute;
   width: 26%;
   height: 26%;
   border-radius: 999px;
   background: rgba(27, 24, 21, 0.24);
+  pointer-events: none;
 }
 
 .board .target-capture::after {
@@ -608,7 +629,7 @@ p {
   position: absolute;
   z-index: 1;
   color: rgba(27, 24, 21, 0.56);
-  font-size: 10px;
+  font-size: clamp(8px, 1.65vw, 10px);
   font-weight: 850;
   line-height: 1;
   pointer-events: none;

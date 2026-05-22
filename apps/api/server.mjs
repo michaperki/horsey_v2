@@ -30,8 +30,7 @@ import {
   applyMoveToClock,
   flaggedSide,
   initClockState,
-  msUntilFlag,
-  remainingForSide
+  msUntilFlag
 } from "../../packages/shared/clocks.mjs";
 import {
   acceptDraw,
@@ -213,7 +212,6 @@ function viewerPayload(viewerId) {
 }
 
 function challengePayload(challenge, viewerId) {
-  const ledger = db.listLedger();
   const challenger = db.getUser(challenge.challengerId);
   const recipient = challenge.recipientId ? db.getUser(challenge.recipientId) : null;
   const opponent = viewerId === challenge.challengerId
@@ -223,9 +221,7 @@ function challengePayload(challenge, viewerId) {
     ...challenge,
     challenger,
     recipient,
-    opponent,
-    recipientWallet: challenge.recipientId ? walletSummary(ledger, challenge.recipientId) : null,
-    challengerWallet: walletSummary(ledger, challenge.challengerId)
+    opponent
   };
 }
 
@@ -245,6 +241,16 @@ function requireRecipient(viewer, challenge) {
   }
 }
 
+function requireChallengeViewer(viewer, challenge) {
+  const isParticipant = viewer.id === challenge.challengerId || viewer.id === challenge.recipientId;
+  const isOpenTable = challenge.state === "incoming" && challenge.recipientId === null;
+  if (!isParticipant && !isOpenTable) {
+    const e = new RangeError("only challenge participants can view this challenge");
+    e.code = "not_your_challenge";
+    throw e;
+  }
+}
+
 function requireTurnOwner(viewer, game) {
   const summary = summarizeGame(game.fen);
   const currentPlayer = game.players.find((p) => p.color === summary.turn);
@@ -259,6 +265,14 @@ function requirePlayer(viewer, game) {
   if (!game.players.some((p) => p.id === viewer.id)) {
     const e = new RangeError("only a player can act on this game");
     e.code = "not_a_player";
+    throw e;
+  }
+}
+
+function requireLiveGame(game) {
+  if (game.state !== "live") {
+    const e = new RangeError("game already finalized");
+    e.code = "game_already_finalized";
     throw e;
   }
 }
@@ -565,6 +579,18 @@ function settleIfFlagged(game, now) {
   return true;
 }
 
+function flaggedSettlementPayload(game, viewerId) {
+  if (!settleIfFlagged(game, Date.now())) return null;
+  const refreshed = db.getGame(game.id);
+  publishGameFinalized(refreshed);
+  return {
+    game: enrichGame(refreshed),
+    settlement: settlementPayload(refreshed, viewerId),
+    viewer: viewerPayload(viewerId),
+    timedOut: true
+  };
+}
+
 function rehydrateClockTimeouts() {
   for (const game of db.listLiveGames()) {
     if (settleIfFlagged(game, Date.now())) {
@@ -678,9 +704,13 @@ function startSession(userId, nowIso = new Date().toISOString()) {
 
 function bootstrapPayload(viewer) {
   const lobby = db.getLobby();
-  const openChallenges = db.listOpenChallenges().map((c) => challengePayload(c, viewer.id));
-  const incomingChallenges = db.listIncomingForRecipient(viewer.id).map((c) => challengePayload(c, viewer.id));
-  const sentChallenges = db.listSentByChallenger(viewer.id).map((c) => challengePayload(c, viewer.id));
+  const openChallenges = refreshVisibleChallenges(db.listOpenChallenges()).map((c) => challengePayload(c, viewer.id));
+  const incomingChallenges = refreshVisibleChallenges(db.listIncomingForRecipient(viewer.id)).map((c) =>
+    challengePayload(c, viewer.id)
+  );
+  const sentChallenges = refreshVisibleChallenges(db.listSentByChallenger(viewer.id)).map((c) =>
+    challengePayload(c, viewer.id)
+  );
   const liveGame = db.findLiveGameForUser(viewer.id);
   const recentGame = liveGame || db.findMostRecentGameForUser(viewer.id);
   const ticket = db.getTicket(viewer.id);
@@ -695,32 +725,6 @@ function bootstrapPayload(viewer) {
     matchmakingTicket: ticket
   };
 }
-
-const ROUTES = [
-  { method: "GET", pattern: /^\/api\/health$/ },
-  { method: "GET", pattern: /^\/api\/bootstrap$/ },
-  { method: "GET", pattern: /^\/api\/wallet$/ },
-  { method: "GET", pattern: /^\/api\/games\/history$/ },
-
-  { method: "POST", pattern: /^\/api\/challenges$/ },
-  { method: "GET", pattern: /^\/api\/challenges\/([^/]+)$/ },
-  { method: "POST", pattern: /^\/api\/challenges\/([^/]+)\/accept$/ },
-  { method: "POST", pattern: /^\/api\/challenges\/([^/]+)\/decline$/ },
-  { method: "POST", pattern: /^\/api\/challenges\/([^/]+)\/counter$/ },
-
-  { method: "GET", pattern: /^\/api\/games\/([^/]+)$/ },
-  { method: "GET", pattern: /^\/api\/games\/([^/]+)\/settlement$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/moves$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/finalize$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/resign$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/draw-offer$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/draw-accept$/ },
-  { method: "POST", pattern: /^\/api\/games\/([^/]+)\/draw-decline$/ },
-
-  { method: "POST", pattern: /^\/api\/matchmaking\/quick$/ },
-  { method: "GET", pattern: /^\/api\/matchmaking\/quick$/ },
-  { method: "DELETE", pattern: /^\/api\/matchmaking\/quick$/ }
-];
 
 function getChallengeOr404(id) {
   const challenge = db.getChallenge(id);
@@ -738,6 +742,28 @@ function getGameOr404(id) {
     e.code = "game_not_found"; throw e;
   }
   return game;
+}
+
+function refreshChallengeState(challenge, now = Date.now()) {
+  if (!challenge || !["incoming", "countered"].includes(challenge.state)) return challenge;
+  const expiresInMs = (challenge.expiresInSeconds ?? 0) * 1000;
+  if (expiresInMs <= 0) return challenge;
+  const baseTime = Date.parse(challenge.updatedAt || challenge.createdAt);
+  if (!Number.isFinite(baseTime) || now < baseTime + expiresInMs) return challenge;
+
+  const expired = transitionChallenge(challenge, "expired", {
+    expiredAt: new Date(now).toISOString()
+  });
+  db.saveChallenge(expired);
+  const refreshed = db.getChallenge(challenge.id);
+  publishChallengeUpdated(refreshed);
+  return refreshed;
+}
+
+function refreshVisibleChallenges(challenges) {
+  return challenges
+    .map((challenge) => refreshChallengeState(challenge))
+    .filter((challenge) => challenge.state !== "expired");
 }
 
 async function routeApi(req, res) {
@@ -820,14 +846,15 @@ async function routeApi(req, res) {
   let m;
   if (req.method === "GET" && (m = pathname.match(/^\/api\/challenges\/([^/]+)$/))) {
     try {
-      const challenge = getChallengeOr404(m[1]);
+      const challenge = refreshChallengeState(getChallengeOr404(m[1]));
+      requireChallengeViewer(viewer, challenge);
       return json(res, 200, { challenge: challengePayload(challenge, viewer.id) });
     } catch (error) { return handleDomainError(error, res); }
   }
 
   if (req.method === "POST" && (m = pathname.match(/^\/api\/challenges\/([^/]+)\/accept$/))) {
     try {
-      const challenge = getChallengeOr404(m[1]);
+      const challenge = refreshChallengeState(getChallengeOr404(m[1]));
       requireRecipient(viewer, challenge);
       const game = acceptChallenge(challenge, viewer.id);
       const updated = getChallengeOr404(m[1]);
@@ -844,7 +871,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && (m = pathname.match(/^\/api\/challenges\/([^/]+)\/decline$/))) {
     try {
-      const challenge = getChallengeOr404(m[1]);
+      const challenge = refreshChallengeState(getChallengeOr404(m[1]));
       requireRecipient(viewer, challenge);
       db.saveChallenge(transitionChallenge(challenge, "declined", { declinedAt: new Date().toISOString() }));
       const updated = getChallengeOr404(m[1]);
@@ -858,7 +885,7 @@ async function routeApi(req, res) {
 
   if (req.method === "POST" && (m = pathname.match(/^\/api\/challenges\/([^/]+)\/counter$/))) {
     try {
-      const challenge = getChallengeOr404(m[1]);
+      const challenge = refreshChallengeState(getChallengeOr404(m[1]));
       requireRecipient(viewer, challenge);
       const body = await readJson(req);
       const stakeCents = Number.isInteger(body.stakeCents) ? body.stakeCents : challenge.stakeCents;
@@ -880,6 +907,7 @@ async function routeApi(req, res) {
   if (req.method === "GET" && (m = pathname.match(/^\/api\/games\/([^/]+)$/))) {
     try {
       const game = getGameOr404(m[1]);
+      requirePlayer(viewer, game);
       return json(res, 200, { game: enrichGame(game) });
     } catch (error) { return handleDomainError(error, res); }
   }
@@ -887,6 +915,7 @@ async function routeApi(req, res) {
   if (req.method === "GET" && (m = pathname.match(/^\/api\/games\/([^/]+)\/settlement$/))) {
     try {
       const game = getGameOr404(m[1]);
+      requirePlayer(viewer, game);
       return json(res, 200, { settlement: settlementPayload(game, viewer.id) });
     } catch (error) { return handleDomainError(error, res); }
   }
@@ -895,6 +924,9 @@ async function routeApi(req, res) {
     try {
       const game = getGameOr404(m[1]);
       requirePlayer(viewer, game);
+      requireLiveGame(game);
+      const timeoutPayload = flaggedSettlementPayload(game, viewer.id);
+      if (timeoutPayload) return json(res, 200, timeoutPayload);
       resignGame(viewer, game);
       const refreshed = getGameOr404(m[1]);
       publishGameFinalized(refreshed);
@@ -910,10 +942,9 @@ async function routeApi(req, res) {
     try {
       const game = getGameOr404(m[1]);
       requirePlayer(viewer, game);
-      if (game.state !== "live") {
-        const e = new RangeError("game already finalized");
-        e.code = "game_already_finalized"; throw e;
-      }
+      requireLiveGame(game);
+      const timeoutPayload = flaggedSettlementPayload(game, viewer.id);
+      if (timeoutPayload) return json(res, 200, timeoutPayload);
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       const nextOffer = offerDraw(game.drawOffer, viewerColor, new Date());
       db.saveGame({ ...game, drawOffer: nextOffer });
@@ -927,10 +958,9 @@ async function routeApi(req, res) {
     try {
       const game = getGameOr404(m[1]);
       requirePlayer(viewer, game);
-      if (game.state !== "live") {
-        const e = new RangeError("game already finalized");
-        e.code = "game_already_finalized"; throw e;
-      }
+      requireLiveGame(game);
+      const timeoutPayload = flaggedSettlementPayload(game, viewer.id);
+      if (timeoutPayload) return json(res, 200, timeoutPayload);
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       acceptDraw(game.drawOffer, viewerColor); // throws if invalid; result.settle is implicit
       finalizeGame(game, { result: "draw", reason: "agreement" });
@@ -948,10 +978,9 @@ async function routeApi(req, res) {
     try {
       const game = getGameOr404(m[1]);
       requirePlayer(viewer, game);
-      if (game.state !== "live") {
-        const e = new RangeError("game already finalized");
-        e.code = "game_already_finalized"; throw e;
-      }
+      requireLiveGame(game);
+      const timeoutPayload = flaggedSettlementPayload(game, viewer.id);
+      if (timeoutPayload) return json(res, 200, timeoutPayload);
       const viewerColor = game.players.find((p) => p.id === viewer.id).color;
       const nextOffer = declineDraw(game.drawOffer, viewerColor);
       db.saveGame({ ...game, drawOffer: nextOffer });
@@ -984,6 +1013,7 @@ async function routeApi(req, res) {
   if (req.method === "POST" && (m = pathname.match(/^\/api\/games\/([^/]+)\/moves$/))) {
     try {
       const game = getGameOr404(m[1]);
+      requireLiveGame(game);
       requireTurnOwner(viewer, game);
       const body = await readJson(req);
 
@@ -1031,7 +1061,7 @@ async function routeApi(req, res) {
         viewer: autoSettled ? viewerPayload(viewer.id) : null
       });
     } catch (error) {
-      if (["not_your_turn", "game_not_found"].includes(error.code)) {
+      if (["not_your_turn", "game_not_found", "game_already_finalized"].includes(error.code)) {
         return handleDomainError(error, res);
       }
       return json(res, error.code === "illegal_move" ? 422 : 400, {
@@ -1139,7 +1169,7 @@ function attachWebSocket(ws, viewer) {
 
   function subscribeGame(gameId) {
     const game = db.getGame(gameId);
-    if (!game || !game.players.some((p) => p.id === viewer.id)) {
+    if (!game?.players.some((p) => p.id === viewer.id)) {
       ws.send(JSON.stringify({ type: "error", code: "not_a_player", channel: CHANNELS.game(gameId) }));
       return;
     }
@@ -1184,8 +1214,18 @@ function attachWebSocket(ws, viewer) {
   });
 }
 
-server.listen(port, host, () => {
-  console.log(`Horsey dev server running at http://${host}:${port}`);
-  console.log(`Database: ${dbPath}`);
-  rehydrateClockTimeouts();
-});
+export function closeServerResources() {
+  for (const gameId of clockTimeouts.keys()) clearClockTimeout(gameId);
+  wss.close();
+  db.close();
+}
+
+export { routeApi };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  server.listen(port, host, () => {
+    console.log(`Horsey dev server running at http://${host}:${port}`);
+    console.log(`Database: ${dbPath}`);
+    rehydrateClockTimeouts();
+  });
+}

@@ -73,7 +73,7 @@ Current decision:
 
 - Use `chess.js` for rules through Horsey's local `packages/chess` wrapper.
 - Keep the board UI custom for now.
-- The current board works but is crude; it is not the final product-quality board.
+- The current custom board is the accepted production-intended baseline for this milestone. Future board work should be scoped as named features, not reopened as a generic board-quality cleanup.
 
 Options to evaluate:
 

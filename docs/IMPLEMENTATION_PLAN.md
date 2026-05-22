@@ -31,14 +31,14 @@ These reflect *how* we're working right now, not permanent rules. Update as cond
 What a developer can do locally today, end to end:
 
 - Start the server (`node apps/api/server.mjs`), open `http://localhost:8787/` in two separate browser profiles (or one regular + one incognito) so each holds its own session cookie. Sign up two accounts.
-- Either account can post an open invite from the lobby; the other accepts it. Both stakes lock in fake-money escrow as append-only ledger entries; only the recipient is allowed to accept/decline/counter.
-- Each tab is restricted to its own player. Clicking on the wrong color returns `403 not_your_turn`.
+- Either account can post an open invite from the lobby; the other accepts it before the 60-second auto-decline window. Both stakes lock in fake-money escrow as append-only ledger entries; only the recipient is allowed to accept/decline/counter.
+- Each tab is restricted to its own player. Clicking on the wrong color returns `403 not_your_turn`; non-players cannot read private game or settlement data.
 - Play legal chess moves until checkmate, stalemate, or draw conditions. The server auto-finalizes when chess.js reports a terminal result, releases both escrow holds, credits the winner the net pot, and records the rake.
 - Either player can resign at any time during a live game; the opponent is credited.
 - Draw settlements split the net pot, with any 1-cent rounding remainder routed to the house alongside the rake.
 - The wallet page shows the ledger from the viewer's perspective; the settlement page shows the result from the viewer's perspective.
 - Opponent moves and game finalization push to the other tab over WebSocket — no refresh needed. Challenge create/accept/decline/counter and matchmaking pair also push to the involved users' tabs. (Transport: ADR 0004.)
-- Clocks tick server-side. Each `/moves` advances the moving side's clock; if a side runs out, the server auto-finalizes as a timeout and credits the opponent through the same `settleGame` path used by resign/checkmate. Per-game timeout scheduler rehydrates after a server restart from `state=live` games.
+- Clocks tick server-side. Each `/moves` advances the moving side's clock; if a side runs out, the server auto-finalizes as a timeout and credits the opponent through the same `settleGame` path used by resign/checkmate. Live actions such as resign and draw offer/accept/decline also check for a flag before applying the requested action. Per-game timeout scheduler rehydrates after a server restart from `state=live` games.
 - Either player can offer a draw mid-game (`POST /api/games/:id/draw-offer`); the opponent accepts (`/draw-accept` → game finalizes as a draw via `settleGame(winnerId=null)`, pot split with 1-cent remainder to house) or declines (`/draw-decline` → offer cleared). Same-side double offers, self-accept, and self-decline all return `409`. The offerer's own pending offer auto-clears on their next move.
 
 The domain code in `packages/shared/domain.mjs` (money math, escrow, ledger summary, `settleGame`, challenge transitions) and `packages/chess/src/board.mjs` (chess.js wrapper, FEN, legal moves, terminal detection) is already production-shaped. The mocked surface is everything around it: identity, transport, persistence, asset quality, and seed-vs-real data.
@@ -67,9 +67,9 @@ Phase: **4** transport done; consumer features land in their own slices.
 
 ### 4. One seeded challenge → real challenge + matchmaking
 
-Today: `POST /api/challenges` issues a challenge to a specific user (or open / no recipient); `GET /api/bootstrap` returns the viewer's incoming, sent, and open challenges; accept creates a fresh game on the fly with randomized colors and escrows both sides in a single transaction. `POST /api/matchmaking/quick` queues by `(stakeCents, timeControl)` and instant-pairs against the oldest matching ticket from another user. Lobby UI shows real challenges, has a create-challenge form, and a quick-match form that polls every 2s while a ticket is open. Seed ships 4 users so matchmaking is testable end-to-end. Status: **done** for the dev scaffold.
-Real version remaining: expiration (timed auto-decline), rating-bracketed matchmaking, presence/online filtering, anti-abuse rate limits on challenge creation.
-Phase: **3** scaffold done; expiration + rating brackets + presence pending under Phase 4/6.
+Today: `POST /api/challenges` issues a challenge to a specific user (or open / no recipient); `GET /api/bootstrap` returns the viewer's incoming, sent, and open challenges; pending challenges expire after the visible 60-second auto-decline window; accept creates a fresh game on the fly with randomized colors and escrows both sides in a single transaction. `POST /api/matchmaking/quick` queues by `(stakeCents, timeControl)` and instant-pairs against the oldest matching ticket from another user. Lobby UI shows real challenges, has a create-challenge form, and a quick-match form that polls every 2s while a ticket is open. Status: **done** for the dev scaffold.
+Real version remaining: rating-bracketed matchmaking, presence/online filtering, anti-abuse rate limits on challenge creation.
+Phase: **3** scaffold done; rating brackets + presence pending under Phase 4/6.
 
 ### 5. Static clocks → server-authoritative clocks
 
@@ -77,12 +77,12 @@ Today: server tracks `{whiteMs, blackMs, sideToMove, lastMoveAt, incrementMs}` p
 Real version remaining: drift-tolerant display polish (currently snaps on each push, no smoothing); per-tab visibility throttling; the existing `parseTimeControl` regex enforces `min+inc` in whole minutes — sub-minute formats (e.g. "30s+0" bullet) need a format extension.
 Phase: **4** core done; UX polish + bullet-format support pending.
 
-### 6. Crude unicode board → production board UI
+### 6. Crude unicode board → production-intended board UI
 
-Today: custom CSS-grid board with public-domain SVG pieces, viewer-relative orientation, click-to-move, drag/drop, turn-aware source selection, legal target hints with capture styling, last-move/check highlighting, captured-piece trays, and a promotion picker. Keyboard accessibility and mobile touch ergonomics still need dedicated work.
-Real version: stronger keyboard navigation, mobile touch ergonomics, and a later decision on whether to keep the custom board or adopt a permissively licensed package (e.g. chessground).
+Today: custom CSS-grid board with public-domain SVG pieces, viewer-relative orientation, click-to-move, drag/drop, keyboard square navigation/selection, turn-aware source selection, legal target hints with capture styling, last-move/check highlighting, edge-only coordinates, captured-piece trays, accessible square labels, focus states, mobile-safe tap sizing, and a promotion picker. This is now the accepted production-intended baseline for the current milestone, not a mock loop to keep reopening.
+Real version remaining: future chess UX features should be specific asks (for example premoves, animation, richer touch dragging, replay controls, or adopting a permissively licensed board package after license review), not a generic "fix the crude board" item.
 Implementation note: in the runtime app, the board square button is the draggable surface and the inner piece image stays visual-only; the placeholder `primitives.jsx` board remains design-source only.
-Phase: **2** (remaining work).
+Phase: **2** baseline done; future enhancements are feature-specific.
 
 ### 7. Resign + auto-finalize → full lifecycle endpoints
 
@@ -115,7 +115,7 @@ Deliverables:
 - Project README with local setup, commands, environment expectations, WSL/PowerShell notes. Status: **partial**.
 - Initial stack for frontend, backend, database, realtime transport, test runner, package manager. Status: **partial** — Node/ESM with `node --test`, SQLite via `better-sqlite3` (ADR 0003), WebSockets via `ws` (ADR 0004).
 - Design files preserved under a clear location. Status: **done** (`design/claude-canonical/`).
-- Basic lint, format, typecheck, test commands. Status: **partial** — `npm test` only.
+- Basic lint, format, typecheck, test commands. Status: **partial** — `npm test`, `npm run check`, `npm run lint`, `npm run format`, and `npm run verify` exist; no typecheck/pre-commit yet.
 - ADR folder for durable architecture decisions. Status: **done** (`docs/adr/`).
 
 Exit criteria:
@@ -145,14 +145,13 @@ Deliverables:
 - License review for chess libraries. Status: **done** for `chess.js`; board UI remains custom (see ADR 0002).
 - Server-side game state model with FEN. Status: **done** (in-memory).
 - Legal move validation, turn enforcement, check/checkmate/stalemate/draw detection. Status: **done** via `chess.js` wrapper.
-- Client board: orientation, drag/drop, legal-move hints, last-move highlight, captures, responsive sizing. Status: **partial** — core board interaction is now real; keyboard navigation and mobile touch ergonomics remain.
+- Client board: orientation, click-to-move, drag/drop, keyboard navigation, accessible square labels, legal-move hints, last-move/check highlight, captures, edge coordinates, responsive sizing, and mobile-safe tap behavior. Status: **done** for the current milestone baseline.
 - Move history / notation display. Status: **partial** — basic SAN rows.
 - Tests for legal moves, illegal moves, result detection, special moves, notation. Status: **partial** — legal/illegal/auto-finalize covered; castling, en passant, promotion, stalemate, threefold not yet explicit.
 
 Remaining Phase 2 work:
-- Keyboard navigation and mobile touch ergonomics.
 - Explicit tests for threefold repetition and move history; castling, en passant, promotion, checkmate, and stalemate are covered.
-- Decide whether the custom board keeps evolving or to adopt a permissively licensed board UI package.
+- Treat further board work as named product features, not open-ended polish. Examples: premoves, move animation, richer mobile drag gestures, replay scrubber, or replacing the custom board after a documented permissive-license review.
 
 Exit criteria:
 - Two local/demo users can complete a valid chess game through the app. **Met.**
@@ -163,7 +162,7 @@ Exit criteria:
 Goal: lobby and wager flows functional with auditable fake-money state.
 
 Deliverables:
-- Challenge lifecycle: create, receive, accept, counter, decline, expire. Status: **partial** — create / accept / counter / decline / list-by-state all done; expire (timed auto-decline) pending.
+- Challenge lifecycle: create, receive, accept, counter, decline, expire. Status: **done** for the dev scaffold — create / accept / counter / decline / list-by-state and 60-second auto-decline are implemented.
 - Matchmaking ticket lifecycle for quick match by stake and time. Status: **done** — `POST /api/matchmaking/quick` queues or instant-pairs; `DELETE` removes own ticket; ticket auto-consumed on pair. Rating-bracketed matching pending.
 - Fake-money wallet ledger with balance, holds, releases, settlement entries, audit trail. Status: **done** for entries, balances, escrow holds/releases, win/loss/draw/rake settlement entries; audit-trail UX rolls into Phase 6.
 - Escrow hold when a wager is accepted. Status: **done** (idempotent).
@@ -173,7 +172,7 @@ Deliverables:
 - Wager/scouting page backed by player stats, trust summary, head-to-head data. Status: **partial** — basic player info from `users` table; tells / trust summary / h2h still seed/decorative.
 
 Exit criteria:
-- A player can select a stake/time, accept or create a wager, and enter a game with fake funds escrowed. **Partially met** (no create flow, no quick-match).
+- A player can select a stake/time, accept or create a wager, and enter a game with fake funds escrowed. **Met.**
 - All wallet changes are represented as ledger entries. **Met.**
 
 ### Phase 4 — Realtime Game Loop
@@ -186,7 +185,7 @@ Deliverables:
 - Reconnect flow with grace windows. Status: **partial** — client reconnects to the WS with exponential backoff and refetches via `loadBootstrap`; server-side grace-window policy (for clock/abandonment) is pending and lands with mock #5/#7.
 - Resign, draw offer/accept/decline, timeout, abandonment, disconnect adjudication. Status: **partial** — resign, timeout, and draw offer/accept/decline all done (mock #7). Abandonment is resolved by clock timeout in this slice; presence-driven early-abandonment is deferred to a future slice that depends on a presence subsystem.
 - Idempotent finalization that triggers settlement exactly once. Status: **done** — covered by Phase 3 work (auto-finalize, explicit finalize, resign all reuse `settleGame`); now also publishes `game.finalized` over realtime.
-- Per-side identity enforcement so each player can only move on their own turn. Status: **done** — `403 not_your_turn` when the requester doesn't own the side to move. Real session/auth landed under mock #2; both REST and WS now authenticate via the `horsey_session` cookie.
+- Per-side identity enforcement so each player can only move on their own turn. Status: **done** — `403 not_your_turn` when the requester doesn't own the side to move. Real session/auth landed under mock #2; both REST and WS now authenticate via the `horsey_session` cookie. Game and settlement reads are also player-scoped; finalized games reject further move mutations.
 - Spectator/read-only game stream. Status: **pending** — deferred future consumer of the realtime layer; the player-only guard on `game:*` subscriptions is intentional until spectator policy is decided.
 
 Key decisions still open:
@@ -272,8 +271,8 @@ Run alongside the phases, not after them:
   - Settlement rematch button — **now a real action** (`POST /api/challenges` against prior opponent + stake + time control).
   - Game page eval / anti-cheat insights — the prior "Momentum" placeholder has been removed from the live rail; real eval/scouting remains deferred to trust/safety work.
   - Play page rivals list — not yet rendered (was always pending). Will arrive with Phase 5.
-- **Dev ergonomics.** Phase 0 lint/format/typecheck are still partial. Currently only `npm test` and `npm run check`. Pick a minimal stack (likely Biome or ESLint+Prettier, optional `tsc --noEmit` for JSDoc types) and wire pre-commit + a single `npm run verify` aggregate. Low cost, compounds across the rest of the work.
-- **Testing.** Unit tests for domains (currently 42 passing in `tests/`). Broader test investment (integration, E2E) is **deferred** while we're in rapid-iteration mode — see Working Preferences. Targeted tests for specific new domain logic are still welcome; what's deferred is a test-pyramid push.
+- **Dev ergonomics.** Phase 0 lint/format/typecheck are still partial. Biome lint/format scripts and a single `npm run verify` aggregate now exist. Remaining low-cost work: optional `tsc --noEmit` for JSDoc/types and pre-commit wiring.
+- **Testing.** Unit tests for domains plus a focused API/session integration slice are in `tests/` (currently 45 passing). Broader E2E investment is **deferred** while we're in rapid-iteration mode — see Working Preferences. Targeted tests for specific new domain logic are still welcome; what's deferred is a test-pyramid push.
 - **Observability.** Logs, metrics, traces, audit events, error reporting.
 - **Security.** Auth, authorization, input validation, rate limiting, secrets, abuse prevention.
 - **Accessibility.** Keyboard board controls, focus states, color contrast, mobile ergonomics.
@@ -298,7 +297,7 @@ Out of scope for this milestone:
 - Advanced engine evaluation unless a low-risk permissive dependency is chosen.
 
 What stands between now and the milestone being complete:
-1. Phase 2 remaining — board polish (keyboard navigation, mobile touch ergonomics, promotion UX hardening, tests for threefold and move history).
+1. Phase 2 remaining — targeted chess coverage for threefold repetition and move-history behavior.
 
 Safety note: the manual `POST /api/games/:id/finalize` endpoint is now explicitly dev-gated by `HORSEY_ENABLE_DEV_FINALIZE=1` and still requires the caller to be a player. Normal game completion should flow through moves, resignation, draw agreement, or timeout settlement.
 

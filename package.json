@@ -8,7 +8,10 @@
     "dev": "node apps/api/server.mjs",
     "start": "node apps/api/server.mjs",
     "test": "node --test",
-    "check": "node scripts/check-project.mjs"
+    "check": "node scripts/check-project.mjs",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "verify": "npm run check && npm run lint && npm test"
   },
   "engines": {
     "node": ">=22"

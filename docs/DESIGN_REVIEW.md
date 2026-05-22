@@ -53,7 +53,7 @@ The repeated motifs are important:
 
 Claude's board components are visual placeholders using sparse unicode pieces. They do not establish final board implementation, legal move logic, drag/drop behavior, animation, orientation, premoves, clocks, or server validation.
 
-Current implementation note: the production scaffold now has a crude custom board UI backed by server-validated `chess.js` rules. It is functional but should still be treated as a baseline to replace or heavily polish.
+Current implementation note: the production scaffold now has a custom board UI backed by server-validated `chess.js` rules, with legal hints, click/drag/keyboard interaction, edge coordinates, captured trays, promotion, and mobile-safe tap behavior. Treat it as the accepted current-milestone baseline; future board work should be scoped as named features such as premoves, animation, replay, or a documented permissive-license replacement.
 
 The sample player data, balances, trust stats, anti-cheat labels, and game IDs are demo content. They establish required domains, not real data models.
 
