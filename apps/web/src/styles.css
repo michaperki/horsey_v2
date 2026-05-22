@@ -1290,3 +1290,22 @@ p {
     grid-template-columns: 1fr;
   }
 }
+
+.presence-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.presence-dot.online {
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(38, 122, 75, 0.18);
+}
+
+.presence-dot.offline {
+  background: var(--muted);
+  box-shadow: 0 0 0 3px rgba(109, 98, 83, 0.18);
+}

@@ -33,6 +33,7 @@ import {
   msUntilFlag
 } from "../../packages/shared/clocks.mjs";
 import { computeRatingChange } from "../../packages/shared/rating.mjs";
+import { createPresenceRegistry } from "../../packages/shared/presence.mjs";
 import {
   acceptDraw,
   clearOwnOffer,
@@ -49,6 +50,7 @@ const dbPath = process.env.HORSEY_DB_PATH || path.join(rootDir, "data/horsey.db"
 
 const db = openDatabase(dbPath);
 const broker = createBroker();
+const presence = createPresenceRegistry();
 const enableDevFinalize = process.env.HORSEY_ENABLE_DEV_FINALIZE === "1";
 
 const contentTypes = {
@@ -103,9 +105,14 @@ function enrichGame(game) {
   if (!game) return null;
   const moves = game.moves || [];
   const summary = summarizeGame(game.fen);
+  const playersWithPresence = (game.players || []).map((player) => ({
+    ...player,
+    presence: presence.snapshot(player.id)
+  }));
   return {
     ...summary,
     ...game,
+    players: playersWithPresence,
     moveNumber: Math.floor(moves.length / 2) + 1,
     lastMove: moves[moves.length - 1] || null,
     moveRows: moveRows(moves)
@@ -203,6 +210,22 @@ function publishChallengeUpdated(challenge) {
       type: "challenge.updated",
       challenge: challengePayload(challenge, userId)
     });
+  }
+}
+
+function publishPresenceChanged(userId) {
+  const snapshot = presence.snapshot(userId);
+  const payload = {
+    type: "presence.changed",
+    userId,
+    online: snapshot.online,
+    lastSeenAt: snapshot.lastSeenAt
+  };
+  const liveGame = db.findLiveGameForUser(userId);
+  if (!liveGame) return;
+  for (const player of liveGame.players) {
+    if (player.id === userId) continue;
+    broker.publish(CHANNELS.user(player.id), payload);
   }
 }
 
@@ -1259,6 +1282,21 @@ function attachWebSocket(ws, viewer) {
   const userChannel = CHANNELS.user(viewer.id);
   broker.subscribe(userChannel, client);
 
+  const connectChange = presence.connect(viewer.id);
+  if (!connectChange.previouslyOnline) {
+    publishPresenceChanged(viewer.id);
+  }
+  let cleanedUp = false;
+  function cleanup() {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    broker.unsubscribeAll(client);
+    const change = presence.disconnect(viewer.id);
+    if (change.previouslyOnline && !change.nowOnline) {
+      publishPresenceChanged(viewer.id);
+    }
+  }
+
   function subscribeGame(gameId) {
     const game = db.getGame(gameId);
     if (!game?.players.some((p) => p.id === viewer.id)) {
@@ -1297,13 +1335,8 @@ function attachWebSocket(ws, viewer) {
     }
   });
 
-  ws.on("close", () => {
-    broker.unsubscribeAll(client);
-  });
-
-  ws.on("error", () => {
-    broker.unsubscribeAll(client);
-  });
+  ws.on("close", cleanup);
+  ws.on("error", cleanup);
 }
 
 export function closeServerResources() {

@@ -386,6 +386,14 @@ async function handleRealtimeMessage(msg) {
       }
       return;
     }
+    case "presence.changed": {
+      if (!state.activeGame || !msg.userId) return;
+      const target = state.activeGame.players?.find((p) => p.id === msg.userId);
+      if (!target) return;
+      target.presence = { online: !!msg.online, lastSeenAt: msg.lastSeenAt ?? null };
+      if (state.route === "game") render();
+      return;
+    }
     case "game.finalized": {
       const id = msg.gameId || msg.game?.id;
       if (!id) return;
@@ -955,13 +963,23 @@ function playerStrip(game, player, active = false) {
     : active
       ? (isViewer ? `your turn · move ${game.moveNumber}` : "thinking")
       : "waiting";
+  const presence = player.presence;
+  const showPresence = !isViewer && presence;
+  const onlineLabel = showPresence
+    ? presence.online
+      ? "online"
+      : presence.lastSeenAt
+        ? `last seen ${relativeTimeFromNow(presence.lastSeenAt)}`
+        : "offline"
+    : "";
+  const dotClass = showPresence ? (presence.online ? "online" : "offline") : "";
   return `
     <div class="player-strip ${active ? "active" : ""} ${low ? "low" : ""} ${critical ? "critical" : ""}" data-clock="${player.color}">
       <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
       <span class="player-main">
         <span>
-          <strong>${isViewer ? "You" : escapeHtml(player.handle)}</strong>
-          <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}</small>
+          <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}</strong>
+          <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? ` · ${escapeHtml(onlineLabel)}` : ""}</small>
         </span>
         <span class="player-subline">
           ${capturedPiecesMarkup(game, player.color, "No captures")}
@@ -975,6 +993,15 @@ function playerStrip(game, player, active = false) {
       </span>
     </div>
   `;
+}
+
+function relativeTimeFromNow(iso) {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return "just now";
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }
 
 function connectionPill() {
