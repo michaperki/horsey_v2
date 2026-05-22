@@ -129,7 +129,8 @@ function rowToGame(row) {
     moves: data.moves,
     pot: data.pot,
     clock: data.clock ?? null,
-    drawOffer: data.drawOffer ?? null
+    drawOffer: data.drawOffer ?? null,
+    ratingChange: data.ratingChange ?? null
   };
 }
 
@@ -222,6 +223,7 @@ function makeApi(db) {
       INSERT INTO users (id, email, handle, password_hash, password_salt, rating, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
+    updateUserRating: db.prepare("UPDATE users SET rating = ? WHERE id = ?"),
 
     getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
     insertSession: db.prepare(`
@@ -336,6 +338,9 @@ function makeApi(db) {
         user.createdAt
       );
     },
+    updateUserRating(userId, rating) {
+      stmts.updateUserRating.run(rating, userId);
+    },
 
     getSession(id) {
       const row = stmts.getSession.get(id);
@@ -383,7 +388,14 @@ function makeApi(db) {
         game.id, game.state, game.fen,
         game.challengeId ?? null, game.winnerId ?? null,
         game.endReason ?? null, game.endedAt ?? null,
-        JSON.stringify({ players: game.players, moves: game.moves, pot: game.pot, clock: game.clock ?? null, drawOffer: game.drawOffer ?? null }),
+        JSON.stringify({
+          players: game.players,
+          moves: game.moves,
+          pot: game.pot,
+          clock: game.clock ?? null,
+          drawOffer: game.drawOffer ?? null,
+          ratingChange: game.ratingChange ?? null
+        }),
         now, now
       );
       for (const p of game.players) {
@@ -395,7 +407,14 @@ function makeApi(db) {
         game.state, game.fen,
         game.challengeId ?? null, game.winnerId ?? null,
         game.endReason ?? null, game.endedAt ?? null,
-        JSON.stringify({ players: game.players, moves: game.moves, pot: game.pot, clock: game.clock ?? null, drawOffer: game.drawOffer ?? null }),
+        JSON.stringify({
+          players: game.players,
+          moves: game.moves,
+          pot: game.pot,
+          clock: game.clock ?? null,
+          drawOffer: game.drawOffer ?? null,
+          ratingChange: game.ratingChange ?? null
+        }),
         new Date().toISOString(),
         game.id
       );

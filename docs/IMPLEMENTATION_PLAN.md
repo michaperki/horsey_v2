@@ -202,7 +202,7 @@ Exit criteria:
 Goal: make the full design loop real after a game ends.
 
 Deliverables:
-- Settlement page with credited amount, rake, balance change, rating/stat changes, final position, rematch actions. Status: **partial** — credited / rake / balance / final move are real; rating delta is still seed-driven; rematch is a navigation-only button.
+- Settlement page with credited amount, rake, balance change, rating/stat changes, final position, rematch actions. Status: **partial** — credited / rake / balance / final move and a real Elo-based rating delta are now live; rematch issues a real challenge. Per-game stat aggregation and richer post-game stats still pending.
 - Game history and profile stats. Status: **partial** — viewer-scoped finalized games list shipped at `GET /api/games/history` with a History route + detail view (reusing the settlement renderer); per-game stats aggregation and profile stats still pending.
 - Rivalry/head-to-head tracking. Status: **pending**.
 - Rematch, double-or-nothing, auto-requeue flows. Status: **partial** — rematch now issues a real challenge against the prior opponent at the same stake + time control; double-or-nothing and auto-requeue still pending.
@@ -267,7 +267,7 @@ Run alongside the phases, not after them:
 - **Information architecture.** First pass landed: top nav is now Play · History · Profile, with a Resume-game pill that appears only when a live game exists. Wager/Game/Settlement keep their routes but are reached through the flow, not the chrome. Wallet folded into Profile. History list + detail (reusing the settlement renderer) shipped. Deferred destinations (Live spectator, Friends/Rivals, Admin) remain named slots. **See `IA_PROPOSAL.md` for the per-screen real-vs-mocked matrix; it stays live as mocks turn real.**
 - **UI surfaces still showing seed/decorative data.** Distinct from the numbered subsystem mocks (#1–#9). Status after the IA pass:
   - Wager page opponent `country` / `reputation` / `verified` / `h2h` / `note` — **deleted from API and UI.** Will re-emerge with real backing under Phase 5 (rivalry/h2h) + trust subsystem (Phase 6).
-  - Settlement `ratingDelta` — **returns `null`; row hidden** until a real rating system exists.
+  - Settlement `ratingDelta` — **now real.** Backed by an Elo module (`packages/shared/rating.mjs`, K=32, formula version 1) and a per-game `ratingChange` snapshot in `games.data_json`. Users' `rating` is updated inside the same transaction as `settleGame`. Per-time-control ratings and provisional/Glicko-style uncertainty are not in scope for this slice.
   - Settlement rematch button — **now a real action** (`POST /api/challenges` against prior opponent + stake + time control).
   - Game page eval / anti-cheat insights — the prior "Momentum" placeholder has been removed from the live rail; real eval/scouting remains deferred to trust/safety work.
   - Play page rivals list — not yet rendered (was always pending). Will arrive with Phase 5.

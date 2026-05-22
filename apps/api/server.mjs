@@ -32,6 +32,7 @@ import {
   initClockState,
   msUntilFlag
 } from "../../packages/shared/clocks.mjs";
+import { computeRatingChange } from "../../packages/shared/rating.mjs";
 import {
   acceptDraw,
   clearOwnOffer,
@@ -343,6 +344,22 @@ function settlementPayload(game, viewerId) {
   const timeControl = challenge?.timeControl ?? null;
   const canRematch = finalized && opponentId && timeControl;
 
+  let ratingDelta = null;
+  let ratingBefore = null;
+  let ratingAfter = null;
+  if (finalized && game.ratingChange) {
+    const viewerColor = game.players.find((p) => p.id === viewerId)?.color;
+    if (viewerColor === "white") {
+      ratingDelta = game.ratingChange.whiteDelta;
+      ratingBefore = game.ratingChange.whiteBefore;
+      ratingAfter = game.ratingChange.whiteAfter;
+    } else if (viewerColor === "black") {
+      ratingDelta = game.ratingChange.blackDelta;
+      ratingBefore = game.ratingChange.blackBefore;
+      ratingAfter = game.ratingChange.blackAfter;
+    }
+  }
+
   return {
     id: `set_${game.id}`,
     gameId: game.id,
@@ -356,7 +373,9 @@ function settlementPayload(game, viewerId) {
     netPotCents: pot.netPotCents,
     balanceAfterCents: walletSummary(ledger, viewerId).balanceCents,
     winningMove: lastMove?.san ?? null,
-    ratingDelta: null,
+    ratingDelta,
+    ratingBefore,
+    ratingAfter,
     rematchChallenge: canRematch
       ? { opponentId, opponent: opponentHandle, stakeCents, timeControl }
       : null,
@@ -520,12 +539,20 @@ function finalizeGame(game, { result, reason }) {
     });
     if (outcome.newEntries.length > 0) {
       db.appendLedger(outcome.newEntries);
+      const ratingChange = computeRatingChange({
+        whiteRating: db.getUser(white.id).rating,
+        blackRating: db.getUser(black.id).rating,
+        result
+      });
+      db.updateUserRating(white.id, ratingChange.whiteAfter);
+      db.updateUserRating(black.id, ratingChange.blackAfter);
       db.saveGame({
         ...game,
         state: "finalized",
         winnerId,
         endReason: reason || defaultReason,
-        endedAt: new Date().toISOString()
+        endedAt: new Date().toISOString(),
+        ratingChange
       });
     }
   })();

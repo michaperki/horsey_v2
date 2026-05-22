@@ -78,6 +78,39 @@ test("expired open challenges cannot be accepted", async (t) => {
   assert.equal(bootstrap.body.lobby.openChallenges.some((c) => c.id === created.body.challenge.id), false);
 });
 
+test("settlement reports a rating change after a decisive game", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  assert.equal(alice.user.rating, 1500);
+  assert.equal(bob.user.rating, 1500);
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const winningClient = game.players[0].id === alice.user.id ? bob : alice;
+  const losingClient = winningClient === alice ? bob : alice;
+  const resigned = await fixture.post(losingClient, `/api/games/${game.id}/resign`);
+  assert.equal(resigned.status, 200);
+  assert.equal(resigned.body.game.state, "finalized");
+
+  const winnerSettlement = await fixture.get(winningClient, `/api/games/${game.id}/settlement`);
+  const loserSettlement = await fixture.get(losingClient, `/api/games/${game.id}/settlement`);
+
+  assert.equal(winnerSettlement.body.settlement.ratingDelta, 16);
+  assert.equal(loserSettlement.body.settlement.ratingDelta, -16);
+  assert.equal(winnerSettlement.body.settlement.ratingAfter, 1516);
+  assert.equal(loserSettlement.body.settlement.ratingAfter, 1484);
+
+  const winnerBootstrap = await fixture.get(winningClient, "/api/bootstrap");
+  assert.equal(winnerBootstrap.body.viewer.rating, 1516);
+});
+
 test("flagged players lose before taking live actions", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

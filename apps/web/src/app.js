@@ -49,6 +49,11 @@ const money = (cents) => new Intl.NumberFormat("en-US", {
   maximumFractionDigits: cents % 100 === 0 ? 0 : 2
 }).format(cents / 100);
 
+function formatRatingDelta(delta) {
+  if (delta === 0) return "±0";
+  return delta > 0 ? `+${delta}` : `${delta}`;
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1291,7 +1296,7 @@ function renderSettlement() {
         <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
         <div class="metric-grid">
           <div><small>Balance</small><strong>${money(settlement.balanceAfterCents)}</strong></div>
-          ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${drew ? "±0" : `${won ? "+" : "−"}${settlement.ratingDelta}`}</strong></div>` : ""}
+          ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${formatRatingDelta(settlement.ratingDelta)}${settlement.ratingAfter !== null ? ` <span class="muted">→ ${settlement.ratingAfter}</span>` : ""}</strong></div>` : ""}
           <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
         </div>
       </article>
