@@ -37,11 +37,39 @@ const state = {
     reconnectTimer: null,
     subscribedGameId: null
   },
-  clockTick: null
+  clockTickFrame: null,
+  clockAnchor: null
 };
 
 function viewerId() {
   return state.bootstrap?.viewer?.id;
+}
+
+function captureClockAnchor(clock) {
+  if (!clock) {
+    state.clockAnchor = null;
+    return;
+  }
+  const staleMs = clock.lastMoveAt ? Math.max(0, Date.now() - Date.parse(clock.lastMoveAt)) : 0;
+  state.clockAnchor = {
+    sideToMove: clock.sideToMove,
+    whiteMs: clock.whiteMs,
+    blackMs: clock.blackMs,
+    anchoredAtMs: performance.now() - staleMs
+  };
+}
+
+function setActiveGame(game) {
+  state.activeGame = game;
+  captureClockAnchor(game?.clock ?? null);
+}
+
+function localRemainingForSide(side) {
+  const anchor = state.clockAnchor;
+  if (!anchor) return null;
+  const stored = side === "white" ? anchor.whiteMs : anchor.blackMs;
+  if (anchor.sideToMove !== side) return stored;
+  return stored - (performance.now() - anchor.anchoredAtMs);
 }
 
 const money = (cents) => new Intl.NumberFormat("en-US", {
@@ -127,7 +155,7 @@ async function loadBootstrap() {
   state.liveGame = data.activeGame || null;
   const viewingHistoryDetail = state.route === "history" && state.routeParam;
   if (!viewingHistoryDetail) {
-    state.activeGame = data.activeGame || data.recentGame || null;
+    setActiveGame(data.activeGame || data.recentGame || null);
     state.activeSettlement = data.recentSettlement || null;
     if (data.recentSettlement?.state === "finalized" && data.recentSettlement.gameId) {
       await loadReplay(data.recentSettlement.gameId);
@@ -193,7 +221,7 @@ async function logout() {
   closeRealtime();
   state.bootstrap = null;
   state.activeChallenge = null;
-  state.activeGame = null;
+  setActiveGame(null);
   state.activeSettlement = null;
   state.liveGame = null;
   state.historyList = null;
@@ -216,7 +244,7 @@ function authGuard(error) {
     closeRealtime();
     state.bootstrap = null;
     state.activeChallenge = null;
-    state.activeGame = null;
+    setActiveGame(null);
     state.activeSettlement = null;
     state.liveGame = null;
     state.historyList = null;
@@ -274,22 +302,26 @@ function stopPolling() {
 function manageClockTick() {
   const wantTicking = state.route === "game" && state.activeGame
     && state.activeGame.state === "live" && state.activeGame.clock;
-  if (wantTicking && !state.clockTick) {
-    state.clockTick = setInterval(updateClockDom, 250);
-  } else if (!wantTicking && state.clockTick) {
-    clearInterval(state.clockTick);
-    state.clockTick = null;
+  if (wantTicking && !state.clockTickFrame) {
+    const tick = () => {
+      if (!state.clockTickFrame) return;
+      updateClockDom();
+      state.clockTickFrame = requestAnimationFrame(tick);
+    };
+    state.clockTickFrame = requestAnimationFrame(tick);
+  } else if (!wantTicking && state.clockTickFrame) {
+    cancelAnimationFrame(state.clockTickFrame);
+    state.clockTickFrame = null;
   }
 }
 
 function updateClockDom() {
   const game = state.activeGame;
   if (!game?.clock) return;
-  const now = Date.now();
   for (const player of game.players) {
     const node = document.querySelector(`[data-clock="${player.color}"] time`);
     if (!node) continue;
-    const ms = remainingForSide(game.clock, player.color, now);
+    const ms = localRemainingForSide(player.color);
     node.textContent = ms == null ? "--:--" : formatClock(ms);
     const strip = node.closest(".player-strip");
     if (strip) {
@@ -381,7 +413,7 @@ async function handleRealtimeMessage(msg) {
       return;
     case "game.updated": {
       if (state.activeGame && msg.game && msg.game.id === state.activeGame.id) {
-        state.activeGame = msg.game;
+        setActiveGame(msg.game);
         if (state.route === "game") render();
       }
       return;
@@ -404,7 +436,7 @@ async function handleRealtimeMessage(msg) {
           getJson(`/api/games/${id}/settlement`),
           getJson("/api/wallet")
         ]);
-        state.activeGame = gameResp.game;
+        setActiveGame(gameResp.game);
         state.activeSettlement = settlementResp.settlement;
         state.bootstrap.viewer = wallet.viewer;
         state.walletLedger = wallet.ledger;
@@ -421,7 +453,7 @@ async function handleRealtimeMessage(msg) {
       try {
         await loadBootstrap();
         if (msg.type === "matchmaking.matched" && msg.game) {
-          state.activeGame = msg.game;
+          setActiveGame(msg.game);
           stopPolling();
           navigate("game");
           return;
@@ -452,7 +484,7 @@ async function submitMove(from, to, promotion = "q") {
     render();
     return;
   }
-  state.activeGame = payload.game;
+  setActiveGame(payload.game);
   state.selectedSquare = null;
   state.pendingPromotion = null;
   if (payload.settlement && payload.settlement.state === "finalized") {
@@ -475,7 +507,7 @@ async function resignGame() {
   state.gameError = null;
   try {
     const payload = await postJson(`/api/games/${state.activeGame.id}/resign`, {});
-    state.activeGame = payload.game;
+    setActiveGame(payload.game);
     state.activeSettlement = payload.settlement;
     if (payload.viewer) state.bootstrap.viewer = payload.viewer;
     const wallet = await getJson("/api/wallet");
@@ -494,7 +526,7 @@ async function submitDrawAction(action) {
   state.gameError = null;
   try {
     const payload = await postJson(`/api/games/${state.activeGame.id}/${action}`, {});
-    state.activeGame = payload.game;
+    setActiveGame(payload.game);
     if (action === "draw-accept") {
       state.activeSettlement = payload.settlement;
       if (payload.viewer) state.bootstrap.viewer = payload.viewer;
@@ -525,7 +557,7 @@ async function actOnChallenge(action) {
       : await postJson(`/api/challenges/${challengeId}/${action}`);
     state.activeChallenge = payload.challenge;
     if (payload.viewer) state.bootstrap.viewer = payload.viewer;
-    if (payload.game) state.activeGame = payload.game;
+    if (payload.game) setActiveGame(payload.game);
     const wallet = await getJson("/api/wallet");
     state.bootstrap.viewer = wallet.viewer;
     state.walletLedger = wallet.ledger;
@@ -562,7 +594,7 @@ async function joinQuickMatch({ stakeCents, timeControl }) {
   try {
     const payload = await postJson("/api/matchmaking/quick", { stakeCents, timeControl });
     if (payload.matched && payload.game) {
-      state.activeGame = payload.game;
+      setActiveGame(payload.game);
       if (payload.viewer) state.bootstrap.viewer = payload.viewer;
       const wallet = await getJson("/api/wallet");
       state.bootstrap.viewer = wallet.viewer;
@@ -642,7 +674,7 @@ async function enterRoute(parsed) {
         getJson(`/api/games/${gameId}/settlement`),
         getJson(`/api/games/${gameId}/replay`)
       ]);
-      state.activeGame = gameResp.game;
+      setActiveGame(gameResp.game);
       state.activeSettlement = settlementResp.settlement;
       state.replay = {
         gameId,
@@ -952,7 +984,7 @@ function drawControls(game, viewerColor) {
 }
 
 function playerStrip(game, player, active = false) {
-  const ms = remainingForSide(game.clock, player.color, Date.now());
+  const ms = localRemainingForSide(player.color);
   const display = ms == null ? "--:--" : formatClock(ms);
   const low = ms != null && ms < 30000 && game.state === "live";
   const critical = ms != null && ms < 10000 && game.state === "live";
@@ -1108,14 +1140,6 @@ function squareLabel(game, square, pieceColor, target, isSource, isSelected) {
     parts.push("last move");
   }
   return parts.join(", ");
-}
-
-function remainingForSide(clock, side, now) {
-  if (!clock) return null;
-  const stored = side === "white" ? clock.whiteMs : clock.blackMs;
-  if (clock.sideToMove !== side) return stored;
-  const elapsed = now - Date.parse(clock.lastMoveAt);
-  return stored - elapsed;
 }
 
 function formatClock(ms) {
