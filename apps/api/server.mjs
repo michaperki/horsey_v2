@@ -317,6 +317,14 @@ function requireChallenger(viewer, challenge) {
   }
 }
 
+function requireRespondingParty(viewer, challenge) {
+  if (challenge.state === "countered") {
+    requireChallenger(viewer, challenge);
+    return;
+  }
+  requireRecipient(viewer, challenge);
+}
+
 function requireChallengeViewer(viewer, challenge) {
   const isParticipant = viewer.id === challenge.challengerId || viewer.id === challenge.recipientId;
   const isOpenTable = challenge.state === "incoming" && challenge.recipientId === null;
@@ -1250,7 +1258,7 @@ async function routeApi(req, res) {
   if (req.method === "POST" && (m = pathname.match(/^\/api\/challenges\/([^/]+)\/accept$/))) {
     try {
       const challenge = refreshChallengeState(getChallengeOr404(m[1]));
-      requireRecipient(viewer, challenge);
+      requireRespondingParty(viewer, challenge);
       const game = acceptChallenge(challenge, viewer.id);
       const updated = getChallengeOr404(m[1]);
       publishChallengeUpdated(updated);
@@ -1267,7 +1275,7 @@ async function routeApi(req, res) {
   if (req.method === "POST" && (m = pathname.match(/^\/api\/challenges\/([^/]+)\/decline$/))) {
     try {
       const challenge = refreshChallengeState(getChallengeOr404(m[1]));
-      requireRecipient(viewer, challenge);
+      requireRespondingParty(viewer, challenge);
       db.saveChallenge(transitionChallenge(challenge, "declined", { declinedAt: new Date().toISOString() }));
       const updated = getChallengeOr404(m[1]);
       publishChallengeUpdated(updated);

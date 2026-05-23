@@ -24,6 +24,7 @@ const state = {
   userRecentGames: null,
   wagerOpponent: null,
   wagerOpponentLoading: false,
+  wagerCounter: { open: false },
   replay: null,
   walletLedger: [],
   selectedSquare: null,
@@ -49,7 +50,8 @@ const state = {
   clockTickFrame: null,
   clockAnchor: null,
   picker: {
-    hero: { stakeCents: null, timeControl: null }
+    hero: { stakeCents: null, timeControl: null },
+    counter: { stakeCents: null, timeControl: null }
   },
   scout: {
     userId: null,
@@ -909,12 +911,7 @@ async function actOnChallenge(action) {
   setActionInFlight("challenge", `${challengeId}:${action}`, true);
   render();
   try {
-    const payload = action === "counter"
-      ? await postJson(`/api/challenges/${challengeId}/counter`, {
-          stakeCents: state.activeChallenge.stakeCents,
-          timeControl: state.activeChallenge.timeControl
-        })
-      : await postJson(`/api/challenges/${challengeId}/${action}`);
+    const payload = await postJson(`/api/challenges/${challengeId}/${action}`);
     state.activeChallenge = payload.challenge;
     if (payload.viewer) state.bootstrap.viewer = payload.viewer;
     if (payload.game) setActiveGame(payload.game);
@@ -922,7 +919,7 @@ async function actOnChallenge(action) {
     state.bootstrap.viewer = wallet.viewer;
     state.walletLedger = wallet.ledger;
     if (action === "accept") navigate("game");
-    if (action === "decline" || action === "counter") {
+    if (action === "decline") {
       state.activeChallenge = null;
       navigate("play");
     }
@@ -933,6 +930,50 @@ async function actOnChallenge(action) {
     render();
   } finally {
     setActionInFlight("challenge", `${challengeId}:${action}`, false);
+    if (state.view === "app") render();
+  }
+}
+
+function openCounter() {
+  const c = state.activeChallenge;
+  if (!c) return;
+  state.picker.counter = { stakeCents: c.stakeCents, timeControl: c.timeControl };
+  state.wagerCounter = { open: true };
+  state.actionError = null;
+  render();
+}
+
+function closeCounter() {
+  state.wagerCounter = { open: false };
+  state.actionError = null;
+  render();
+}
+
+async function submitCounter() {
+  const c = state.activeChallenge;
+  if (!c) return;
+  const pick = state.picker.counter;
+  if (!pick.stakeCents || !pick.timeControl) return;
+  if (pick.stakeCents === c.stakeCents && pick.timeControl === c.timeControl) return;
+  const key = `${c.id}:counter`;
+  if (actionInFlight("challenge", key)) return;
+  state.actionError = null;
+  setActionInFlight("challenge", key, true);
+  render();
+  try {
+    const payload = await postJson(`/api/challenges/${c.id}/counter`, {
+      stakeCents: pick.stakeCents,
+      timeControl: pick.timeControl
+    });
+    state.activeChallenge = payload.challenge;
+    state.wagerCounter = { open: false };
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  } finally {
+    setActionInFlight("challenge", key, false);
     if (state.view === "app") render();
   }
 }
@@ -1187,6 +1228,7 @@ async function enterRoute(parsed) {
   if (state.route !== "wager") {
     state.wagerOpponent = null;
     state.wagerOpponentLoading = false;
+    state.wagerCounter = { open: false };
   }
 
   managePolling();
@@ -1797,30 +1839,42 @@ function renderWager() {
   const viewerIsRecipient = viewerId() === challenge.recipientId;
   const viewerIsChallenger = viewerId() === challenge.challengerId;
   const isOpen = !challenge.recipientId;
+  const isIncoming = challenge.state === "incoming";
+  const isCountered = challenge.state === "countered";
   const expiresRemaining = challengeSecondsRemaining(challenge);
   const isExpired = expiresRemaining === 0;
-  const canAct = (viewerIsRecipient || (isOpen && !viewerIsChallenger))
-    && (challenge.state === "incoming" || challenge.state === "countered")
-    && !isExpired;
-  const canWithdraw = viewerIsChallenger
-    && (challenge.state === "incoming" || challenge.state === "countered")
-    && !isExpired;
-  const accepting = actionInFlight("challenge", `${challenge.id}:accept`);
-  const declining = actionInFlight("challenge", `${challenge.id}:decline`);
-
-  let actionLabel = "Accept and lock";
-  if (challenge.state === "accepted") actionLabel = "Escrow locked";
-  else if (challenge.state === "declined") actionLabel = "Declined";
-  else if (challenge.state === "expired") actionLabel = "Expired";
-  else if (viewerIsChallenger) actionLabel = isOpen ? "Awaiting any opponent" : `Awaiting ${challenge.recipient?.handle ?? "recipient"}`;
+  const canAct = !isExpired && (
+    (isIncoming && (viewerIsRecipient || (isOpen && !viewerIsChallenger))) ||
+    (isCountered && viewerIsChallenger)
+  );
+  const canCounter = !isExpired && isIncoming && viewerIsRecipient && !isOpen;
+  const canWithdraw = viewerIsChallenger && (isIncoming || isCountered) && !isExpired;
 
   const opponent = challenge.opponent;
   const hasNamedOpponent = !!opponent?.id;
-  const headline = viewerIsChallenger
-    ? `<span class="muted">You staked</span> ${money(challenge.stakeCents)}`
-    : `<span class="muted">${escapeHtml(opponent.handle)} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
+  let headline;
+  if (isCountered && viewerIsChallenger) {
+    headline = `<span class="muted">${escapeHtml(opponent.handle)} countered with</span> ${money(challenge.stakeCents)}`;
+  } else if (isCountered && viewerIsRecipient) {
+    headline = `<span class="muted">You countered with</span> ${money(challenge.stakeCents)}`;
+  } else if (viewerIsChallenger) {
+    headline = `<span class="muted">You staked</span> ${money(challenge.stakeCents)}`;
+  } else {
+    headline = `<span class="muted">${escapeHtml(opponent.handle)} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
+  }
+
   const dossier = hasNamedOpponent ? renderWagerDossier(opponent, state.wagerOpponent) : "";
   const tcKind = timeControlKind(challenge.timeControl);
+  const matchActions = renderWagerActions({
+    challenge,
+    canAct,
+    canCounter,
+    canWithdraw,
+    isCountered,
+    viewerIsChallenger,
+    viewerIsRecipient,
+    opponent
+  });
 
   return `
     <section class="grid wager">
@@ -1835,12 +1889,58 @@ function renderWager() {
         <div class="eyebrow">The match</div>
         <h2>${money(challenge.stakeCents)} each</h2>
         <p>${challenge.timeControl}${tcKind ? ` ${tcKind}` : ""} · ${money(challenge.pot.netPotCents)} pot after ${money(challenge.pot.rakeCents)} rake</p>
-        <button class="primary" ${canAct && !accepting ? 'data-action="accept"' : "disabled"}>${accepting ? "Locking..." : `${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}`}</button>
-        <button class="quiet" ${canAct && !declining ? 'data-action="decline"' : "disabled"}>${declining ? "Declining..." : "Decline"}</button>
-        ${canWithdraw ? `<button class="danger" data-withdraw-challenge>Withdraw invite</button>` : ""}
+        ${matchActions}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
+  `;
+}
+
+function renderWagerActions({ challenge, canAct, canCounter, canWithdraw, isCountered, viewerIsChallenger, viewerIsRecipient, opponent }) {
+  if (state.wagerCounter.open) return renderCounterPicker(challenge);
+
+  const accepting = actionInFlight("challenge", `${challenge.id}:accept`);
+  const declining = actionInFlight("challenge", `${challenge.id}:decline`);
+  const blocks = [];
+
+  if (canAct) {
+    blocks.push(`<button class="primary" data-action="accept" ${accepting ? "disabled" : ""}>${accepting ? "Locking..." : `Accept and lock ${money(challenge.stakeCents)}`}</button>`);
+    if (canCounter) {
+      blocks.push(`<button class="quiet" data-action="counter-open">Counter terms</button>`);
+    }
+    blocks.push(`<button class="quiet" data-action="decline" ${declining ? "disabled" : ""}>${declining ? "Declining..." : "Decline"}</button>`);
+  } else {
+    let statusText = "";
+    if (challenge.state === "accepted") statusText = "Escrow locked";
+    else if (challenge.state === "declined") statusText = "Declined";
+    else if (challenge.state === "expired") statusText = "Expired";
+    else if (isCountered && viewerIsRecipient) statusText = `You countered — waiting on ${opponent?.handle ?? "them"}`;
+    else if (viewerIsChallenger) statusText = challenge.recipientId ? `Awaiting ${opponent?.handle ?? "recipient"}` : "Awaiting any opponent";
+    if (statusText) blocks.push(`<div class="match-status">${escapeHtml(statusText)}</div>`);
+  }
+
+  if (canWithdraw) {
+    blocks.push(`<button class="danger" data-withdraw-challenge>Withdraw invite</button>`);
+  }
+  return blocks.join("");
+}
+
+function renderCounterPicker(challenge) {
+  const lobby = state.bootstrap?.lobby;
+  if (!lobby) return "";
+  const pick = state.picker.counter;
+  const unchanged = pick.stakeCents === challenge.stakeCents && pick.timeControl === challenge.timeControl;
+  const submitting = actionInFlight("challenge", `${challenge.id}:counter`);
+  return `
+    <div class="counter-picker">
+      <strong class="counter-picker-label">Counter with</strong>
+      ${renderStakePicker("counter", lobby.stakes, pick.stakeCents)}
+      ${renderTimePicker("counter", lobby.timeControls, pick.timeControl)}
+      <div class="counter-picker-actions">
+        <button class="primary" data-action="counter-submit" ${unchanged || submitting ? "disabled" : ""}>${submitting ? "Sending..." : "Send counter"}</button>
+        <button class="quiet" data-action="counter-cancel">Cancel</button>
+      </div>
+    </div>
   `;
 }
 
@@ -2852,7 +2952,13 @@ function render() {
     });
   });
   document.querySelectorAll("[data-action]").forEach((b) => {
-    b.addEventListener("click", () => actOnChallenge(b.dataset.action));
+    b.addEventListener("click", () => {
+      const action = b.dataset.action;
+      if (action === "counter-open") return openCounter();
+      if (action === "counter-cancel") return closeCounter();
+      if (action === "counter-submit") return submitCounter();
+      actOnChallenge(action);
+    });
   });
   document.querySelectorAll("[data-withdraw-challenge]").forEach((b) => {
     b.addEventListener("click", () => withdrawChallenge());
