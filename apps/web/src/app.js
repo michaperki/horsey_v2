@@ -54,8 +54,7 @@ const state = {
     user: null,
     loading: false,
     error: null,
-    anchor: null,
-    context: null
+    anchor: null
   }
 };
 
@@ -514,15 +513,11 @@ async function rematchFromHistory({ opponentId, stakeCents, timeControl }) {
   }
 }
 
-function scoutTrigger(user, innerHtml, className = "", context = {}) {
+function scoutTrigger(user, innerHtml, className = "") {
   if (!user?.id || user.id === viewerId()) return innerHtml;
-  const contextAttrs = [
-    context.stakeCents ? `data-scout-stake="${escapeHtml(context.stakeCents)}"` : "",
-    context.timeControl ? `data-scout-time="${escapeHtml(context.timeControl)}"` : ""
-  ].filter(Boolean).join(" ");
   return `
     <span class="scout-trigger ${escapeHtml(className)}" role="button" tabindex="0"
-      data-open-scout="${escapeHtml(user.id)}" ${contextAttrs}>
+      data-open-scout="${escapeHtml(user.id)}">
       ${innerHtml}
     </span>
   `;
@@ -534,8 +529,7 @@ function closeScout(shouldRender = true) {
     user: null,
     loading: false,
     error: null,
-    anchor: null,
-    context: null
+    anchor: null
   };
   if (shouldRender) render();
 }
@@ -563,11 +557,7 @@ async function openScout(element) {
     user: null,
     loading: true,
     error: null,
-    anchor: scoutAnchorFor(element),
-    context: {
-      stakeCents: Number.parseInt(element.dataset.scoutStake || "", 10) || state.picker.hero.stakeCents,
-      timeControl: element.dataset.scoutTime || state.picker.hero.timeControl
-    }
+    anchor: scoutAnchorFor(element)
   };
   render();
   try {
@@ -581,25 +571,6 @@ async function openScout(element) {
     if (state.scout.userId !== userId) return;
     state.scout.loading = false;
     state.scout.error = error.message;
-    render();
-  }
-}
-
-async function challengeFromScout() {
-  const userId = state.scout.userId;
-  const stakeCents = state.scout.context?.stakeCents;
-  const timeControl = state.scout.context?.timeControl;
-  if (!userId || !stakeCents || !timeControl) return;
-  state.actionError = null;
-  try {
-    const payload = await postJson("/api/challenges", { recipientId: userId, stakeCents, timeControl });
-    state.activeChallenge = payload.challenge;
-    closeScout(false);
-    await loadBootstrap();
-    navigate("wager");
-  } catch (error) {
-    if (authGuard(error)) return;
-    state.actionError = error.message;
     render();
   }
 }
@@ -1334,8 +1305,6 @@ function renderScoutPopover() {
     ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""} (${h2h.games})`
     : "No shared games";
   const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
-  const challengeLabel = scout.context?.stakeCents ? `Challenge ${money(scout.context.stakeCents)}` : "Challenge";
-  const challengeDisabled = !scout.context?.stakeCents || !scout.context?.timeControl;
   const narrative = scoutNarrative(stats, h2h);
   return `
     <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
@@ -1366,8 +1335,7 @@ function renderScoutPopover() {
         <strong>${escapeHtml(h2hText)} ${h2hMoney}</strong>
       </div>
       <div class="scout-actions">
-        <button type="button" class="primary" data-scout-challenge ${challengeDisabled ? "disabled" : ""}>${escapeHtml(challengeLabel)}</button>
-        <a class="primary-link" href="#user/${escapeHtml(user.id)}">Profile -></a>
+        <a class="primary scout-profile-link" href="#user/${escapeHtml(user.id)}">View profile <span aria-hidden="true">-></span></a>
       </div>
     </section>
   `;
@@ -1511,8 +1479,7 @@ function renderHeroIdle(lobby) {
               ${scoutTrigger(
                 { id: o.opponentId, handle: o.handle },
                 identity,
-                "hero-rematch-scout",
-                { stakeCents: o.stakeCents, timeControl: o.timeControl }
+                "hero-rematch-scout"
               )}
               <span class="hero-rematch-stake mono tnum">${money(o.stakeCents)}</span>
             </button>
@@ -1665,8 +1632,7 @@ function renderOpenTableRow(challenge) {
       ${opponent ? scoutTrigger(
         opponent,
         identity,
-        "open-row-scout",
-        { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+        "open-row-scout"
       ) : `<span class="open-row-identity">${identity}</span>`}
       <span class="open-row-terms mono tnum">${escapeHtml(termsParts.join(" · "))}</span>
       <span class="open-row-sit">Sit <span aria-hidden="true">→</span></span>
@@ -1733,8 +1699,7 @@ function challengeRow(challenge) {
       ${opponent?.id ? scoutTrigger(
         opponent,
         identity,
-        "table-row-scout",
-        { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+        "table-row-scout"
       ) : identity}
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
       <em>${isMine && !challenge.recipientId ? "yours · " : ""}${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
@@ -1789,8 +1754,7 @@ function renderWager() {
           ${scoutTrigger(
             opponent,
             opponentIdentity,
-            "wager-scout",
-            { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+            "wager-scout"
           )}
         </article>
       </article>
@@ -1991,7 +1955,7 @@ function playerStrip(game, player, active = false) {
   `;
   return `
     <div class="player-strip ${active ? "active" : ""} ${low ? "low" : ""} ${critical ? "critical" : ""}" data-clock="${player.color}">
-      ${isViewer ? identity : scoutTrigger(player, identity, "player-strip-scout", { stakeCents: game.pot?.stakeCents, timeControl: game.timeControl })}
+      ${isViewer ? identity : scoutTrigger(player, identity, "player-strip-scout")}
       <span class="clock-box">
         <time>${display}</time>
         <span class="clock-meter"><span style="width: ${clockPercent(game.clock, ms)}"></span></span>
@@ -2474,8 +2438,7 @@ function renderSettlement() {
         ${settlementOpponent ? scoutTrigger(
           settlementOpponent,
           `<span class="settlement-scout-id"><span class="avatar sm">${escapeHtml((opponentHandle[0] ?? "?").toUpperCase())}</span><span>${escapeHtml(opponentHandle)}</span></span>`,
-          "settlement-scout",
-          { stakeCents: settlement.rematchChallenge.stakeCents, timeControl: settlement.rematchChallenge.timeControl }
+          "settlement-scout"
         ) : ""}
         ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
         <button data-nav="play">Find new opponent</button>
@@ -2554,8 +2517,7 @@ function historyRow(entry) {
       ${entry.opponent?.id ? scoutTrigger(
         entry.opponent,
         identity,
-        "history-scout",
-        { stakeCents: entry.stakeCents, timeControl: entry.timeControl }
+        "history-scout"
       ) : identity}
       <div class="history-credit ${resultClass}">${sign}${money(credited)}</div>
       <small class="history-when">${when}</small>
@@ -2853,9 +2815,6 @@ function render() {
   });
   document.querySelectorAll("[data-close-scout]").forEach((b) => {
     b.addEventListener("click", () => closeScout());
-  });
-  document.querySelectorAll("[data-scout-challenge]").forEach((b) => {
-    b.addEventListener("click", () => challengeFromScout());
   });
   document.querySelectorAll("[data-profile-challenge]").forEach((b) => {
     b.addEventListener("click", () => challengeFromProfile(b));

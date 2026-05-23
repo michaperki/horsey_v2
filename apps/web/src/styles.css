@@ -1345,16 +1345,13 @@ p {
 .scout-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  justify-content: stretch;
 }
 
-.scout-actions .primary {
+.scout-profile-link {
   flex: 1;
-}
-
-.scout-actions .primary-link {
-  margin-top: 0;
+  text-align: center;
+  text-decoration: none;
 }
 
 .scout-skeleton {

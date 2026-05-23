@@ -99,7 +99,7 @@ Tight by design. Six blocks max:
 ├─────────────────────────────────────┤
 │ h2h vs you:  3 – 2  (5 games)       │  ← score only; no dollar tally
 ├─────────────────────────────────────┤
-│ [Challenge $25]  [Profile →]        │  ← CTAs
+│ [          View profile →         ] │  ← single inspection CTA
 └─────────────────────────────────────┘
 ```
 
@@ -147,7 +147,8 @@ Names follow the project's wave convention; this is a new track running parallel
 - [x] Popover primitive: anchored to a triggering element, click-outside + Esc to close, single open at a time. Remaining polish: focus return/trap.
 - [x] `Scout Card` renderer fed by `GET /api/users/:id`. Skeleton state for the brief fetch.
 - [x] `[data-open-scout]` triggers added to opponent identity surfaces (Wager, Live-Table Module, Game player strips, Open Tables, Rematch strip, History, Settlement, Incoming). Trigger clicks stop propagation so parent card clicks (e.g. `selectChallenge`) don't also fire.
-- [x] CTAs: `Challenge $X` uses the local stake/time context where available and falls back to the hero picker; `Profile ->` navigates to `#user/:id`.
+- [x] **Scout Card is inspection-only.** The original cut had a `Challenge $X` button alongside `Profile ->`, but the directed-challenge action turned out to compete with `Sit ->` on every open-table identity click and pushed the lobby fantasy toward "calling people out" rather than "sitting at public tables." Directed challenge now lives on the Profile route (and on Rematch / Settlement, where a relationship already exists). Clicking through Scout -> Profile -> Challenge is the deliberate path for a stranger callout.
+- [x] Scout CTAs are reduced to a single full-width `View profile ->` link; the trigger's stake/time context is no longer needed by the card and was removed from `scoutTrigger()`, `openScout()`, and the trigger dataset attrs across all callsites.
 
 ### Wave U3 — Full Player Profile
 
