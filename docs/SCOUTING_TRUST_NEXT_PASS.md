@@ -207,6 +207,66 @@ Useful future data:
 
 Important limitation: because Chess.com PubAPI is read-only public data, "verified Chess.com account" needs a separate proof flow. Options include OAuth if available through a later partnership/product path, or a claim-challenge flow such as asking the user to place a Horsey verification token in a public profile field if the platform permits it. Do not treat a typed Chess.com username as verified.
 
+### Onboarding intake (the near-term entrance ramp)
+
+External chess-account linking is the long-term identity story (Wave T2 below), but a meaningful v1 of this work can land much sooner as an **optional onboarding intake step**: ask new (and existing) users for their Lichess and/or Chess.com handle, fetch their public stats, and use them to seed a more honest initial rating + scout-card reads. This is high product leverage because right now every new account begins at the seeded 1200 ELO regardless of how strong they actually are, which makes early matches mis-calibrated and the dossier reads feel ungrounded.
+
+Two-tier verification model — both tiers can ship before full OAuth:
+
+| Tier | What it means | How we get there |
+|---|---|---|
+| **Claimed** | User typed a handle; we fetched public stats for them | Lichess `/api/user/{handle}` (no auth, rate-limited) and Chess.com `pub/player/{handle}/stats` (no auth, cached). Returned data is real, the *binding to this Horsey user* is not. |
+| **Verified** | We have proof the Horsey user controls the external account | Lichess: OAuth/PKCE — full Wave T2. Chess.com: claim-challenge (user places a Horsey-issued token in their Chess.com profile bio; we fetch the profile and look for it; if present, mark verified). |
+
+UX shape:
+
+- **Onboarding modal** after signup with three options: `Link Lichess`, `Link Chess.com`, `Skip for now`. Skip is fully allowed — onboarding can't gate play.
+- **Settings → linked accounts** so existing users can add a handle later. Re-syncs stats on demand and at some background cadence.
+- **Profile chip:** `Lichess linked · 2148 blitz` / `Chess.com claimed · 1980 rapid`. Two tiers visually distinct — verified gets a check glyph, claimed gets a "?" or muted treatment. Never call something "verified" unless the proof actually exists.
+
+Rating seeding strategy (v1, conservative):
+
+- Take the user's Lichess blitz rating if linked, else Chess.com blitz, else default 1200.
+- Cap the seed to avoid runaway calibration: max 1800 from claimed-only data; verified can seed higher.
+- Apply a "still calibrating" provisional flag for the first N (~10) Horsey games regardless of seed — the seed is a starting point, the on-platform K-factor still moves it.
+- Don't import historical rating timelines into Horsey's rating-change ledger — confusing provenance. The Horsey rating starts at the seed and evolves from there.
+
+Admin / manual approval surface (the question raised in the roadmap conversation):
+
+- For the **claim-challenge Chess.com flow**, the verification can be fully automated: server fetches the public profile, looks for the token, marks verified. No human in the loop for the happy path.
+- But there's a class of edge cases where manual review is the right answer: handle disputes (two Horsey accounts claim the same Chess.com handle), suspected bot/farmed accounts on the external platform, profile data that doesn't match the user's pattern. For these, a tiny admin queue is sufficient:
+  - `GET /api/admin/external-account-claims?state=pending`
+  - admin clicks `approve` or `reject`
+  - audit log entry
+- Admin surface itself is its own small UI route, gated behind a role flag on the user record. Don't build a full RBAC system for this — a single `isAdmin` boolean on `users` is sufficient until it isn't.
+
+Server data needed (additive to the schema):
+
+```
+external_accounts(
+  id, user_id, provider ('lichess' | 'chesscom'),
+  external_username, external_id,
+  status ('claimed' | 'verification_pending' | 'verified' | 'rejected'),
+  claim_token, claim_token_expires_at,
+  imported_stats_json, last_synced_at,
+  verified_at, verified_by ('oauth' | 'profile_token' | 'admin'),
+  created_at, updated_at
+)
+```
+
+Plus a small background sync to refresh imported_stats periodically (cron or on profile view, lazy is fine).
+
+Sequencing inside the trust roadmap:
+
+1. **Schema + manual handle intake.** Settings → add Lichess/Chess.com handle. Server fetches public stats. Status starts as `claimed`. Scout/profile render `claimed` chip. Initial rating seed applied to new accounts only. *(Smallest viable slice.)*
+2. **Onboarding modal on signup.** Same handle intake, surfaced at the right moment.
+3. **Chess.com claim-challenge.** Token-in-bio verification flow. Auto-verifies the happy path.
+4. **Admin queue.** Build only when there are real edge cases to triage; until then the claim flow can run open-loop.
+5. **Lichess OAuth/PKCE.** Full Wave T2 — the gold-standard verification. Token storage, refresh, scopes.
+6. **Cross-platform calibration.** Use imported game samples to calibrate the Horsey rating model, not just the seed. Phase 6+.
+
+This sub-section sits above Wave T2 because the claimed-tier work is much smaller in scope and unblocks the rating-calibration problem today, without waiting for OAuth integration.
+
 ## 7. Data/API changes to plan
 
 Do not overload the current `GET /api/users/:id` forever. Add explicit profile/trust fields once backing data exists.
