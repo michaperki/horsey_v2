@@ -253,9 +253,10 @@ Data work needed:
 
 ### Wave O1 - Open Tables hierarchy fix  *(shipped)*
 
-- [x] `renderOpenTableCard()` is now a two-row table listing: identity (avatar + handle + rating) on row 1, a single `$X · 3+0 blitz` typographic terms row on row 2, with a quiet right-aligned `Sit ->` text action spanning both rows.
+- [x] `renderOpenTableCard()` is now a two-row table listing: identity (avatar + handle + rating) on row 1, a single `$X · 3+0 blitz` typographic terms row on row 2, with a muted inline `Sit ->` affordance pinned right that brightens to gold and nudges 2px on row hover.
 - [x] Chip stack demoted to 14px accent inline with the terms text instead of being its own object row.
 - [x] Big gold CTA block deleted (`.open-card-cta` removed); the card body still routes to Wager via the existing `data-select-challenge` click.
+- [x] The `Sit ->` affordance is intentionally typography-only — no padding, no border, no hover box. The whole row is the interaction; Sit is a chevron-style hint, not a nested CTA. Avoids the button-in-button geometry the first cut had.
 - [x] Scout trigger remains on the identity span (now classed `open-card-scout` with the new `inline-flex` grid placement) so opponent inspection still works and stopPropagation guards the parent click.
 - [x] No narrative labels or trust clues rendered here per the locked decision — those live in the Scout Card. Open Tables stays typographically quiet.
 

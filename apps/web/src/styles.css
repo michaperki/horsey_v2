@@ -661,17 +661,15 @@ main {
   align-self: center;
   font-weight: 800;
   font-size: 13px;
-  color: var(--gold);
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  color: var(--muted);
   letter-spacing: 0.02em;
   white-space: nowrap;
+  transition: color 0.15s ease, transform 0.15s ease;
 }
 
 .open-table-card:hover .open-card-sit {
-  border-color: var(--gold);
-  background: rgba(199, 162, 86, 0.08);
+  color: var(--gold);
+  transform: translateX(2px);
 }
 
 .hero h1,
