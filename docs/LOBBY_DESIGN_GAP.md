@@ -121,7 +121,8 @@ These items previously lived as isolated polish tickets; they now land inside th
 
 ### Wave 4 — Deferred to subsystems / later
 
-- [ ] **Live Floor right column — full version** (Hot Upsets, Rivals list, Live Games feed). Blocked on presence + spectator subsystems; promote to `IMPLEMENTATION_PLAN.md` when those are queued.
+- [x] **Live Games feed** — landed in the liveness pass. New `.live-games-card` between Incoming and Open Tables. Each row shows both players (scoutable identities), stake, time control, and client-computed elapsed time. Broadcast over `CHANNELS.lobby` alongside the heartbeat. See `docs/LIVENESS_NEXT_PASS.md` item 1.
+- [ ] **Hot Upsets / Rivals shortlist** — still deferred. Will sit beside the Live Games card once we have rivalry signals and upset-detection logic.
 - [ ] **#8 Filter chips above Open Tables** (`all / bullet / blitz / rapid / $100+ / rivals`). Cosmetic until the grid scales — defer until there's enough volume to need filtering.
 - [ ] **#10 TopNav cleanup.** Fold connection pill + identity + logout into a tidier avatar menu. Independent of the lobby IA; do alongside a real auth-menu later.
 

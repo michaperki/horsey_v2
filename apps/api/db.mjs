@@ -139,7 +139,8 @@ function rowToGame(row) {
     pot: data.pot,
     clock: data.clock ?? null,
     drawOffer: data.drawOffer ?? null,
-    ratingChange: data.ratingChange ?? null
+    ratingChange: data.ratingChange ?? null,
+    timeControl: data.timeControl ?? null
   };
 }
 
@@ -435,7 +436,8 @@ function makeApi(db) {
           pot: game.pot,
           clock: game.clock ?? null,
           drawOffer: game.drawOffer ?? null,
-          ratingChange: game.ratingChange ?? null
+          ratingChange: game.ratingChange ?? null,
+          timeControl: game.timeControl ?? null
         }),
         now, now
       );
@@ -454,7 +456,8 @@ function makeApi(db) {
           pot: game.pot,
           clock: game.clock ?? null,
           drawOffer: game.drawOffer ?? null,
-          ratingChange: game.ratingChange ?? null
+          ratingChange: game.ratingChange ?? null,
+          timeControl: game.timeControl ?? null
         }),
         new Date().toISOString(),
         game.id

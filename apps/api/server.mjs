@@ -264,11 +264,34 @@ function publishPresenceChanged(userId) {
   }
 }
 
+function lobbyLiveGameProjection(game) {
+  return {
+    id: game.id,
+    players: (game.players || []).map((p) => ({
+      id: p.id,
+      handle: p.handle,
+      rating: p.rating
+    })),
+    stakeCents: game.pot?.stakeCents ?? 0,
+    timeControl: game.timeControl,
+    moveCount: (game.moves || []).length,
+    startedAt: game.createdAt
+  };
+}
+
+function listLobbyLiveGames(limit = 8) {
+  return db.listLiveGames()
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+    .slice(0, limit)
+    .map(lobbyLiveGameProjection);
+}
+
 let lastHeartbeatSnapshot = null;
 function computeLobbyLiveness() {
   return {
     onlineCount: presence.onlineCount(),
-    activeGames: db.countLiveGames()
+    activeGames: db.countLiveGames(),
+    liveGames: listLobbyLiveGames(8)
   };
 }
 
@@ -283,7 +306,8 @@ function publishLobbyHeartbeat({ force = false } = {}) {
   broker.publish(CHANNELS.lobby, {
     type: "lobby.heartbeat",
     onlineCount: snapshot.onlineCount,
-    activeGames: snapshot.activeGames
+    activeGames: snapshot.activeGames,
+    liveGames: snapshot.liveGames
   });
 }
 
@@ -788,7 +812,8 @@ function acceptChallenge(challenge, accepterId) {
       players,
       moves: [],
       pot: challenge.pot,
-      clock
+      clock,
+      timeControl: challenge.timeControl
     });
     createdGame = db.getGame(gameId);
 

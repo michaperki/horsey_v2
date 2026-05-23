@@ -1446,6 +1446,80 @@ p {
   50% { transform: scale(1.04); }
 }
 
+.live-games-card h2 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-feed-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d2453a;
+  animation: live-feed-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes live-feed-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(210, 69, 58, 0.4); }
+  50%      { opacity: 0.72; box-shadow: 0 0 0 6px rgba(210, 69, 58, 0); }
+}
+
+.live-feed-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.live-feed-row:last-child {
+  border-bottom: none;
+}
+
+.live-feed-players {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.live-feed-scout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.live-feed-handle {
+  font-weight: 800;
+  font-size: 14px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-feed-rating {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.live-feed-vs {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.live-feed-meta {
+  font-size: 12px;
+  color: var(--muted);
+  padding-left: 38px;
+}
+
 .wager-dossier {
   display: grid;
   gap: 14px;

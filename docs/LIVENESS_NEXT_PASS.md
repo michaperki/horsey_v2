@@ -19,14 +19,19 @@ What's left is the *animation* of the room — the cues that say "the casino is 
 
 Five candidates ranked by leverage given the design direction.
 
-### 1. Live Games feed in the right rail  *(biggest single product move)*
+### 1. Live Games feed in the right rail  *(shipped)*
 
-A small list of currently-in-progress tables, visible from the lobby. Reads as `Vish · Kobe · $50 · move 14`, no spectatorship needed for v1 — just public game metadata.
+A list of currently-in-progress tables, visible from the lobby. Each row reads `[V] Vish · 1842   vs   [K] Kobe · 1798` with a muted meta line `$50 · 3+0 blitz · 4m elapsed` below. No spectatorship UI — just the visible feed.
 
-- **Why it matters.** The single strongest "the casino floor is alive" signal we can ship. Open Tables shows who's looking for action; Live Games shows action *in progress*. Together they tell the player "there's a room, people are in it, and the room is moving."
-- **Scope.** New endpoint or extension to `/api/bootstrap` returning live-game summaries (handles + stake + move count + clock-running indicator). New right-rail card under Open Tables. No spectator pipeline, no game-watching UI — just the visible feed.
-- **What it unlocks.** Becomes the natural mounting point later for the deferred Hot Upsets / Rivals / spectator surfaces in `LOBBY_DESIGN_GAP.md` Wave 4.
-- **Privacy guardrail.** Show stake and move count, not move-by-move detail. Public game metadata only.
+- [x] **Server projection.** `lobbyLiveGameProjection(game)` returns `{ id, players: [{id, handle, rating}], stakeCents, timeControl, moveCount, startedAt }` per live game. `listLobbyLiveGames(limit=8)` sorts by `createdAt` desc and slices. The full result lives on `lobby.liveGames` alongside the heartbeat counts.
+- [x] **Time control persisted on the game blob.** Previously time control lived only on the challenge, which made every live-game render need a challenge lookup. `acceptChallenge` now writes `timeControl` into the game JSON; `rowToGame` reads it back. Old games show `null` and that's fine.
+- [x] **Broadcast over the existing lobby channel.** The `lobby.heartbeat` event now carries `liveGames: [...]` in addition to the counts. The cache key in `publishLobbyHeartbeat` stays based on `onlineCount + activeGames` since the list only changes when a game starts or finalizes, which is exactly when `activeGames` changes. One channel, one event type — no proliferation of WS message kinds.
+- [x] **Right rail position.** New `.live-games-card` sits between Incoming and Open Tables — "what's happening right now" reads before "what's available to join." Card title is `● Live now <count>` with a 1.6s pulsing red dot.
+- [x] **Identity is scoutable.** Each player's avatar+handle+rating is wrapped in the existing `scoutTrigger` so any handle in the feed opens the Scout Card. Reinforces that the room contains real people, not opaque game IDs.
+- [x] **Targeted DOM update.** New `updateLiveGamesFeedDom()` rewrites only the `[data-live-games-feed]` container's inner HTML when the heartbeat arrives with a changed list. The Play page doesn't re-render; the feed updates in place.
+- [x] **Privacy/loss-advertising guardrail.** Projection includes stake and move count but no per-side dollar totals, no win/loss aggregates against either player. Stake is already public on the challenge that produced the game, so surfacing it here is consistent.
+
+**Note on move count freshness:** moveCount is captured at the moment the heartbeat fires (game start / finalize). Between those events the move count is stale. The "elapsed" suffix (`3m elapsed`, `just started`) is computed client-side from `startedAt` and gives the row its sense of motion. A future enhancement could broadcast per-move events to the lobby channel for live move counts, but that's noisier and not warranted yet.
 
 ### 2. Heartbeat numbers go live over WS  *(shipped)*
 

@@ -820,13 +820,18 @@ async function handleRealtimeMessage(msg) {
     case "lobby.heartbeat": {
       if (!state.bootstrap?.lobby) return;
       const before = state.bootstrap.lobby;
-      if (before.onlineCount === msg.onlineCount && before.activeGames === msg.activeGames) return;
+      const countsChanged = before.onlineCount !== msg.onlineCount || before.activeGames !== msg.activeGames;
+      const liveGamesChanged = Array.isArray(msg.liveGames)
+        && JSON.stringify(before.liveGames) !== JSON.stringify(msg.liveGames);
+      if (!countsChanged && !liveGamesChanged) return;
       state.bootstrap.lobby = {
         ...before,
-        onlineCount: msg.onlineCount,
-        activeGames: msg.activeGames
+        onlineCount: msg.onlineCount ?? before.onlineCount,
+        activeGames: msg.activeGames ?? before.activeGames,
+        liveGames: Array.isArray(msg.liveGames) ? msg.liveGames : before.liveGames
       };
-      updateHeartbeatDom();
+      if (countsChanged) updateHeartbeatDom();
+      if (liveGamesChanged) updateLiveGamesFeedDom();
       return;
     }
     case "challenge.created":
@@ -1711,6 +1716,74 @@ function renderHero(lobby) {
   return `<article class="hero felt hero-state-${heroState}">${body}${error}</article>`;
 }
 
+function renderLiveGameRow(game) {
+  const players = game.players || [];
+  const a = players[0];
+  const b = players[1];
+  const identity = (p) => {
+    if (!p) return "";
+    const initial = (p.handle?.[0] ?? "?").toUpperCase();
+    const inner = `
+      <span class="avatar sm">${escapeHtml(initial)}</span>
+      <span class="live-feed-handle">${escapeHtml(p.handle ?? "player")}</span>
+      ${p.rating ? `<span class="live-feed-rating mono tnum">${escapeHtml(String(p.rating))}</span>` : ""}
+    `;
+    return scoutTrigger(p, inner, "live-feed-scout");
+  };
+  const kind = timeControlKind(game.timeControl);
+  const elapsed = elapsedSecondsSince(game.startedAt);
+  const elapsedText = elapsed < 30
+    ? "just started"
+    : `${formatElapsedShort(elapsed)} elapsed`;
+  const termsBits = [money(game.stakeCents)];
+  if (game.timeControl) termsBits.push(`${game.timeControl}${kind ? ` ${kind}` : ""}`);
+  termsBits.push(elapsedText);
+  return `
+    <div class="live-feed-row" data-live-game-id="${escapeHtml(game.id)}" data-live-game-started="${escapeHtml(game.startedAt ?? "")}">
+      <div class="live-feed-players">
+        ${identity(a)}
+        <span class="live-feed-vs" aria-hidden="true">vs</span>
+        ${identity(b)}
+      </div>
+      <div class="live-feed-meta mono tnum">${escapeHtml(termsBits.join(" · "))}</div>
+    </div>
+  `;
+}
+
+function renderLiveGamesCard(liveGames) {
+  const games = liveGames || [];
+  return `
+    <article class="card live-games-card" data-live-games-card>
+      <div class="between">
+        <h2><span class="live-feed-dot" aria-hidden="true"></span>Live now</h2>
+        <small data-live-games-count>${games.length}</small>
+      </div>
+      <div data-live-games-feed>
+        ${games.length === 0
+          ? `<p class="muted small">No tables in play yet. Be the first to start one.</p>`
+          : games.map(renderLiveGameRow).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function updateLiveGamesFeedDom() {
+  if (typeof document === "undefined") return;
+  const lobby = state.bootstrap?.lobby;
+  if (!lobby) return;
+  const card = document.querySelector("[data-live-games-card]");
+  if (!card) return;
+  const games = lobby.liveGames || [];
+  const feed = card.querySelector("[data-live-games-feed]");
+  const counter = card.querySelector("[data-live-games-count]");
+  if (counter) counter.textContent = String(games.length);
+  if (feed) {
+    feed.innerHTML = games.length === 0
+      ? `<p class="muted small">No tables in play yet. Be the first to start one.</p>`
+      : games.map(renderLiveGameRow).join("");
+  }
+}
+
 function renderHeartbeatStrip(lobby) {
   const online = Number(lobby.onlineCount ?? 0);
   const active = Number(lobby.activeGames ?? 0);
@@ -1789,6 +1862,7 @@ function renderPlay() {
             ${incomingChallenges.map(challengeRow).join("")}
           </article>
         `}
+        ${renderLiveGamesCard(lobby.liveGames)}
         <article class="card open-tables-card">
           <div class="between"><h2>Open tables</h2><small>${openCount}</small></div>
           ${renderOpenTablesList(openChallenges)}
