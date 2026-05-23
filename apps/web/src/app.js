@@ -1629,32 +1629,28 @@ function renderOpenTableCard(challenge) {
     .map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`)
     .join("");
   const kind = timeControlKind(challenge.timeControl);
-  const rating = opponent?.rating ? `<span class="open-card-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : "";
+  const termsParts = [money(challenge.stakeCents), challenge.timeControl];
+  if (kind) termsParts.push(kind);
   const identity = `
-    <div class="avatar">${escapeHtml(initial)}</div>
-    <div class="open-card-id">
+    <span class="avatar sm">${escapeHtml(initial)}</span>
+    <span class="open-card-id">
       <span class="open-card-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
-      ${rating}
-    </div>
+      ${opponent?.rating ? `<span class="open-card-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
+    </span>
   `;
   return `
     <button class="open-table-card" data-select-challenge="${challenge.id}">
-      <div class="open-card-head">
-        ${opponent ? scoutTrigger(
-          opponent,
-          identity,
-          "open-card-scout",
-          { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
-        ) : identity}
-      </div>
-      <div class="open-card-stake">
-        <span class="chip-stack">${stack}</span>
-        <span class="chip-total">${money(challenge.stakeCents)}</span>
-      </div>
-      <div class="open-card-meta">
-        <span class="time-pill"><span>${escapeHtml(challenge.timeControl)}</span><span class="time-pill-kind">${kind}</span></span>
-      </div>
-      <span class="open-card-cta">Sit · ${money(challenge.stakeCents)}</span>
+      ${opponent ? scoutTrigger(
+        opponent,
+        identity,
+        "open-card-scout",
+        { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+      ) : `<span class="open-card-identity">${identity}</span>`}
+      <span class="open-card-terms">
+        <span class="chip-stack open-card-chips" aria-hidden="true">${stack}</span>
+        <span class="open-card-terms-text mono tnum">${escapeHtml(termsParts.join(" · "))}</span>
+      </span>
+      <span class="open-card-sit">Sit <span aria-hidden="true">→</span></span>
     </button>
   `;
 }
