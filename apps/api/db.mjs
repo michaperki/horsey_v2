@@ -308,6 +308,14 @@ function makeApi(db) {
       ORDER BY COALESCE(g.ended_at, g.updated_at) DESC
       LIMIT ?
     `),
+    listFinalizedGamesBetween: db.prepare(`
+      SELECT g.* FROM games g
+      JOIN game_players gp_a ON gp_a.game_id = g.id AND gp_a.user_id = ?
+      JOIN game_players gp_b ON gp_b.game_id = g.id AND gp_b.user_id = ?
+      WHERE g.state = 'finalized'
+      ORDER BY COALESCE(g.ended_at, g.updated_at) DESC
+      LIMIT ?
+    `),
 
     getLobby: db.prepare("SELECT data_json FROM lobby WHERE id = 1"),
 
@@ -455,6 +463,9 @@ function makeApi(db) {
     findMostRecentGameForUser(userId) { return rowToGame(stmts.findMostRecentGameForUser.get(userId)); },
     listFinalizedGamesForUser(userId, limit = 50) {
       return stmts.listFinalizedGamesForUser.all(userId, limit).map(rowToGame);
+    },
+    listFinalizedGamesBetween(userA, userB, limit = 50) {
+      return stmts.listFinalizedGamesBetween.all(userA, userB, limit).map(rowToGame);
     },
     listLiveGames() { return stmts.listLiveGames.all().map(rowToGame); },
 

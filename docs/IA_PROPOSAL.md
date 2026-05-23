@@ -50,6 +50,10 @@ We intentionally name these so they have a slot reserved, not so they ship now:
 - **Friends / Rivals** (canonical) — relationship features. Add with Phase 5 rivalry/head-to-head work.
 - **Admin** — Phase 6.
 
+### Layered user identity (accepted; in flight)
+
+Identity isn't a single page. The proposed model is a stack of surfaces sized to the moment: inline → compact Scout Card (popover) → full Player Profile at `#user/:id` → Wager-screen dossier → in-game tells rail → Trust & Safety panel. The API foundations, compact Scout Card, and initial `#user/:id` profile route are in place; wager-screen dossier enrichment and Phase-6 trust/tells remain deferred. See `docs/USER_PROFILE_IA.md` for the full plan, API additions (`GET /api/users/:id`, `GET /api/users/:id/recent-games`), per-surface trigger plan, privacy/loss-advertising guardrails, and the buildable-now vs Phase-6-deferred split.
+
 ## Per-screen real-vs-mocked matrix
 
 Legend: ✅ real · ⚠️ mocked (looks real, isn't) · 🚫 absent (canonical but not built) · 🧪 stub (button/link exists, action doesn't)

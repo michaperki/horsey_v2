@@ -493,6 +493,153 @@ function replayPayload(game) {
   };
 }
 
+// Result for the given user in a finalized game ("win" | "loss" | "draw" | null).
+function gameResultForUser(game, userId) {
+  if (game.state !== "finalized") return null;
+  if (!game.winnerId) return "draw";
+  return game.winnerId === userId ? "win" : "loss";
+}
+
+// Per-game ledger-equivalent net delta for the given user. Mirrors the math in
+// settleGame (packages/shared/domain.mjs) so we don't need to fetch ledger rows.
+function netDeltaForUser(game, userId) {
+  const stake = game.pot?.stakeCents ?? 0;
+  if (!stake) return 0;
+  const pot = calculatePot({ stakeCents: stake });
+  if (!game.winnerId) {
+    return Math.floor(pot.netPotCents / 2) - stake;
+  }
+  if (game.winnerId === userId) {
+    return pot.netPotCents - stake;
+  }
+  return -stake;
+}
+
+function aggregateUserStats(userId, games) {
+  let wins = 0; let losses = 0; let draws = 0;
+  const last10 = [];
+  for (const game of games) {
+    const r = gameResultForUser(game, userId);
+    if (r === "win") wins += 1;
+    else if (r === "loss") losses += 1;
+    else if (r === "draw") draws += 1;
+    if (last10.length < 10 && r) last10.push(r === "win" ? "W" : r === "loss" ? "L" : "D");
+  }
+  let streakKind = null; let streakLength = 0;
+  for (const game of games) {
+    const r = gameResultForUser(game, userId);
+    const kind = r === "win" ? "W" : r === "loss" ? "L" : r === "draw" ? "D" : null;
+    if (!kind) break;
+    if (streakKind === null) { streakKind = kind; streakLength = 1; continue; }
+    if (kind !== streakKind) break;
+    streakLength += 1;
+  }
+  const ratingTimeline = [];
+  for (let i = games.length - 1; i >= 0 && ratingTimeline.length < 20; i -= 1) {
+    const game = games[i];
+    const rc = game.ratingChange;
+    if (!rc) continue;
+    const player = game.players?.find((p) => p.id === userId);
+    if (!player) continue;
+    const delta = player.color === "white" ? rc.whiteDelta : rc.blackDelta;
+    const after = player.color === "white" ? rc.whiteAfter : rc.blackAfter;
+    if (delta == null || after == null) continue;
+    ratingTimeline.push({ at: game.endedAt ?? null, delta, after });
+  }
+  return {
+    finishedGames: games.length,
+    wins, losses, draws,
+    currentStreak: streakKind ? { kind: streakKind, length: streakLength } : null,
+    last10,
+    ratingTimeline
+  };
+}
+
+function userH2hVsViewer(targetId, viewerId) {
+  if (!viewerId || viewerId === targetId) return null;
+  const games = db.listFinalizedGamesBetween(viewerId, targetId, 50);
+  if (games.length === 0) return null;
+  let viewerWins = 0; let viewerLosses = 0; let draws = 0;
+  let viewerNetTotalCents = 0;
+  const last5 = [];
+  for (const game of games) {
+    const r = gameResultForUser(game, viewerId);
+    if (r === "win") viewerWins += 1;
+    else if (r === "loss") viewerLosses += 1;
+    else if (r === "draw") draws += 1;
+    viewerNetTotalCents += netDeltaForUser(game, viewerId);
+    if (last5.length < 5 && r) {
+      const challenge = game.challengeId ? db.getChallenge(game.challengeId) : null;
+      last5.push({
+        gameId: game.id,
+        result: r === "win" ? "W" : r === "loss" ? "L" : "D",
+        timeControl: challenge?.timeControl ?? null,
+        endedAt: game.endedAt ?? null,
+        endReason: game.endReason ?? null
+      });
+    }
+  }
+  // Per project_no_loss_advertising: surface the dollar tally only when the
+  // viewer is net-up. Negative tallies become null on the wire; the client
+  // renders the score-only treatment.
+  const viewerNetCents = viewerNetTotalCents > 0 ? viewerNetTotalCents : null;
+  return {
+    games: games.length,
+    viewerWins,
+    viewerLosses,
+    draws,
+    viewerNetCents,
+    last5
+  };
+}
+
+function userProfilePayload(targetId, viewerId) {
+  const user = db.getUser(targetId);
+  if (!user) return null;
+  const games = db.listFinalizedGamesForUser(targetId, 50);
+  const liveGame = db.findLiveGameForUser(targetId);
+  const liveOpponentPlayer = liveGame?.players?.find((p) => p.id !== targetId);
+  const liveOpponent = liveOpponentPlayer ? db.getUser(liveOpponentPlayer.id) : null;
+  return {
+    id: user.id,
+    handle: user.handle,
+    rating: user.rating,
+    createdAt: user.createdAt,
+    stats: aggregateUserStats(targetId, games),
+    presence: presence.snapshot(targetId),
+    liveGame: liveGame
+      ? {
+        id: liveGame.id,
+        opponent: liveOpponent ? withOpponentDecor(liveOpponent) : null,
+        stakeCents: liveGame.pot?.stakeCents ?? 0
+      }
+      : null,
+    h2hVsViewer: userH2hVsViewer(targetId, viewerId)
+  };
+}
+
+function userRecentGamesPayload(targetId, limit) {
+  const cappedLimit = Math.min(Math.max(1, Number.isInteger(limit) ? limit : 10), 25);
+  const games = db.listFinalizedGamesForUser(targetId, cappedLimit);
+  return games.map((game) => {
+    const opponentPlayer = game.players?.find((p) => p.id !== targetId);
+    const opponent = opponentPlayer ? db.getUser(opponentPlayer.id) : null;
+    const r = gameResultForUser(game, targetId);
+    const challenge = game.challengeId ? db.getChallenge(game.challengeId) : null;
+    return {
+      id: game.id,
+      // Opponent shown from THIS user's POV; stake amounts intentionally omitted:
+      // other people's bet sizes aren't ours to publish per the privacy rules in
+      // docs/USER_PROFILE_IA.md.
+      opponent: opponent ? withOpponentDecor(opponent) : null,
+      result: r === "win" ? "W" : r === "loss" ? "L" : r === "draw" ? "D" : null,
+      endedAt: game.endedAt ?? null,
+      timeControl: challenge?.timeControl ?? null,
+      endReason: game.endReason ?? null
+    };
+  });
+}
+
 function historyEntry(game, viewerId) {
   const settlement = settlementPayload(game, viewerId);
   const viewerPlayer = game.players.find((p) => p.id === viewerId);
@@ -1055,6 +1202,26 @@ async function routeApi(req, res) {
     return json(res, 200, { games: items });
   }
 
+  let m;
+  if (req.method === "GET" && (m = pathname.match(/^\/api\/users\/([^/]+)\/recent-games$/))) {
+    const targetId = m[1];
+    if (!db.getUser(targetId)) {
+      return json(res, 404, { error: "user_not_found" });
+    }
+    const limitParam = url.searchParams.get("limit");
+    const limit = limitParam ? Number.parseInt(limitParam, 10) : 10;
+    return json(res, 200, { games: userRecentGamesPayload(targetId, limit) });
+  }
+
+  if (req.method === "GET" && (m = pathname.match(/^\/api\/users\/([^/]+)$/))) {
+    const targetId = m[1];
+    const payload = userProfilePayload(targetId, viewer.id);
+    if (!payload) {
+      return json(res, 404, { error: "user_not_found" });
+    }
+    return json(res, 200, { user: payload });
+  }
+
   if (req.method === "POST" && pathname === "/api/challenges") {
     try {
       checkRateLimit(req, "challenge");
@@ -1072,7 +1239,6 @@ async function routeApi(req, res) {
     }
   }
 
-  let m;
   if (req.method === "GET" && (m = pathname.match(/^\/api\/challenges\/([^/]+)$/))) {
     try {
       const challenge = refreshChallengeState(getChallengeOr404(m[1]));

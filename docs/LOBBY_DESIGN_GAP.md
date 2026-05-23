@@ -2,7 +2,7 @@
 
 Living plan for the Play screen's information architecture and the deltas between current implementation and the canonical designs in `hifi-lobby.jsx` and `lobby.jsx`.
 
-Companion docs: `docs/IA_PROPOSAL.md` (nav-level IA), `docs/DESIGN_REVIEW.md` (canonical source treatment), `docs/PUNCH_LIST.md` (smaller polish items), `docs/IMPLEMENTATION_PLAN.md` (phased roadmap).
+Companion docs: `docs/IA_PROPOSAL.md` (nav-level IA), `docs/DESIGN_REVIEW.md` (canonical source treatment), `docs/SCOUTING_TRUST_NEXT_PASS.md` (next-pass Open Tables + scouting direction), `docs/PUNCH_LIST.md` (smaller polish items), `docs/IMPLEMENTATION_PLAN.md` (phased roadmap).
 
 ## Information architecture
 

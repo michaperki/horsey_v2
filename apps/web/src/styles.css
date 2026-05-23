@@ -1185,11 +1185,170 @@ p {
   font-weight: 850;
 }
 
+.avatar.sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
 .avatar.huge {
   width: 92px;
   height: 92px;
   border-radius: 18px;
   font-size: 42px;
+}
+
+.scout-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.scout-trigger:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.live-table-scout,
+.open-card-scout,
+.wager-scout,
+.player-strip-scout,
+.table-row-scout,
+.history-scout,
+.settlement-scout {
+  width: 100%;
+}
+
+.scout-popover {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(27, 24, 21, 0.18);
+  border-radius: 8px;
+  background: rgba(251, 246, 234, 0.98);
+  box-shadow: 0 18px 44px rgba(27, 24, 21, 0.22);
+}
+
+.scout-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.scout-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding-right: 30px;
+}
+
+.scout-head small,
+.scout-section small,
+.scout-h2h small,
+.profile-section small,
+.profile-h2h small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.scout-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.scout-stat-grid div {
+  padding: 9px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.scout-stat-grid strong {
+  display: block;
+  margin-top: 3px;
+}
+
+.scout-beads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.scout-bead {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: white;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.scout-bead.w { background: var(--green); }
+.scout-bead.l { background: var(--red); }
+.scout-bead.d { background: var(--muted); }
+
+.scout-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.scout-h2h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 4px;
+  border-top: 1px solid var(--rule);
+}
+
+.scout-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scout-actions .primary {
+  flex: 1;
+}
+
+.scout-actions .primary-link {
+  margin-top: 0;
+}
+
+.scout-skeleton {
+  height: 52px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--paper-2), rgba(255, 255, 255, 0.6), var(--paper-2));
+}
+
+.scout-skeleton.short { height: 20px; width: 70%; }
+.scout-skeleton.grid { height: 74px; }
+
+.table-row-id,
+.settlement-scout-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
 }
 
 .opponent {
@@ -2020,6 +2179,75 @@ p {
   padding: 40px 0;
 }
 
+.user-profile {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(360px, 1.4fr) minmax(240px, 0.9fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.user-profile-rail,
+.user-profile-main,
+.user-profile-recent {
+  display: grid;
+  gap: 16px;
+}
+
+.profile-h2h {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.profile-h2h span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.profile-section {
+  display: grid;
+  gap: 8px;
+}
+
+.rating-spark {
+  display: flex;
+  align-items: end;
+  min-height: 72px;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+.rating-spark span {
+  width: 10px;
+  border-radius: 999px 999px 0 0;
+  background: var(--gold);
+}
+
+.recent-game-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.recent-game-row:first-of-type {
+  border-top: 0;
+}
+
+.recent-game-row strong {
+  grid-row: span 2;
+}
+
+.recent-game-row small {
+  color: var(--muted);
+}
+
 .primary-link {
   display: inline-block;
   margin-top: 12px;
@@ -2050,7 +2278,8 @@ p {
 
   .grid.two,
   .grid.wager,
-  .game-layout {
+  .game-layout,
+  .user-profile {
     grid-template-columns: 1fr;
   }
 

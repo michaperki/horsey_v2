@@ -195,6 +195,51 @@ test("settlement reports a rating change after a decisive game", async (t) => {
   assert.equal(winnerBootstrap.body.viewer.rating, 1516);
 });
 
+test("user profile aggregates h2h and suppresses negative viewer dollar totals", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+
+  const firstChallenge = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const firstAccepted = await fixture.post(bob, `/api/challenges/${firstChallenge.body.challenge.id}/accept`);
+  const firstResigned = await fixture.post(alice, `/api/games/${firstAccepted.body.game.id}/resign`);
+  assert.equal(firstResigned.status, 200);
+
+  const secondChallenge = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const secondAccepted = await fixture.post(bob, `/api/challenges/${secondChallenge.body.challenge.id}/accept`);
+  const secondResigned = await fixture.post(bob, `/api/games/${secondAccepted.body.game.id}/resign`);
+  assert.equal(secondResigned.status, 200);
+
+  const profile = await fixture.get(alice, `/api/users/${bob.user.id}`);
+  assert.equal(profile.status, 200);
+  assert.equal(profile.body.user.id, bob.user.id);
+  assert.equal(profile.body.user.handle, bob.user.handle);
+  assert.equal("email" in profile.body.user, false);
+  assert.equal(profile.body.user.stats.finishedGames, 2);
+  assert.equal(profile.body.user.stats.wins, 1);
+  assert.equal(profile.body.user.stats.losses, 1);
+  assert.equal(profile.body.user.h2hVsViewer.games, 2);
+  assert.equal(profile.body.user.h2hVsViewer.viewerWins, 1);
+  assert.equal(profile.body.user.h2hVsViewer.viewerLosses, 1);
+  assert.equal(profile.body.user.h2hVsViewer.draws, 0);
+  assert.equal(profile.body.user.h2hVsViewer.viewerNetCents, null);
+  assert.equal(profile.body.user.h2hVsViewer.last5.length, 2);
+  assert.equal("stakeCents" in profile.body.user.h2hVsViewer.last5[0], false);
+
+  const recent = await fixture.get(alice, `/api/users/${bob.user.id}/recent-games?limit=1`);
+  assert.equal(recent.status, 200);
+  assert.equal(recent.body.games.length, 1);
+  assert.equal("stakeCents" in recent.body.games[0], false);
+  assert.equal("pot" in recent.body.games[0], false);
+  assert.equal(recent.body.games[0].opponent.id, alice.user.id);
+});
+
 test("replay endpoint walks the move sequence with FEN per ply", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");

@@ -20,6 +20,8 @@ const state = {
   activeSettlement: null,
   liveGame: null,
   historyList: null,
+  userProfile: null,
+  userRecentGames: null,
   replay: null,
   walletLedger: [],
   selectedSquare: null,
@@ -46,6 +48,14 @@ const state = {
   clockAnchor: null,
   picker: {
     hero: { stakeCents: null, timeControl: null }
+  },
+  scout: {
+    userId: null,
+    user: null,
+    loading: false,
+    error: null,
+    anchor: null,
+    context: null
   }
 };
 
@@ -299,7 +309,10 @@ async function logout() {
   state.activeSettlement = null;
   state.liveGame = null;
   state.historyList = null;
+  state.userProfile = null;
+  state.userRecentGames = null;
   state.walletLedger = [];
+  closeScout(false);
   state.view = "auth";
   state.authMode = "login";
   state.authError = null;
@@ -323,7 +336,10 @@ function authGuard(error) {
     state.activeSettlement = null;
     state.liveGame = null;
     state.historyList = null;
+    state.userProfile = null;
+    state.userRecentGames = null;
     state.walletLedger = [];
+    closeScout(false);
     state.view = "auth";
     state.authMode = "login";
     state.authError = "Your session ended. Please sign in again.";
@@ -488,6 +504,114 @@ async function rematchFromHistory({ opponentId, stakeCents, timeControl }) {
   state.actionError = null;
   try {
     const payload = await postJson("/api/challenges", { recipientId: opponentId, stakeCents, timeControl });
+    state.activeChallenge = payload.challenge;
+    await loadBootstrap();
+    navigate("wager");
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  }
+}
+
+function scoutTrigger(user, innerHtml, className = "", context = {}) {
+  if (!user?.id || user.id === viewerId()) return innerHtml;
+  const contextAttrs = [
+    context.stakeCents ? `data-scout-stake="${escapeHtml(context.stakeCents)}"` : "",
+    context.timeControl ? `data-scout-time="${escapeHtml(context.timeControl)}"` : ""
+  ].filter(Boolean).join(" ");
+  return `
+    <span class="scout-trigger ${escapeHtml(className)}" role="button" tabindex="0"
+      data-open-scout="${escapeHtml(user.id)}" ${contextAttrs}>
+      ${innerHtml}
+    </span>
+  `;
+}
+
+function closeScout(shouldRender = true) {
+  state.scout = {
+    userId: null,
+    user: null,
+    loading: false,
+    error: null,
+    anchor: null,
+    context: null
+  };
+  if (shouldRender) render();
+}
+
+function scoutAnchorFor(element) {
+  const rect = element.getBoundingClientRect();
+  const width = 340;
+  const gap = 10;
+  const left = Math.min(
+    Math.max(12, rect.left),
+    Math.max(12, window.innerWidth - width - 12)
+  );
+  let top = rect.bottom + gap;
+  if (top + 320 > window.innerHeight) {
+    top = Math.max(12, rect.top - 320 - gap);
+  }
+  return { top, left, width };
+}
+
+async function openScout(element) {
+  const userId = element.dataset.openScout;
+  if (!userId || userId === viewerId()) return;
+  state.scout = {
+    userId,
+    user: null,
+    loading: true,
+    error: null,
+    anchor: scoutAnchorFor(element),
+    context: {
+      stakeCents: Number.parseInt(element.dataset.scoutStake || "", 10) || state.picker.hero.stakeCents,
+      timeControl: element.dataset.scoutTime || state.picker.hero.timeControl
+    }
+  };
+  render();
+  try {
+    const resp = await getJson(`/api/users/${encodeURIComponent(userId)}`);
+    if (state.scout.userId !== userId) return;
+    state.scout.user = resp.user;
+    state.scout.loading = false;
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    if (state.scout.userId !== userId) return;
+    state.scout.loading = false;
+    state.scout.error = error.message;
+    render();
+  }
+}
+
+async function challengeFromScout() {
+  const userId = state.scout.userId;
+  const stakeCents = state.scout.context?.stakeCents;
+  const timeControl = state.scout.context?.timeControl;
+  if (!userId || !stakeCents || !timeControl) return;
+  state.actionError = null;
+  try {
+    const payload = await postJson("/api/challenges", { recipientId: userId, stakeCents, timeControl });
+    state.activeChallenge = payload.challenge;
+    closeScout(false);
+    await loadBootstrap();
+    navigate("wager");
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  }
+}
+
+async function challengeFromProfile(button) {
+  const userId = button.dataset.profileChallenge;
+  const stakeCents = Number.parseInt(button.dataset.profileStake || "", 10);
+  const timeControl = button.dataset.profileTime;
+  if (!userId || !stakeCents || !timeControl) return;
+  state.actionError = null;
+  try {
+    const payload = await postJson("/api/challenges", { recipientId: userId, stakeCents, timeControl });
     state.activeChallenge = payload.challenge;
     await loadBootstrap();
     navigate("wager");
@@ -1045,6 +1169,22 @@ async function enterRoute(parsed) {
     } catch (error) {
       if (authGuard(error)) return;
     }
+  } else if (state.route === "user" && state.routeParam) {
+    closeScout(false);
+    state.actionError = null;
+    state.userProfile = null;
+    state.userRecentGames = null;
+    try {
+      const [profileResp, recentResp] = await Promise.all([
+        getJson(`/api/users/${encodeURIComponent(state.routeParam)}`),
+        getJson(`/api/users/${encodeURIComponent(state.routeParam)}/recent-games?limit=10`)
+      ]);
+      state.userProfile = profileResp.user;
+      state.userRecentGames = recentResp.games;
+    } catch (error) {
+      if (authGuard(error)) return;
+      state.actionError = error.message;
+    }
   }
 
   managePolling();
@@ -1058,6 +1198,11 @@ window.addEventListener("hashchange", () => {
 
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
+  if (state.scout.userId) {
+    event.preventDefault();
+    closeScout();
+    return;
+  }
   if (state.resignConfirmOpen) {
     event.preventDefault();
     state.resignConfirmOpen = false;
@@ -1068,6 +1213,13 @@ window.addEventListener("keydown", (event) => {
   event.preventDefault();
   state.pendingPromotion = null;
   render();
+});
+
+document.addEventListener("click", (event) => {
+  if (!state.scout.userId) return;
+  const target = event.target;
+  if (target.closest?.(".scout-popover") || target.closest?.("[data-open-scout]")) return;
+  closeScout();
 });
 
 function shell(content) {
@@ -1095,6 +1247,7 @@ function shell(content) {
       </div>
     </header>
     <main>${content}</main>
+    ${renderScoutPopover()}
     ${resignConfirmDialog()}
   `;
 }
@@ -1102,6 +1255,95 @@ function shell(content) {
 function navLink(id, label) {
   const active = state.route === id ? "active" : "";
   return `<a class="${active}" href="#${id}">${label}</a>`;
+}
+
+function memberSinceLabel(iso) {
+  if (!iso) return "new member";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "new member";
+  return `joined ${date.toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
+}
+
+function scoutWinRate(stats) {
+  const games = stats?.finishedGames ?? 0;
+  if (!games) return "0%";
+  return `${Math.round(((stats.wins ?? 0) / games) * 100)}%`;
+}
+
+function scoutStreakLabel(streak) {
+  if (!streak?.length) return "No streak";
+  const word = streak.kind === "W" ? "win" : streak.kind === "L" ? "loss" : "draw";
+  return `${streak.length} ${word}${streak.length === 1 ? "" : "s"}`;
+}
+
+function scoutBeads(results = []) {
+  if (!results.length) return `<span class="scout-empty">No finished games yet</span>`;
+  return results.map((r) => `<span class="scout-bead ${r.toLowerCase()}">${escapeHtml(r)}</span>`).join("");
+}
+
+function renderScoutPopover() {
+  const scout = state.scout;
+  if (!scout.userId || !scout.anchor) return "";
+  const style = `top:${Math.round(scout.anchor.top)}px;left:${Math.round(scout.anchor.left)}px;width:${scout.anchor.width}px`;
+  if (scout.loading) {
+    return `
+      <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
+        <div class="scout-skeleton"></div>
+        <div class="scout-skeleton short"></div>
+        <div class="scout-skeleton grid"></div>
+      </section>
+    `;
+  }
+  if (scout.error) {
+    return `
+      <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
+        <button type="button" class="scout-close" data-close-scout aria-label="Close scout card">×</button>
+        <strong>Scout unavailable</strong>
+        <p class="muted small">${escapeHtml(scout.error)}</p>
+      </section>
+    `;
+  }
+  const user = scout.user;
+  if (!user) return "";
+  const stats = user.stats ?? {};
+  const h2h = user.h2hVsViewer;
+  const initial = (user.handle?.[0] ?? "?").toUpperCase();
+  const h2hText = h2h
+    ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""} (${h2h.games})`
+    : "No shared games";
+  const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
+  const challengeLabel = scout.context?.stakeCents ? `Challenge ${money(scout.context.stakeCents)}` : "Challenge";
+  const challengeDisabled = !scout.context?.stakeCents || !scout.context?.timeControl;
+  return `
+    <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
+      <button type="button" class="scout-close" data-close-scout aria-label="Close scout card">×</button>
+      <header class="scout-head">
+        <div class="avatar">${escapeHtml(initial)}</div>
+        <div>
+          <strong>${escapeHtml(user.handle)}</strong>
+          <small>${escapeHtml(String(user.rating))} · ${escapeHtml(memberSinceLabel(user.createdAt))}</small>
+        </div>
+        ${user.presence?.online ? `<span class="status-pill">online</span>` : ""}
+      </header>
+      <div class="scout-stat-grid">
+        <div><small>Games</small><strong>${escapeHtml(stats.finishedGames ?? 0)}</strong></div>
+        <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
+        <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
+      </div>
+      <div class="scout-section">
+        <small>Last 10</small>
+        <div class="scout-beads">${scoutBeads(stats.last10)}</div>
+      </div>
+      <div class="scout-h2h">
+        <small>H2H vs you</small>
+        <strong>${escapeHtml(h2hText)} ${h2hMoney}</strong>
+      </div>
+      <div class="scout-actions">
+        <button type="button" class="primary" data-scout-challenge ${challengeDisabled ? "disabled" : ""}>${escapeHtml(challengeLabel)}</button>
+        <a class="primary-link" href="#user/${escapeHtml(user.id)}">Profile -></a>
+      </div>
+    </section>
+  `;
 }
 
 function renderLiveTableModule(game) {
@@ -1128,17 +1370,20 @@ function renderLiveTableModule(game) {
   if (game.timeControl) metaParts.push(game.timeControl);
   metaParts.push(moveLabel);
   const resignBusy = actionInFlight("resign", game.id);
+  const opponentIdentity = `
+    <div class="avatar">${escapeHtml(initial)}</div>
+    <div class="live-table-id">
+      <span class="live-table-handle">${escapeHtml(opponent?.handle || "opponent")}</span>
+      ${opponent?.rating ? `<span class="live-table-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
+    </div>
+  `;
   return `
     <section class="live-table-module ${lowClock ? "low" : ""} ${criticalClock ? "critical" : ""}">
       <div class="live-table-body">
         <div class="live-table-eyebrow">${escapeHtml(eyebrowText)}</div>
         <div class="live-table-row">
           <div class="live-table-opponent">
-            <div class="avatar">${escapeHtml(initial)}</div>
-            <div class="live-table-id">
-              <span class="live-table-handle">${escapeHtml(opponent?.handle || "opponent")}</span>
-              ${opponent?.rating ? `<span class="live-table-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
-            </div>
+            ${opponent ? scoutTrigger(opponent, opponentIdentity, "live-table-scout") : opponentIdentity}
           </div>
           <div class="live-table-clock" data-live-table-clock="${escapeHtml(turnOwner?.color || "")}">
             <span class="live-table-clock-icon" aria-hidden="true">⏱</span>
@@ -1224,16 +1469,24 @@ function renderHeroIdle(lobby) {
           const secondary = o.deltaCents > 0
             ? `<span class="hero-rematch-delta delta-up mono tnum">+${escapeHtml(money(o.deltaCents))}</span>`
             : `<span class="hero-rematch-delta mono tnum">${escapeHtml(o.timeControl)}</span>`;
+          const identity = `
+            <div class="avatar sm">${escapeHtml(handleInitial)}</div>
+            <div class="hero-rematch-id">
+              <span class="hero-rematch-handle">↺ ${escapeHtml(o.handle ?? "opponent")}</span>
+              ${secondary}
+            </div>
+          `;
           return `
             <button type="button" class="hero-rematch-pick"
               data-rematch-from="${escapeHtml(o.opponentId)}"
               data-rematch-stake="${o.stakeCents}"
               data-rematch-time="${escapeHtml(o.timeControl)}">
-              <div class="avatar sm">${escapeHtml(handleInitial)}</div>
-              <div class="hero-rematch-id">
-                <span class="hero-rematch-handle">↺ ${escapeHtml(o.handle ?? "opponent")}</span>
-                ${secondary}
-              </div>
+              ${scoutTrigger(
+                { id: o.opponentId, handle: o.handle },
+                identity,
+                "hero-rematch-scout",
+                { stakeCents: o.stakeCents, timeControl: o.timeControl }
+              )}
               <span class="hero-rematch-stake mono tnum">${money(o.stakeCents)}</span>
             </button>
           `;
@@ -1377,14 +1630,22 @@ function renderOpenTableCard(challenge) {
     .join("");
   const kind = timeControlKind(challenge.timeControl);
   const rating = opponent?.rating ? `<span class="open-card-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : "";
+  const identity = `
+    <div class="avatar">${escapeHtml(initial)}</div>
+    <div class="open-card-id">
+      <span class="open-card-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
+      ${rating}
+    </div>
+  `;
   return `
     <button class="open-table-card" data-select-challenge="${challenge.id}">
       <div class="open-card-head">
-        <div class="avatar">${escapeHtml(initial)}</div>
-        <div class="open-card-id">
-          <span class="open-card-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
-          ${rating}
-        </div>
+        ${opponent ? scoutTrigger(
+          opponent,
+          identity,
+          "open-card-scout",
+          { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+        ) : identity}
       </div>
       <div class="open-card-stake">
         <span class="chip-stack">${stack}</span>
@@ -1446,9 +1707,20 @@ function challengeRow(challenge) {
     : remaining > 0
       ? `${remaining}s left`
       : "expired";
+  const identity = opponent?.id ? `
+    <span class="table-row-id">
+      <span class="avatar sm">${escapeHtml((opponent.handle?.[0] ?? "?").toUpperCase())}</span>
+      <strong>${escapeHtml(label)}</strong>
+    </span>
+  ` : `<strong>${escapeHtml(label)}</strong>`;
   return `
     <button class="table-row" data-select-challenge="${challenge.id}">
-      <strong>${escapeHtml(label)}</strong>
+      ${opponent?.id ? scoutTrigger(
+        opponent,
+        identity,
+        "table-row-scout",
+        { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+      ) : identity}
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
       <em>${isMine && !challenge.recipientId ? "yours · " : ""}${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
       <span>→</span>
@@ -1484,6 +1756,12 @@ function renderWager() {
   const headline = viewerIsChallenger
     ? `<span class="muted">You staked</span> ${money(challenge.stakeCents)}`
     : `<span class="muted">${escapeHtml(opponent.handle)} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
+  const opponentIdentity = `
+    <div class="avatar huge">${escapeHtml(opponent.handle[0] || "?")}</div>
+    <div>
+      <h2>${escapeHtml(opponent.handle)} ${opponent.rating ? `<span>${escapeHtml(opponent.rating)}</span>` : ""}</h2>
+    </div>
+  `;
 
   return `
     <section class="grid wager">
@@ -1493,10 +1771,12 @@ function renderWager() {
           <h1>${headline}</h1>
         </div>
         <article class="card opponent">
-          <div class="avatar huge">${escapeHtml(opponent.handle[0] || "?")}</div>
-          <div>
-            <h2>${escapeHtml(opponent.handle)} ${opponent.rating ? `<span>${escapeHtml(opponent.rating)}</span>` : ""}</h2>
-          </div>
+          ${scoutTrigger(
+            opponent,
+            opponentIdentity,
+            "wager-scout",
+            { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
+          )}
         </article>
       </article>
       <aside class="felt match-card">
@@ -1680,20 +1960,23 @@ function playerStrip(game, player, active = false) {
         : "offline"
     : "";
   const dotClass = showPresence ? (presence.online ? "online" : "offline") : "";
+  const identity = `
+    <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
+    <span class="player-main">
+      <span>
+        <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}</strong>
+        <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? ` · ${escapeHtml(onlineLabel)}` : ""}</small>
+      </span>
+      <span class="player-subline">
+        ${capturedPiecesMarkup(game, player.color, "No captures")}
+        <span>${formatMaterialDelta(material)}</span>
+        <span>${escapeHtml(activity)}</span>
+      </span>
+    </span>
+  `;
   return `
     <div class="player-strip ${active ? "active" : ""} ${low ? "low" : ""} ${critical ? "critical" : ""}" data-clock="${player.color}">
-      <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
-      <span class="player-main">
-        <span>
-          <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}</strong>
-          <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? ` · ${escapeHtml(onlineLabel)}` : ""}</small>
-        </span>
-        <span class="player-subline">
-          ${capturedPiecesMarkup(game, player.color, "No captures")}
-          <span>${formatMaterialDelta(material)}</span>
-          <span>${escapeHtml(activity)}</span>
-        </span>
-      </span>
+      ${isViewer ? identity : scoutTrigger(player, identity, "player-strip-scout", { stakeCents: game.pot?.stakeCents, timeControl: game.timeControl })}
       <span class="clock-box">
         <time>${display}</time>
         <span class="clock-meter"><span style="width: ${clockPercent(game.clock, ms)}"></span></span>
@@ -2114,6 +2397,9 @@ function renderSettlement() {
   if (!settlement) return `<p class="muted">No settlement yet. <a href="#play">Back to lobby.</a></p>`;
   const game = state.activeGame;
   const opponentHandle = settlement.rematchChallenge?.opponent || "your opponent";
+  const settlementOpponent = settlement.rematchChallenge
+    ? { id: settlement.rematchChallenge.opponentId, handle: settlement.rematchChallenge.opponent }
+    : null;
 
   if (settlement.state !== "finalized") {
     return `
@@ -2170,6 +2456,12 @@ function renderSettlement() {
       </article>
       <aside class="card stack">
         <h2>Queue another</h2>
+        ${settlementOpponent ? scoutTrigger(
+          settlementOpponent,
+          `<span class="settlement-scout-id"><span class="avatar sm">${escapeHtml((opponentHandle[0] ?? "?").toUpperCase())}</span><span>${escapeHtml(opponentHandle)}</span></span>`,
+          "settlement-scout",
+          { stakeCents: settlement.rematchChallenge.stakeCents, timeControl: settlement.rematchChallenge.timeControl }
+        ) : ""}
         ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
         <button data-nav="play">Find new opponent</button>
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
@@ -2225,19 +2517,31 @@ function historyResultStats(items) {
 
 function historyRow(entry) {
   const opponentHandle = entry.opponent?.handle ?? "—";
+  const opponentInitial = (opponentHandle[0] ?? "?").toUpperCase();
   const resultLabel = entry.result === "win" ? "Win" : entry.result === "loss" ? "Loss" : entry.result === "draw" ? "Draw" : entry.result;
   const resultClass = entry.result === "win" ? "money-win" : entry.result === "loss" ? "money-loss" : "money-draw";
   const sign = entry.result === "win" ? "+" : entry.result === "loss" ? "−" : "";
   const credited = entry.result === "loss" ? entry.stakeCents : entry.creditedCents;
   const when = entry.endedAt ? new Date(entry.endedAt).toLocaleString() : "—";
   const endReason = endReasonLabel(entry.endReason);
+  const identity = `
+    <div class="history-vs">
+      <span class="avatar sm">${escapeHtml(opponentInitial)}</span>
+      <span>
+        <strong>vs ${escapeHtml(opponentHandle)}</strong>
+        <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(endReason)}</small>
+      </span>
+    </div>
+  `;
   return `
     <a class="history-row" href="#history/${entry.gameId}">
       <div class="history-result ${resultClass}">${resultLabel}</div>
-      <div class="history-vs">
-        <strong>vs ${escapeHtml(opponentHandle)}</strong>
-        <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(endReason)}</small>
-      </div>
+      ${entry.opponent?.id ? scoutTrigger(
+        entry.opponent,
+        identity,
+        "history-scout",
+        { stakeCents: entry.stakeCents, timeControl: entry.timeControl }
+      ) : identity}
       <div class="history-credit ${resultClass}">${sign}${money(credited)}</div>
       <small class="history-when">${when}</small>
     </a>
@@ -2365,6 +2669,82 @@ function renderAuth() {
   `;
 }
 
+function renderUserProfile() {
+  if (state.actionError) {
+    return `<p class="muted">${escapeHtml(state.actionError)} <a href="#play">Back to lobby.</a></p>`;
+  }
+  const user = state.userProfile;
+  if (!user) return `<p class="muted">Loading player...</p>`;
+  const stats = user.stats ?? {};
+  const recent = state.userRecentGames ?? [];
+  const initial = (user.handle?.[0] ?? "?").toUpperCase();
+  const h2h = user.h2hVsViewer;
+  const h2hScore = h2h
+    ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""}`
+    : "No games";
+  const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
+  const challengeStake = state.picker.hero.stakeCents;
+  const challengeTime = state.picker.hero.timeControl;
+  return `
+    <section class="user-profile">
+      <aside class="card user-profile-rail">
+        <div class="avatar huge">${escapeHtml(initial)}</div>
+        <div>
+          <h1>${escapeHtml(user.handle)}</h1>
+          <p class="muted">rating ${escapeHtml(user.rating)} · ${escapeHtml(memberSinceLabel(user.createdAt))}</p>
+        </div>
+        <div class="tag-row">
+          <span>${user.presence?.online ? "online" : "offline"}</span>
+          ${user.liveGame ? `<span>in a live game</span>` : ""}
+        </div>
+        <div class="profile-h2h">
+          <small>H2H vs you</small>
+          <strong>${escapeHtml(h2hScore)} ${h2hMoney}</strong>
+          <span>${h2h ? `${h2h.games} shared game${h2h.games === 1 ? "" : "s"}` : "No shared history yet"}</span>
+        </div>
+        <button type="button" class="primary" data-profile-challenge="${escapeHtml(user.id)}"
+          data-profile-stake="${escapeHtml(challengeStake ?? "")}"
+          data-profile-time="${escapeHtml(challengeTime ?? "")}"
+          ${!challengeStake || !challengeTime ? "disabled" : ""}>
+          Challenge ${challengeStake ? money(challengeStake) : ""}
+        </button>
+      </aside>
+      <article class="card user-profile-main">
+        <header>
+          <span class="eyebrow">Player profile</span>
+          <h2>Record</h2>
+        </header>
+        <div class="metric-grid">
+          <div><small>Games</small><strong>${escapeHtml(stats.finishedGames ?? 0)}</strong></div>
+          <div><small>Wins</small><strong>${escapeHtml(stats.wins ?? 0)}</strong></div>
+          <div><small>Losses</small><strong>${escapeHtml(stats.losses ?? 0)}</strong></div>
+          <div><small>Draws</small><strong>${escapeHtml(stats.draws ?? 0)}</strong></div>
+        </div>
+        <div class="profile-section">
+          <small>Last 10</small>
+          <div class="scout-beads">${scoutBeads(stats.last10)}</div>
+        </div>
+        <div class="profile-section">
+          <small>Rating timeline</small>
+          <div class="rating-spark">
+            ${(stats.ratingTimeline ?? []).map((p) => `<span title="${escapeHtml(p.after)}" style="height:${Math.max(16, Math.min(64, 32 + p.delta))}px"></span>`).join("") || `<em class="muted small">No rating snapshots yet.</em>`}
+          </div>
+        </div>
+      </article>
+      <aside class="card user-profile-recent">
+        <h2>Recent games</h2>
+        ${recent.length ? recent.map((game) => `
+          <div class="recent-game-row">
+            <strong>${escapeHtml(game.result || "-")}</strong>
+            <span>vs ${escapeHtml(game.opponent?.handle ?? "opponent")}</span>
+            <small>${escapeHtml(game.timeControl || "-")} · ${escapeHtml(endReasonLabel(game.endReason))}</small>
+          </div>
+        `).join("") : `<p class="muted small">No finalized games yet.</p>`}
+      </aside>
+    </section>
+  `;
+}
+
 function render() {
   if (state.view === "loading") return;
   if (state.view === "auth") {
@@ -2395,7 +2775,8 @@ function render() {
     game: renderGame,
     settlement: renderSettlement,
     history: state.routeParam ? renderSettlement : renderHistoryList,
-    profile: renderProfile
+    profile: renderProfile,
+    user: renderUserProfile
   };
   const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
@@ -2435,6 +2816,28 @@ function render() {
   });
   document.querySelectorAll("[data-rematch]").forEach((b) => {
     b.addEventListener("click", () => requestRematch());
+  });
+  document.querySelectorAll("[data-open-scout]").forEach((node) => {
+    node.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openScout(node);
+    });
+    node.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      event.stopPropagation();
+      openScout(node);
+    });
+  });
+  document.querySelectorAll("[data-close-scout]").forEach((b) => {
+    b.addEventListener("click", () => closeScout());
+  });
+  document.querySelectorAll("[data-scout-challenge]").forEach((b) => {
+    b.addEventListener("click", () => challengeFromScout());
+  });
+  document.querySelectorAll("[data-profile-challenge]").forEach((b) => {
+    b.addEventListener("click", () => challengeFromProfile(b));
   });
   document.querySelectorAll("[data-replay-jump]").forEach((b) => {
     b.addEventListener("click", () => jumpReplay(b.dataset.replayJump));

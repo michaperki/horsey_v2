@@ -54,3 +54,7 @@ Agents should read `AGENTS.md` and this file before making broad project decisio
 When the user adds new durable guidance, update the docs in spirit. Keep the docs short enough that future agents will actually read them.
 
 For execution planning, use `docs/IMPLEMENTATION_PLAN.md` as the current staged plan and update it when milestones, stack decisions, or product gates change.
+
+Related focused notes:
+
+- `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
