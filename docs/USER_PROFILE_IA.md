@@ -156,10 +156,11 @@ Names follow the project's wave convention; this is a new track running parallel
 - [x] Initial 3-column dossier with real today blocks only: identity, presence, h2h, record, rating timeline, last10, recent games. Decorative trust/tells/openings blocks omitted entirely.
 - [x] Wired Challenge CTA using the current hero stake/time defaults. Remaining polish: dedicated rematch affordance when h2h exists.
 
-### Wave U4 — Wager-screen enrichment
+### Wave U4 — Wager-screen enrichment  *(shipped)*
 
-- [ ] Pull `GET /api/users/:id` for the challenge's opposite party into the wager render. Surface the stats grid + sparkline + h2h beads + recent encounters from real data.
-- [ ] Keep the wager hero's existing decision-time copy ("Vish wants $250 from you"). The dossier slides in below.
+- [x] `enterRoute("wager")` triggers `loadWagerOpponent()` which fetches `GET /api/users/:id` for the challenge's opposite party. New state fields `wagerOpponent` + `wagerOpponentLoading`; the opponent profile clears on every route transition away from wager so stale dossiers can't bleed across challenges.
+- [x] `renderWagerDossier(opponent, dossier)` builds the dossier card under the decision-time headline ("Vish wants $250 from you"). Anatomy: identity (avatar + handle + rating, still a scout trigger) → narrative reveal (same `scoutNarrative()` voice as Scout Card and Profile) → 3-tile stat grid (Win rate / Streak / Joined) → Last 10 beads → H2H block with shared-games count. Skeleton state while loading.
+- [x] Right-side `.match-card` trimmed. Removed the "Stakes lock in fake-money escrow for this milestone" line, removed the no-op `Counter same stake` button, added `timeControlKind` suffix to the time-control line. Accept stays loud-primary, Decline drops to a ghost `.quiet` button on the felt.
 
 ### Deferred to the trust subsystem (Phase 6)
 

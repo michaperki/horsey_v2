@@ -22,6 +22,8 @@ const state = {
   historyList: null,
   userProfile: null,
   userRecentGames: null,
+  wagerOpponent: null,
+  wagerOpponentLoading: false,
   replay: null,
   walletLedger: [],
   selectedSquare: null,
@@ -571,6 +573,28 @@ async function openScout(element) {
     if (state.scout.userId !== userId) return;
     state.scout.loading = false;
     state.scout.error = error.message;
+    render();
+  }
+}
+
+async function loadWagerOpponent() {
+  const opponentId = state.activeChallenge?.opponent?.id;
+  if (!opponentId) {
+    state.wagerOpponent = null;
+    state.wagerOpponentLoading = false;
+    return;
+  }
+  if (state.wagerOpponent?.id === opponentId) return;
+  state.wagerOpponent = null;
+  state.wagerOpponentLoading = true;
+  try {
+    const resp = await getJson(`/api/users/${encodeURIComponent(opponentId)}`);
+    if (state.activeChallenge?.opponent?.id !== opponentId) return;
+    state.wagerOpponent = resp.user;
+  } catch (error) {
+    if (authGuard(error)) return;
+  } finally {
+    state.wagerOpponentLoading = false;
     render();
   }
 }
@@ -1156,6 +1180,13 @@ async function enterRoute(parsed) {
       if (authGuard(error)) return;
       state.actionError = error.message;
     }
+  } else if (state.route === "wager") {
+    loadWagerOpponent();
+  }
+
+  if (state.route !== "wager") {
+    state.wagerOpponent = null;
+    state.wagerOpponentLoading = false;
   }
 
   managePolling();
@@ -1708,6 +1739,58 @@ function challengeRow(challenge) {
   `;
 }
 
+function renderWagerDossier(opponent, dossier) {
+  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
+  const identityBlock = `
+    <div class="dossier-identity">
+      <div class="avatar huge">${escapeHtml(initial)}</div>
+      <div>
+        <h2>${escapeHtml(opponent.handle)}</h2>
+        ${opponent.rating ? `<p class="muted mono tnum">${escapeHtml(String(opponent.rating))}</p>` : ""}
+      </div>
+    </div>
+  `;
+  if (state.wagerOpponentLoading || !dossier) {
+    return `
+      <article class="card wager-dossier">
+        ${scoutTrigger(opponent, identityBlock, "wager-scout")}
+        <div class="dossier-skeleton"></div>
+        <div class="dossier-skeleton short"></div>
+      </article>
+    `;
+  }
+  const stats = dossier.stats ?? {};
+  const h2h = dossier.h2hVsViewer;
+  const narrative = scoutNarrative(stats, h2h);
+  const h2hScore = h2h
+    ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""}`
+    : "No shared games";
+  const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
+  return `
+    <article class="card wager-dossier">
+      ${scoutTrigger(opponent, identityBlock, "wager-scout")}
+      <div class="dossier-reveal">
+        <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
+        <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
+      </div>
+      <div class="dossier-stats">
+        <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
+        <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
+        <div><small>Joined</small><strong>${escapeHtml(accountAgeLabel(dossier.createdAt))}</strong></div>
+      </div>
+      <div class="dossier-section">
+        <small>Last 10</small>
+        <div class="scout-beads">${scoutBeads(stats.last10)}</div>
+      </div>
+      <div class="dossier-h2h">
+        <small>H2H vs you</small>
+        <strong>${escapeHtml(h2hScore)} ${h2hMoney}</strong>
+        <span>${h2h ? `${h2h.games} shared game${h2h.games === 1 ? "" : "s"}` : "No shared history yet"}</span>
+      </div>
+    </article>
+  `;
+}
+
 function renderWager() {
   const challenge = state.activeChallenge;
   if (!challenge) return `<p class="muted">No active challenge. <a href="#play">Pick one.</a></p>`;
@@ -1723,7 +1806,6 @@ function renderWager() {
     && (challenge.state === "incoming" || challenge.state === "countered")
     && !isExpired;
   const accepting = actionInFlight("challenge", `${challenge.id}:accept`);
-  const countering = actionInFlight("challenge", `${challenge.id}:counter`);
   const declining = actionInFlight("challenge", `${challenge.id}:decline`);
 
   let actionLabel = "Accept and lock";
@@ -1733,39 +1815,28 @@ function renderWager() {
   else if (viewerIsChallenger) actionLabel = isOpen ? "Awaiting any opponent" : `Awaiting ${challenge.recipient?.handle ?? "recipient"}`;
 
   const opponent = challenge.opponent;
+  const hasNamedOpponent = !!opponent?.id;
   const headline = viewerIsChallenger
     ? `<span class="muted">You staked</span> ${money(challenge.stakeCents)}`
     : `<span class="muted">${escapeHtml(opponent.handle)} wants</span> ${money(challenge.stakeCents)} <span class="muted">from you.</span>`;
-  const opponentIdentity = `
-    <div class="avatar huge">${escapeHtml(opponent.handle[0] || "?")}</div>
-    <div>
-      <h2>${escapeHtml(opponent.handle)} ${opponent.rating ? `<span>${escapeHtml(opponent.rating)}</span>` : ""}</h2>
-    </div>
-  `;
+  const dossier = hasNamedOpponent ? renderWagerDossier(opponent, state.wagerOpponent) : "";
+  const tcKind = timeControlKind(challenge.timeControl);
 
   return `
     <section class="grid wager">
-      <article class="stack">
-        <div>
+      <article class="stack wager-left">
+        <div class="wager-headline">
           <div class="eyebrow danger">${challenge.state} challenge${challengeExpiryLabel(challenge)}</div>
           <h1>${headline}</h1>
         </div>
-        <article class="card opponent">
-          ${scoutTrigger(
-            opponent,
-            opponentIdentity,
-            "wager-scout"
-          )}
-        </article>
+        ${dossier}
       </article>
       <aside class="felt match-card">
         <div class="eyebrow">The match</div>
         <h2>${money(challenge.stakeCents)} each</h2>
-        <p>${challenge.timeControl} blitz · ${money(challenge.pot.netPotCents)} pot after ${money(challenge.pot.rakeCents)} rake.</p>
-        <div class="escrow">Stakes lock in fake-money escrow for this milestone.</div>
+        <p>${challenge.timeControl}${tcKind ? ` ${tcKind}` : ""} · ${money(challenge.pot.netPotCents)} pot after ${money(challenge.pot.rakeCents)} rake</p>
         <button class="primary" ${canAct && !accepting ? 'data-action="accept"' : "disabled"}>${accepting ? "Locking..." : `${escapeHtml(actionLabel)} ${canAct ? money(challenge.stakeCents) : ""}`}</button>
-        <button ${canAct && !countering ? 'data-action="counter"' : "disabled"}>${countering ? "Countering..." : "Counter same stake"}</button>
-        <button ${canAct && !declining ? 'data-action="decline"' : "disabled"}>${declining ? "Declining..." : "Decline"}</button>
+        <button class="quiet" ${canAct && !declining ? 'data-action="decline"' : "disabled"}>${declining ? "Declining..." : "Decline"}</button>
         ${canWithdraw ? `<button class="danger" data-withdraw-challenge>Withdraw invite</button>` : ""}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>

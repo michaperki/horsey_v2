@@ -1370,14 +1370,7 @@ p {
   gap: 9px;
 }
 
-.opponent {
-  display: flex;
-  gap: 18px;
-  align-items: center;
-}
-
-.tag-row span,
-.escrow {
+.tag-row span {
   display: inline-flex;
   border: 1px solid var(--rule);
   border-radius: 999px;
@@ -1388,11 +1381,110 @@ p {
   font-weight: 700;
 }
 
-.felt .escrow {
+.wager-headline h1 {
+  margin: 8px 0 0;
+}
+
+.wager-dossier {
+  display: grid;
+  gap: 14px;
+}
+
+.dossier-identity {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.dossier-identity h2 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.dossier-identity p {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+
+.dossier-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(199, 162, 86, 0.06);
+}
+
+.dossier-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dossier-stats div {
+  padding: 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.dossier-stats small {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dossier-stats strong {
+  display: block;
+  margin-top: 3px;
+}
+
+.dossier-section,
+.dossier-h2h {
+  display: grid;
+  gap: 4px;
+}
+
+.dossier-section small,
+.dossier-h2h small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dossier-h2h {
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.dossier-h2h span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dossier-skeleton {
+  height: 56px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--paper-2), rgba(255, 255, 255, 0.6), var(--paper-2));
+}
+
+.dossier-skeleton.short { height: 22px; width: 60%; }
+
+.match-card button.quiet {
+  background: rgba(255, 255, 255, 0.06);
   border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.22);
-  color: rgba(255, 247, 232, 0.82);
-  margin: 20px 0;
+  color: rgba(255, 247, 232, 0.85);
+}
+
+.match-card button.quiet:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .metric-grid {
