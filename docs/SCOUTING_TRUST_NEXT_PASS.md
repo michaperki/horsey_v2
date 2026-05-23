@@ -253,11 +253,17 @@ Data work needed:
 
 ### Wave O1 - Open Tables hierarchy fix  *(shipped)*
 
-- [x] `renderOpenTableCard()` is now a two-row table listing: identity (avatar + handle + rating) on row 1, a single `$X · 3+0 blitz` typographic terms row on row 2, with a muted inline `Sit ->` affordance pinned right that brightens to gold and nudges 2px on row hover.
-- [x] Chip stack demoted to 14px accent inline with the terms text instead of being its own object row.
-- [x] Big gold CTA block deleted (`.open-card-cta` removed); the card body still routes to Wager via the existing `data-select-challenge` click.
-- [x] The `Sit ->` affordance is intentionally typography-only — no padding, no border, no hover box. The whole row is the interaction; Sit is a chevron-style hint, not a nested CTA. Avoids the button-in-button geometry the first cut had.
-- [x] Scout trigger remains on the identity span (now classed `open-card-scout` with the new `inline-flex` grid placement) so opponent inspection still works and stopPropagation guards the parent click.
+The first cut tried to fix hierarchy inside the original 2-column mini-card grid by demoting the chip stack and the CTA. That improved the visual hierarchy but didn't fix the *structural* problem: the right rail is already a ~30% column, and a 2-column grid inside it gives each card ~140px to fit avatar + handle + rating + chip accent + stake + time + Sit. Handle and terms truncated even after typography tuning. The shape itself was the constraint.
+
+Final shape (`renderOpenTableRow` + `.open-table-row`):
+
+- [x] **Single-column full-rail-width list rows**, not a 2-column card grid. Each table is one horizontal row separated by thin dividers, no per-row box/border/radius. Reads as a table listing, not a card.
+- [x] **Row anatomy is three grid cells** — identity (`1fr` with `min-width: 0`), terms (`auto`), Sit (`auto`) — so the handle is the only element that ellipsises under pressure and everything else stays whole.
+- [x] **Identity = initial avatar + handle + rating** only. Chip stack dropped entirely from this surface; chips remain part of Horsey's voice in the hero picker and Scout Card, but Open Tables doesn't try to carry chip identity at row scale. Stake is typographic: `$25 · 3+0 blitz`.
+- [x] **Terms row uses `timeControlKind` suffix** (`bullet / blitz / rapid`) inline; no nested time pill.
+- [x] **Sit -> is typography-only** — muted by default, brightens to gold and slides 2px on row hover. No padding/border/background. The whole row is the click target via `data-select-challenge`; Sit -> is a directional hint, not a nested CTA. Avoids the button-in-button geometry that two earlier passes accidentally rebuilt.
+- [x] **Row hover paints a faint gold wash** as the only chrome cue — lighter than the original card hover (`var(--paper)` background + gold border), since rows are smaller targets and benefit from a lighter touch.
+- [x] **Scout trigger stays on the identity span** (now classed `open-row-scout`) so opponent inspection still works; stopPropagation keeps the parent row click from also firing.
 - [x] No narrative labels or trust clues rendered here per the locked decision — those live in the Scout Card. Open Tables stays typographically quiet.
 
 ### Wave S1 - Scout Card reveal fix  *(shipped)*

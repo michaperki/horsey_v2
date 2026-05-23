@@ -1649,46 +1649,38 @@ function renderHeartbeatStrip(lobby) {
   `;
 }
 
-function renderOpenTableCard(challenge) {
+function renderOpenTableRow(challenge) {
   const opponent = challenge.opponent;
   const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
-  const stack = stakeChipStack(challenge.stakeCents)
-    .map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`)
-    .join("");
   const kind = timeControlKind(challenge.timeControl);
   const termsParts = [money(challenge.stakeCents), challenge.timeControl];
   if (kind) termsParts.push(kind);
   const identity = `
     <span class="avatar sm">${escapeHtml(initial)}</span>
-    <span class="open-card-id">
-      <span class="open-card-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
-      ${opponent?.rating ? `<span class="open-card-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
-    </span>
+    <span class="open-row-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
+    ${opponent?.rating ? `<span class="open-row-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
   `;
   return `
-    <button class="open-table-card" data-select-challenge="${challenge.id}">
+    <button class="open-table-row" data-select-challenge="${challenge.id}">
       ${opponent ? scoutTrigger(
         opponent,
         identity,
-        "open-card-scout",
+        "open-row-scout",
         { stakeCents: challenge.stakeCents, timeControl: challenge.timeControl }
-      ) : `<span class="open-card-identity">${identity}</span>`}
-      <span class="open-card-terms">
-        <span class="chip-stack open-card-chips" aria-hidden="true">${stack}</span>
-        <span class="open-card-terms-text mono tnum">${escapeHtml(termsParts.join(" · "))}</span>
-      </span>
-      <span class="open-card-sit">Sit <span aria-hidden="true">→</span></span>
+      ) : `<span class="open-row-identity">${identity}</span>`}
+      <span class="open-row-terms mono tnum">${escapeHtml(termsParts.join(" · "))}</span>
+      <span class="open-row-sit">Sit <span aria-hidden="true">→</span></span>
     </button>
   `;
 }
 
-function renderOpenTablesGrid(openChallenges) {
+function renderOpenTablesList(openChallenges) {
   const viewer = viewerId();
   const others = openChallenges.filter((c) => c.challengerId !== viewer);
   if (others.length === 0) {
     return `<p class="muted small open-tables-empty">No tables open right now. Be the first to sit.</p>`;
   }
-  return `<div class="open-tables-grid">${others.map(renderOpenTableCard).join("")}</div>`;
+  return `<div class="open-tables-list">${others.map(renderOpenTableRow).join("")}</div>`;
 }
 
 function renderPlay() {
@@ -1711,7 +1703,7 @@ function renderPlay() {
         `}
         <article class="card open-tables-card">
           <div class="between"><h2>Open tables</h2><small>${openCount}</small></div>
-          ${renderOpenTablesGrid(openChallenges)}
+          ${renderOpenTablesList(openChallenges)}
         </article>
       </aside>
     </section>
