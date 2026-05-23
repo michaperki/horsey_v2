@@ -43,8 +43,53 @@ const state = {
   },
   challengeCountdownTimer: null,
   clockTickFrame: null,
-  clockAnchor: null
+  clockAnchor: null,
+  picker: {
+    quick: { stakeCents: null, timeControl: null },
+    invite: { stakeCents: null, timeControl: null }
+  }
 };
+
+const STAKE_TIER_DEFAULT_CENTS = 2500;
+const TIME_DEFAULT = "3+0";
+
+const CHIP_DENOMS_DOLLARS = [500, 100, 25, 5, 1];
+
+function stakeChipStack(amountCents) {
+  let remaining = Math.round(amountCents / 100);
+  const stack = [];
+  for (const denom of CHIP_DENOMS_DOLLARS) {
+    while (remaining >= denom && stack.length < 6) {
+      stack.push(denom);
+      remaining -= denom;
+    }
+    if (stack.length >= 6) break;
+  }
+  return stack;
+}
+
+function timeControlKind(tc) {
+  if (!tc) return "";
+  if (/^(30s|45s|1\+|2\+)/.test(tc)) return "bullet";
+  if (/^(3\+|5\+0)/.test(tc)) return "blitz";
+  return "rapid";
+}
+
+function ensurePickerDefaults() {
+  const lobby = state.bootstrap?.lobby;
+  if (!lobby) return;
+  const validStake = (cents) => lobby.stakes.some((s) => s.amountCents === cents);
+  const validTime = (tc) => lobby.timeControls.includes(tc);
+  const fallbackStake = validStake(STAKE_TIER_DEFAULT_CENTS)
+    ? STAKE_TIER_DEFAULT_CENTS
+    : lobby.stakes[0]?.amountCents ?? null;
+  const fallbackTime = validTime(TIME_DEFAULT) ? TIME_DEFAULT : lobby.timeControls[0] ?? null;
+  for (const key of ["quick", "invite"]) {
+    const pick = state.picker[key];
+    if (!validStake(pick.stakeCents)) pick.stakeCents = fallbackStake;
+    if (!validTime(pick.timeControl)) pick.timeControl = fallbackTime;
+  }
+}
 
 function viewerId() {
   return state.bootstrap?.viewer?.id;
@@ -203,6 +248,7 @@ async function loadBootstrap() {
   const wallet = await getJson("/api/wallet");
   state.walletLedger = wallet.ledger;
   state.bootstrap.viewer = wallet.viewer;
+  ensurePickerDefaults();
 }
 
 async function load() {
@@ -972,11 +1018,56 @@ function liveGameBanner(game) {
   `;
 }
 
+function renderStakePicker(formKey, stakes, selectedCents) {
+  return `
+    <div class="chip-pick-row" data-stake-picker="${formKey}">
+      ${stakes
+        .map((s) => {
+          const active = s.amountCents === selectedCents;
+          const stack = stakeChipStack(s.amountCents);
+          const chips = stack.map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`).join("");
+          return `
+            <button type="button" class="chip-pick ${active ? "active" : ""}"
+              data-pick-stake="${formKey}" data-stake-cents="${s.amountCents}"
+              aria-pressed="${active ? "true" : "false"}" title="${escapeHtml(s.label)}">
+              <span class="chip-stack">${chips}</span>
+              <span class="chip-total">${escapeHtml(s.label)}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderTimePicker(formKey, timeControls, selected) {
+  return `
+    <div class="time-pill-row" data-time-picker="${formKey}">
+      ${timeControls
+        .map((tc) => {
+          const active = tc === selected;
+          const kind = timeControlKind(tc);
+          return `
+            <button type="button" class="time-pill ${active ? "active" : ""}"
+              data-pick-time="${formKey}" data-time="${escapeHtml(tc)}"
+              aria-pressed="${active ? "true" : "false"}">
+              <span>${escapeHtml(tc)}</span>
+              <span class="time-pill-kind">${kind}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
 function renderPlay() {
   const { lobby, incomingChallenges, sentChallenges, matchmakingTicket } = state.bootstrap;
   const openChallenges = lobby.openChallenges;
   const liveGame = liveGameForShell();
   const quickMatchBusy = actionInFlight("quick-match");
+  const quickPick = state.picker.quick;
+  const invitePick = state.picker.invite;
 
   return `
     ${liveGame ? liveGameBanner(liveGame) : ""}
@@ -990,16 +1081,16 @@ function renderPlay() {
           <button data-leave-queue>Leave queue</button>
         ` : `
           <form data-quick-match class="stack">
-            <label>Stake
-              <select name="stakeCents">
-                ${lobby.stakes.map((s) => `<option value="${s.amountCents}">${s.label}</option>`).join("")}
-              </select>
-            </label>
-            <label>Time
-              <select name="timeControl">
-                ${lobby.timeControls.map((t) => `<option value="${t}">${t}</option>`).join("")}
-              </select>
-            </label>
+            <div>
+              <span class="picker-label">Stake</span>
+              ${renderStakePicker("quick", lobby.stakes, quickPick.stakeCents)}
+            </div>
+            <div>
+              <span class="picker-label">Time control</span>
+              ${renderTimePicker("quick", lobby.timeControls, quickPick.timeControl)}
+            </div>
+            <input type="hidden" name="stakeCents" value="${quickPick.stakeCents ?? ""}" />
+            <input type="hidden" name="timeControl" value="${escapeHtml(quickPick.timeControl ?? "")}" />
             <button class="primary" type="submit" ${quickMatchBusy ? "disabled" : ""}>${quickMatchBusy ? "Joining..." : "Join quick match"}</button>
           </form>
         `}
@@ -1025,16 +1116,16 @@ function renderPlay() {
           <h2>Open an invite</h2>
           <p class="muted small">Posted to the open tables; anyone can accept.</p>
           <form data-create-challenge class="stack">
-            <label>Stake
-              <select name="stakeCents">
-                ${lobby.stakes.map((s) => `<option value="${s.amountCents}">${s.label}</option>`).join("")}
-              </select>
-            </label>
-            <label>Time
-              <select name="timeControl">
-                ${lobby.timeControls.map((t) => `<option value="${t}">${t}</option>`).join("")}
-              </select>
-            </label>
+            <div>
+              <span class="picker-label">Stake</span>
+              ${renderStakePicker("invite", lobby.stakes, invitePick.stakeCents)}
+            </div>
+            <div>
+              <span class="picker-label">Time control</span>
+              ${renderTimePicker("invite", lobby.timeControls, invitePick.timeControl)}
+            </div>
+            <input type="hidden" name="stakeCents" value="${invitePick.stakeCents ?? ""}" />
+            <input type="hidden" name="timeControl" value="${escapeHtml(invitePick.timeControl ?? "")}" />
             <button class="primary" type="submit">Post invite</button>
           </form>
         </article>
@@ -2082,6 +2173,26 @@ function render() {
       ];
       const challenge = all.find((c) => c.id === id);
       if (challenge) selectChallenge(challenge);
+    });
+  });
+  document.querySelectorAll("[data-pick-stake]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const formKey = btn.dataset.pickStake;
+      const cents = Number(btn.dataset.stakeCents);
+      if (!state.picker[formKey]) return;
+      if (state.picker[formKey].stakeCents === cents) return;
+      state.picker[formKey].stakeCents = cents;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-pick-time]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const formKey = btn.dataset.pickTime;
+      const tc = btn.dataset.time;
+      if (!state.picker[formKey]) return;
+      if (state.picker[formKey].timeControl === tc) return;
+      state.picker[formKey].timeControl = tc;
+      render();
     });
   });
   const createForm = document.querySelector("[data-create-challenge]");
