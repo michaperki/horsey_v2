@@ -2708,13 +2708,18 @@ function renderUserProfile() {
   const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
   const challengeStake = state.picker.hero.stakeCents;
   const challengeTime = state.picker.hero.timeControl;
+  const narrative = scoutNarrative(stats, h2h);
   return `
     <section class="user-profile">
       <aside class="card user-profile-rail">
         <div class="avatar huge">${escapeHtml(initial)}</div>
         <div>
           <h1>${escapeHtml(user.handle)}</h1>
-          <p class="muted">rating ${escapeHtml(user.rating)} · ${escapeHtml(memberSinceLabel(user.createdAt))}</p>
+          <p class="muted">rating ${escapeHtml(user.rating)} · joined ${escapeHtml(accountAgeLabel(user.createdAt))} ago</p>
+        </div>
+        <div class="profile-reveal">
+          <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
+          <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
         </div>
         <div class="tag-row">
           <span>${user.presence?.online ? "online" : "offline"}</span>
@@ -2744,6 +2749,7 @@ function renderUserProfile() {
           <div><small>Draws</small><strong>${escapeHtml(stats.draws ?? 0)}</strong></div>
         </div>
         <div class="profile-section">
+          <h3>Recent form</h3>
           <small>Last 10</small>
           <div class="scout-beads">${scoutBeads(stats.last10)}</div>
         </div>

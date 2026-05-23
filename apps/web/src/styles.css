@@ -2269,9 +2269,24 @@ p {
   font-size: 13px;
 }
 
+.profile-reveal {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
 .profile-section {
   display: grid;
   gap: 8px;
+}
+
+.profile-section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 .rating-spark {

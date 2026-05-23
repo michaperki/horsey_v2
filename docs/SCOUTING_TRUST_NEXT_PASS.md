@@ -267,11 +267,12 @@ Data work needed:
 - [x] Third stat tile changed from a duplicated `Games` (already in the reveal frame) to `Joined Xmo / Xy` via the new `accountAgeLabel()` helper. The header `small` now carries only the rating since tenure has its own dedicated surface.
 - [x] No fake trust badges. CTAs, last10, and H2H unchanged.
 
-### Wave P1 - Profile evidence pass
+### Wave P1 - Profile evidence pass  *(shipped)*
 
-- Split profile into "record", "wager profile", and "reliability" evidence.
-- Add only data-backed aggregates: games, W/L/D, account age, recent form, rating timeline, H2H.
-- Defer stake bands until aggregate API support exists.
+- [x] Rail now carries the same narrative reveal as the Scout Card via `scoutNarrative()` and `accountAgeLabel()` — `established regular` / `new account` label plus the sample-size + relationship frame line. Consistent voice between popover and full profile.
+- [x] Rail subtitle dropped the verbose `joined Mar 2026` form in favor of the compact `joined 8mo ago` to match the Scout Card's `Joined` tile.
+- [x] Center column's Record block is now explicitly separated from a labelled `Recent form` block (Last 10 + rating timeline) via a real `<h3>`. The umbrella `Record` header no longer subsumes the form rail; each block reads as its own evidence type.
+- [x] `Wager profile` and `Reliability` sections intentionally NOT rendered. Per the doc rule, a missing trust block is better than a fake one. These slots come back once stake-band aggregation and timeout/disconnect policy land server-side.
 
 ### Wave T1 - Trust foundation
 
