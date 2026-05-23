@@ -1281,6 +1281,28 @@ function scoutBeads(results = []) {
   return results.map((r) => `<span class="scout-bead ${r.toLowerCase()}">${escapeHtml(r)}</span>`).join("");
 }
 
+const ESTABLISHED_GAMES_THRESHOLD = 20;
+
+function accountAgeLabel(iso) {
+  if (!iso) return "new";
+  const created = new Date(iso);
+  if (Number.isNaN(created.getTime())) return "new";
+  const days = Math.max(0, Math.floor((Date.now() - created.getTime()) / 86400000));
+  if (days < 30) return `${days}d`;
+  if (days < 365) return `${Math.max(1, Math.floor(days / 30))}mo`;
+  return `${Math.max(1, Math.floor(days / 365))}y`;
+}
+
+function scoutNarrative(stats, h2h) {
+  const games = stats?.finishedGames ?? 0;
+  const tenure = games >= ESTABLISHED_GAMES_THRESHOLD ? "established regular" : "new account";
+  const sampleLine = games === 0
+    ? "no finished games yet"
+    : `${games} finished game${games === 1 ? "" : "s"}`;
+  const sharedClause = h2h?.games ? " · shared history" : "";
+  return { tenure, frame: `${sampleLine}${sharedClause}` };
+}
+
 function renderScoutPopover() {
   const scout = state.scout;
   if (!scout.userId || !scout.anchor) return "";
@@ -1314,21 +1336,26 @@ function renderScoutPopover() {
   const h2hMoney = h2h?.viewerNetCents ? `<span class="money-win">+${money(h2h.viewerNetCents)}</span>` : "";
   const challengeLabel = scout.context?.stakeCents ? `Challenge ${money(scout.context.stakeCents)}` : "Challenge";
   const challengeDisabled = !scout.context?.stakeCents || !scout.context?.timeControl;
+  const narrative = scoutNarrative(stats, h2h);
   return `
     <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
       <button type="button" class="scout-close" data-close-scout aria-label="Close scout card">×</button>
       <header class="scout-head">
         <div class="avatar">${escapeHtml(initial)}</div>
-        <div>
+        <div class="scout-identity">
           <strong>${escapeHtml(user.handle)}</strong>
-          <small>${escapeHtml(String(user.rating))} · ${escapeHtml(memberSinceLabel(user.createdAt))}</small>
+          <small class="mono tnum">${escapeHtml(String(user.rating))}</small>
         </div>
         ${user.presence?.online ? `<span class="status-pill">online</span>` : ""}
       </header>
+      <div class="scout-reveal">
+        <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
+        <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
+      </div>
       <div class="scout-stat-grid">
-        <div><small>Games</small><strong>${escapeHtml(stats.finishedGames ?? 0)}</strong></div>
         <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
         <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
+        <div><small>Joined</small><strong>${escapeHtml(accountAgeLabel(user.createdAt))}</strong></div>
       </div>
       <div class="scout-section">
         <small>Last 10</small>

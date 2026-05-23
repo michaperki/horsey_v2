@@ -259,12 +259,13 @@ Data work needed:
 - [x] Scout trigger remains on the identity span (now classed `open-card-scout` with the new `inline-flex` grid placement) so opponent inspection still works and stopPropagation guards the parent click.
 - [x] No narrative labels or trust clues rendered here per the locked decision — those live in the Scout Card. Open Tables stays typographically quiet.
 
-### Wave S1 - Scout Card reveal fix
+### Wave S1 - Scout Card reveal fix  *(shipped)*
 
-- Reorder Scout Card so the reveal appears above or immediately below identity.
-- Add a cautious narrative label only from current data: `New account`, `Established regular`, `You have history`, `No shared games`.
-- Replace one repeated identity/stat tile with account age + sample-size framing.
-- Keep CTAs, last10, H2H, and no fake trust badges.
+- [x] Reveal block (`.scout-reveal`) lives immediately under the identity header. First line is a cautious narrative label, second line is the sample-size + relationship frame.
+- [x] Narrative labels come from current data only via `scoutNarrative(stats, h2h)`: `new account` when `finishedGames < 20`, `established regular` at or above. The frame appends ` · shared history` when h2h has any games. The `no shared games` case is conveyed by the empty H2H block below rather than as a redundant label.
+- [x] Threshold `ESTABLISHED_GAMES_THRESHOLD = 20` is the locked initial cutoff per design call. Easy to retune as data lands.
+- [x] Third stat tile changed from a duplicated `Games` (already in the reveal frame) to `Joined Xmo / Xy` via the new `accountAgeLabel()` helper. The header `small` now carries only the rating since tenure has its own dedicated surface.
+- [x] No fake trust badges. CTAs, last10, and H2H unchanged.
 
 ### Wave P1 - Profile evidence pass
 
