@@ -105,19 +105,19 @@ The chip/pill primitives we built in Wave 1 are re-used inside the new hero. No 
 - [x] **Right rail unification.** Dropped the `Sent` block and the `Open an invite` form card. `Incoming` hides when empty. `Open Tables` is now a 2-column opponent-card grid (avatar + chip stack + time pill + Sit CTA) and filters out the viewer's own invites (those live in the hero in State C).
 - [x] **Heartbeat strip** at the top of the right rail — first slice of item #2. Uses `bootstrap.lobby.onlineCount` and `activeGames`. Hot Upsets / Rivals / Live Games defer to their subsystems.
 
-### Wave 3 — Hero polish inside the new shape  *(blocked on Wave 2.5)*
+### Wave 3 — Hero polish inside the new shape  *(shipped)*
 
-Defers until the Live-Table Module lands. Polishing State A's body now would make the matchmaking hero visually heavier, worsening the competing-intents problem with a live game above.
+Five polish items landed together inside the new State A hero now that Wave 2.5 set the live-game presence cleanly.
 
 
 
 These items previously lived as isolated polish tickets; they now land inside the State A hero card.
 
-- [ ] **#4 "Pot if you win" panel** beside the primary CTA (`+$pot · 5% rake · escrowed`).
-- [ ] **#5 Rematch strip** — last 4 opponents with avatar + P/L delta + stake (`↺ Vish +$225 · $250`). Data likely derivable from `history`.
-- [ ] **#6 CTA glow + arrow** on the *primary* CTA only (`animation: ho-glow 3s ease-in-out infinite`). Host CTA stays muted on purpose.
-- [ ] **#7 Hero voice** — `Pick a chip. Sit down.` Replaces `Pick a stake. Find a game.`
-- [ ] **#9 "You're playing as" identity badge** in the hero's top-right (avatar + handle + rating). More important now that the hero is the only matchmaking surface.
+- [x] **#4 "Pot if you win" panel** beside the primary CTA. Inline `previewNetPotCents(stakeCents)` mirrors `calculatePot` in `packages/shared/domain.mjs` (RAKE_RATE = 0.05); preview only, the server is the source of truth at game creation.
+- [x] **#5 Rematch strip** — last 4 unique opponents from `/api/games/history`, deduped and capped. Fetched on play-route entry. Each row shows avatar + `↺ {handle}` + win-delta (positive only, gold) or time control fallback, with the stake on the right. **Honors `project_no_loss_advertising`**: negative deltas are suppressed in favor of the time-control line. New `rematchFromHistory()` action posts to `/api/challenges` and navigates to the wager screen for confirmation.
+- [x] **#6 CTA glow + arrow** on the *primary* Idle CTA only. Scoped via `.hero-state-idle .hero-cta-primary` so Queued's `Leave queue` and Hosting's `Withdraw invite` stay calm (they're exits, not invitations). New `@keyframes hero-cta-glow` runs 3s ease-in-out infinite.
+- [x] **#7 Hero voice** — `Pick a chip. Sit down.` replaces the missing-h1 picker-only Idle hero.
+- [x] **#9 "You're playing as" identity badge** in the hero's top-right: viewer avatar + handle + rating. Now that the hero is the only matchmaking surface, the player can see at a glance what identity they're betting with.
 
 ### Wave 4 — Deferred to subsystems / later
 

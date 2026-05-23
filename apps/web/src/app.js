@@ -446,6 +446,58 @@ function formatElapsedShort(seconds) {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
+// Mirrors calculatePot in packages/shared/domain.mjs (RAKE_RATE = 0.05).
+// Client preview only; the server is the source of truth at game creation.
+function previewNetPotCents(stakeCents) {
+  if (!Number.isFinite(stakeCents) || stakeCents <= 0) return 0;
+  const gross = stakeCents * 2;
+  const rake = Math.round(gross * 0.05);
+  return gross - rake;
+}
+
+function recentOpponentsForPlay(limit = 4) {
+  const items = state.historyList;
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const seen = new Set();
+  const out = [];
+  for (const entry of items) {
+    const opp = entry.opponent;
+    if (!opp?.id || seen.has(opp.id)) continue;
+    if (!entry.stakeCents || !entry.timeControl) continue;
+    seen.add(opp.id);
+    const deltaCents = entry.result === "win"
+      ? Math.max(0, (entry.creditedCents ?? 0) - entry.stakeCents)
+      : entry.result === "loss"
+        ? -entry.stakeCents
+        : Math.max(0, (entry.creditedCents ?? 0) - entry.stakeCents);
+    out.push({
+      opponentId: opp.id,
+      handle: opp.handle,
+      stakeCents: entry.stakeCents,
+      timeControl: entry.timeControl,
+      result: entry.result,
+      deltaCents
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+async function rematchFromHistory({ opponentId, stakeCents, timeControl }) {
+  if (!opponentId || !stakeCents || !timeControl) return;
+  state.actionError = null;
+  try {
+    const payload = await postJson("/api/challenges", { recipientId: opponentId, stakeCents, timeControl });
+    state.activeChallenge = payload.challenge;
+    await loadBootstrap();
+    navigate("wager");
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+    render();
+  }
+}
+
 function manageClockTick() {
   const onGameRoute = state.route === "game" && state.activeGame;
   const onPlayWithLive = state.route === "play" && state.activeGame
@@ -978,6 +1030,13 @@ async function enterRoute(parsed) {
       if (authGuard(error)) return;
       state.actionError = error.message;
     }
+  } else if (state.route === "play") {
+    try {
+      const resp = await getJson("/api/games/history");
+      state.historyList = resp.games;
+    } catch (error) {
+      if (authGuard(error)) return;
+    }
   } else if (state.route === "profile") {
     try {
       const wallet = await getJson("/api/wallet");
@@ -1150,7 +1209,54 @@ function renderHeroIdle(lobby) {
   const pick = state.picker.hero;
   const quickBusy = actionInFlight("quick-match");
   const hostBusy = actionInFlight("host-invite");
+  const viewer = state.bootstrap.viewer;
+  const viewerInitial = (viewer.handle?.[0] ?? "?").toUpperCase();
+  const potCents = previewNetPotCents(pick.stakeCents ?? 0);
+  const opponents = recentOpponentsForPlay(4);
+  const rematchStrip = opponents.length === 0 ? "" : `
+    <div class="hero-rematch-strip">
+      <span class="picker-label">Pick up where you left off</span>
+      <div class="hero-rematch-row">
+        ${opponents.map((o) => {
+          const handleInitial = (o.handle?.[0] ?? "?").toUpperCase();
+          // Per project_no_loss_advertising: show positive wins as gold deltas, but
+          // never surface a negative number. Loss/draw rows just show time control.
+          const secondary = o.deltaCents > 0
+            ? `<span class="hero-rematch-delta delta-up mono tnum">+${escapeHtml(money(o.deltaCents))}</span>`
+            : `<span class="hero-rematch-delta mono tnum">${escapeHtml(o.timeControl)}</span>`;
+          return `
+            <button type="button" class="hero-rematch-pick"
+              data-rematch-from="${escapeHtml(o.opponentId)}"
+              data-rematch-stake="${o.stakeCents}"
+              data-rematch-time="${escapeHtml(o.timeControl)}">
+              <div class="avatar sm">${escapeHtml(handleInitial)}</div>
+              <div class="hero-rematch-id">
+                <span class="hero-rematch-handle">↺ ${escapeHtml(o.handle ?? "opponent")}</span>
+                ${secondary}
+              </div>
+              <span class="hero-rematch-stake mono tnum">${money(o.stakeCents)}</span>
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+
   return `
+    <div class="hero-state-head hero-state-head-row">
+      <div>
+        <span class="picker-label">Quick match</span>
+        <h1>Pick a chip. Sit down.</h1>
+      </div>
+      <div class="hero-identity-badge">
+        <span class="picker-label">You're playing as</span>
+        <div class="hero-identity-row">
+          <div class="avatar">${escapeHtml(viewerInitial)}</div>
+          <strong>${escapeHtml(viewer.handle)}</strong>
+          ${viewer.rating ? `<span class="hero-identity-rating mono tnum">${escapeHtml(String(viewer.rating))}</span>` : ""}
+        </div>
+      </div>
+    </div>
     <div>
       <span class="picker-label">Stake</span>
       ${renderStakePicker("hero", lobby.stakes, pick.stakeCents)}
@@ -1162,13 +1268,20 @@ function renderHeroIdle(lobby) {
     <div class="hero-cta-row">
       <button class="primary hero-cta-primary" type="button"
         data-find-game ${quickBusy || hostBusy ? "disabled" : ""}>
-        ${quickBusy ? "Joining queue..." : "Find me a game"}
+        <span>${quickBusy ? "Joining queue..." : "Find me a game"}</span>
+        <span aria-hidden="true">→</span>
       </button>
+      <div class="hero-pot-panel" aria-label="Pot if you win">
+        <span class="picker-label">Pot if you win</span>
+        <span class="hero-pot-amount mono tnum">+${money(potCents)}</span>
+        <span class="hero-pot-rake">5% rake · escrowed</span>
+      </div>
     </div>
     <button class="hero-cta-secondary" type="button"
       data-host-invite ${quickBusy || hostBusy ? "disabled" : ""}>
       ${hostBusy ? "Posting invite..." : "Host a table at these terms →"}
     </button>
+    ${rematchStrip}
   `;
 }
 
@@ -2409,6 +2522,15 @@ function render() {
   });
   document.querySelectorAll("[data-live-resign]").forEach((b) => {
     b.addEventListener("click", () => openResignConfirm());
+  });
+  document.querySelectorAll("[data-rematch-from]").forEach((b) => {
+    b.addEventListener("click", () => {
+      rematchFromHistory({
+        opponentId: b.dataset.rematchFrom,
+        stakeCents: Number(b.dataset.rematchStake),
+        timeControl: b.dataset.rematchTime
+      });
+    });
   });
   const emailForm = document.querySelector("[data-account-email]");
   if (emailForm) {
