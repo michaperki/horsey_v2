@@ -58,3 +58,4 @@ For execution planning, use `docs/IMPLEMENTATION_PLAN.md` as the current staged 
 Related focused notes:
 
 - `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
+- `docs/LIVENESS_NEXT_PASS.md` records the next-pass priorities for making the lobby feel live: heartbeat-over-WS, live challenge timers, in-progress games feed, and the real rating system that the entire identity layer is currently faking.
