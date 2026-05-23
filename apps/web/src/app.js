@@ -424,6 +424,29 @@ function challengeExpiryLabel(challenge) {
   return remaining > 0 ? ` · auto-decline ${remaining}s` : " · expired";
 }
 
+function expiryUrgencyClass(remaining) {
+  if (remaining == null) return "";
+  if (remaining <= 0) return "expired";
+  if (remaining <= 10) return "critical";
+  if (remaining <= 30) return "low";
+  return "";
+}
+
+function renderExpiryChip(challenge, variant = "inline") {
+  const remaining = challengeSecondsRemaining(challenge);
+  if (remaining == null) return "";
+  const urgency = expiryUrgencyClass(remaining);
+  const text = remaining > 0 ? `${remaining}s` : "expired";
+  const verb = variant === "wager" ? "Accept in" : "auto-decline";
+  return `
+    <span class="expiry-chip expiry-${variant} ${urgency}">
+      <span class="expiry-icon" aria-hidden="true">⏱</span>
+      <span class="expiry-verb">${escapeHtml(verb)}</span>
+      <strong class="expiry-time mono tnum">${escapeHtml(text)}</strong>
+    </span>
+  `;
+}
+
 function manageChallengeCountdown() {
   const challengeTicking = visibleCountdownChallenges()
     .some((challenge) => {
@@ -1875,12 +1898,16 @@ function renderWager() {
     viewerIsRecipient,
     opponent
   });
+  const expiryChip = canAct ? renderExpiryChip(challenge, "wager") : "";
 
   return `
     <section class="grid wager">
       <article class="stack wager-left">
         <div class="wager-headline">
-          <div class="eyebrow danger">${challenge.state} challenge${challengeExpiryLabel(challenge)}</div>
+          <div class="wager-headline-row">
+            <div class="eyebrow danger">${challenge.state} challenge</div>
+            ${expiryChip}
+          </div>
           <h1>${headline}</h1>
         </div>
         ${dossier}

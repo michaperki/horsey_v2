@@ -36,13 +36,18 @@ The `1,204 online · 412 in active games` strip is currently a snapshot from boo
 - **Scope.** The WS layer already tracks per-user presence (`apps/api/realtime.mjs`). Add a periodic broadcast (or join/leave-triggered delta) that updates `state.bootstrap.lobby.onlineCount` and `activeGames`. Render path already exists in `renderHeartbeatStrip()`.
 - **What it unlocks.** Makes the lobby surface state-aware over WS in general — the same channel can later feed item #1 (live game feed) and #3 (live challenge expiry).
 
-### 3. Real expiry countdown on Wager + Open Tables
+### 3. Real expiry countdown on Wager  *(shipped)*
 
-The backend already tracks `expiresInSeconds` + `updatedAt`; the client computes `challengeSecondsRemaining()` but only renders it as a static label that updates per re-render, not as a live ticking display.
+The backend already tracks `expiresInSeconds` + `updatedAt`; the existing `manageChallengeCountdown` already re-renders every second when a countdown is visible. What was missing was a *visible* expiry display — the countdown was buried as a muted suffix in the eyebrow (` · auto-decline 42s`), reading as metadata rather than urgency.
 
-- **Why it matters.** Adds genuine urgency to the decision moment that the U4 dossier was leaning into. "Accept in 0:42" is a small detail but it's the difference between a static page and a moment with a clock. Also stops abandoned open invites from feeling permanent.
-- **Scope.** Tick the relevant render once a second when wager / play routes are active and a non-terminal challenge is in view. The existing `manageClockTick` rAF loop is the right place — extend it to also touch challenge-expiry DOM nodes the same way it touches live-table clocks.
-- **IA flag.** Listed as ⚠️ Mock #4 in `IA_PROPOSAL.md`.
+- [x] Promoted the wager expiry to a prominent chip on the headline row via the new `renderExpiryChip(challenge, "wager")` helper. Reads `ACCEPT IN 42s` with a clock glyph, sits next to the eyebrow on the same row.
+- [x] Urgency states via `expiryUrgencyClass(remaining)`: default (muted) above 30s, `.low` gold-tinted under 30s, `.critical` red + 1s pulse under 10s, `.expired` faded after timeout. The chip's color, border, background, and pulse animation are all driven by these classes.
+- [x] Chip only renders when the viewer can act (`canAct`). The waiting party doesn't see the timer — the server enforces expiry; making them watch a clock they can't affect just creates false urgency.
+- [x] Removed the buried `· auto-decline 42s` suffix from the eyebrow now that the chip carries the same information visibly.
+- [x] The hero-hosting and incoming-challenge-row expiry indicators stay as-is for now (already-ticking inline text; visual noise reduction on Open Tables rows was deliberate).
+- IA flag was ⚠️ Mock #4 in `IA_PROPOSAL.md` — that note will move to ✅ on the next docs sweep.
+
+**Not done** (left as a follow-up): switch the second-tick from full `render()` to targeted DOM updates on `[data-expiry-base]` nodes. The existing full-render-every-second is wasteful but correct; targeted updates are a separate perf commit when it actually matters.
 
 ### 4. Real rating system  *(largest, most foundational)*
 

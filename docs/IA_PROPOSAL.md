@@ -84,7 +84,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Opponent dossier (tenure label, sample frame, win rate / streak / joined, last 10 beads, h2h) | ✅ | Wave U4 landed — wager fetches `GET /api/users/:id` for the opposite party and renders the dossier under the headline. See `docs/USER_PROFILE_IA.md`. |
 | Opponent country / reputation / verified / note | 🚫 | Still deferred to Phase 5 + trust subsystem; the dossier deliberately renders only data we can back. |
 | Counter terms | ✅ | Inline stake/time picker; server transitions to `countered` and the original challenger becomes the responding party via `requireRespondingParty`. No more no-op counter. |
-| Auto-decline countdown timer | ⚠️ | Mock #4 — expiration timer not yet wired to a live ticking display on the wager screen. |
+| Auto-decline countdown timer | ✅ | Live ticking chip on the wager headline (`ACCEPT IN 42s`) with low/critical/expired urgency states. See `docs/LIVENESS_NEXT_PASS.md` item 3. |
 
 ### Game (flow stop, reached via Resume pill / auto-nav)
 | Surface | Status | Notes |
