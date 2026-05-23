@@ -41,6 +41,13 @@ export function createPresenceRegistry() {
         online: entry.connections > 0,
         lastSeenAt: entry.connections > 0 ? null : entry.lastSeenAt
       };
+    },
+    onlineCount() {
+      let count = 0;
+      for (const entry of state.values()) {
+        if (entry.connections > 0) count += 1;
+      }
+      return count;
     }
   };
 }

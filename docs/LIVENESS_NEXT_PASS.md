@@ -28,13 +28,21 @@ A small list of currently-in-progress tables, visible from the lobby. Reads as `
 - **What it unlocks.** Becomes the natural mounting point later for the deferred Hot Upsets / Rivals / spectator surfaces in `LOBBY_DESIGN_GAP.md` Wave 4.
 - **Privacy guardrail.** Show stake and move count, not move-by-move detail. Public game metadata only.
 
-### 2. Heartbeat numbers go live over WS
+### 2. Heartbeat numbers go live over WS  *(shipped)*
 
-The `1,204 online · 412 in active games` strip is currently a snapshot from bootstrap. Wire it to the existing WS presence channel so the numbers tick.
+The `1,204 online · 412 in active games` strip was a snapshot from bootstrap — and the snapshot itself was the seeded `0 · 0` because `onlineCount` / `activeGames` were never actually computed. The strip was a piece of theater the whole time.
 
-- **Why it matters.** Cheapest possible "the room is breathing" payoff. Static counts read as fake; ticking counts read as ambient liveness even without any other animation.
-- **Scope.** The WS layer already tracks per-user presence (`apps/api/realtime.mjs`). Add a periodic broadcast (or join/leave-triggered delta) that updates `state.bootstrap.lobby.onlineCount` and `activeGames`. Render path already exists in `renderHeartbeatStrip()`.
-- **What it unlocks.** Makes the lobby surface state-aware over WS in general — the same channel can later feed item #1 (live game feed) and #3 (live challenge expiry).
+- [x] **`presence.onlineCount()`** added to the shared registry — counts users with at least one open connection.
+- [x] **`db.countLiveGames()`** added — cheap `SELECT count(*) FROM games WHERE state = 'live'`.
+- [x] **`computeLobbyLiveness()`** + **`publishLobbyHeartbeat()`** in `server.mjs`. The publish helper caches the last broadcast snapshot and skips emission when neither value changed, so the WS channel doesn't get spammed with no-op events.
+- [x] **`CHANNELS.lobby`** is a global channel; every authenticated WS client is auto-subscribed on attach alongside their user channel. No client opt-in needed — every browser tab on Play gets the heartbeat.
+- [x] **Hooked into events.** Bootstrap now overrides the seeded `0 · 0` with real liveness on every page load. WS broadcast fires on:
+  - Presence transitions (first connect for a user, last disconnect)
+  - Game starts (via `publishMatchmakingMatched` which fires on direct-accept too)
+  - Game finalize (via `publishGameFinalized`)
+- [x] **Client tick.** New `lobby.heartbeat` case in `handleRealtimeMessage`. Updates `state.bootstrap.lobby.{onlineCount,activeGames}` and calls `updateHeartbeatDom()` which writes only the two count nodes via `[data-heartbeat-online]` / `[data-heartbeat-active]` attributes. No full re-render — the strip ticks in place.
+
+**What this unlocks:** the lobby surface is now state-aware over WS. The same channel and pattern can feed item #1 (live game feed) — that's the next slice.
 
 ### 3. Real expiry countdown on Wager  *(shipped)*
 

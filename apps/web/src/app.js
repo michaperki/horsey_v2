@@ -817,6 +817,18 @@ async function handleRealtimeMessage(msg) {
       }
       return;
     }
+    case "lobby.heartbeat": {
+      if (!state.bootstrap?.lobby) return;
+      const before = state.bootstrap.lobby;
+      if (before.onlineCount === msg.onlineCount && before.activeGames === msg.activeGames) return;
+      state.bootstrap.lobby = {
+        ...before,
+        onlineCount: msg.onlineCount,
+        activeGames: msg.activeGames
+      };
+      updateHeartbeatDom();
+      return;
+    }
     case "challenge.created":
     case "challenge.updated":
     case "matchmaking.matched": {
@@ -1705,11 +1717,25 @@ function renderHeartbeatStrip(lobby) {
   return `
     <div class="heartbeat-strip">
       <span class="heartbeat-dot"></span>
-      <span class="heartbeat-count"><strong>${online.toLocaleString()}</strong> online</span>
+      <span class="heartbeat-count"><strong data-heartbeat-online>${online.toLocaleString()}</strong> online</span>
       <span class="heartbeat-sep">·</span>
-      <span class="heartbeat-active">${active.toLocaleString()} in active games</span>
+      <span class="heartbeat-active"><span data-heartbeat-active>${active.toLocaleString()}</span> in active games</span>
     </div>
   `;
+}
+
+function updateHeartbeatDom() {
+  if (typeof document === "undefined") return;
+  const lobby = state.bootstrap?.lobby;
+  if (!lobby) return;
+  const online = Number(lobby.onlineCount ?? 0);
+  const active = Number(lobby.activeGames ?? 0);
+  document.querySelectorAll("[data-heartbeat-online]").forEach((node) => {
+    node.textContent = online.toLocaleString();
+  });
+  document.querySelectorAll("[data-heartbeat-active]").forEach((node) => {
+    node.textContent = active.toLocaleString();
+  });
 }
 
 function renderOpenTableRow(challenge) {

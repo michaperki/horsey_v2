@@ -295,6 +295,7 @@ function makeApi(db) {
       ORDER BY g.created_at DESC LIMIT 1
     `),
     listLiveGames: db.prepare("SELECT * FROM games WHERE state = 'live'"),
+    countLiveGames: db.prepare("SELECT count(*) AS n FROM games WHERE state = 'live'"),
     findMostRecentGameForUser: db.prepare(`
       SELECT g.* FROM games g
       JOIN game_players gp ON gp.game_id = g.id
@@ -468,6 +469,7 @@ function makeApi(db) {
       return stmts.listFinalizedGamesBetween.all(userA, userB, limit).map(rowToGame);
     },
     listLiveGames() { return stmts.listLiveGames.all().map(rowToGame); },
+    countLiveGames() { return Number(stmts.countLiveGames.get()?.n ?? 0); },
 
     getLobby() { return JSON.parse(stmts.getLobby.get().data_json); },
 

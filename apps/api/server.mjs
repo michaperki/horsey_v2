@@ -221,6 +221,7 @@ function publishGameFinalized(game) {
   for (const player of game.players) {
     broker.publish(CHANNELS.user(player.id), { type: "game.finalized", gameId: game.id });
   }
+  publishLobbyHeartbeat();
 }
 
 function publishChallengeCreated(challenge) {
@@ -263,6 +264,29 @@ function publishPresenceChanged(userId) {
   }
 }
 
+let lastHeartbeatSnapshot = null;
+function computeLobbyLiveness() {
+  return {
+    onlineCount: presence.onlineCount(),
+    activeGames: db.countLiveGames()
+  };
+}
+
+function publishLobbyHeartbeat({ force = false } = {}) {
+  const snapshot = computeLobbyLiveness();
+  if (!force && lastHeartbeatSnapshot
+      && lastHeartbeatSnapshot.onlineCount === snapshot.onlineCount
+      && lastHeartbeatSnapshot.activeGames === snapshot.activeGames) {
+    return;
+  }
+  lastHeartbeatSnapshot = snapshot;
+  broker.publish(CHANNELS.lobby, {
+    type: "lobby.heartbeat",
+    onlineCount: snapshot.onlineCount,
+    activeGames: snapshot.activeGames
+  });
+}
+
 function publishMatchmakingMatched(game) {
   if (!game) return;
   const enriched = enrichGame(game);
@@ -272,6 +296,7 @@ function publishMatchmakingMatched(game) {
       game: enriched
     });
   }
+  publishLobbyHeartbeat();
 }
 
 function viewerPayload(viewerId) {
@@ -1062,7 +1087,9 @@ function startSession(userId, nowIso = new Date().toISOString()) {
 }
 
 function bootstrapPayload(viewer) {
-  const lobby = db.getLobby();
+  const baseLobby = db.getLobby();
+  const liveness = computeLobbyLiveness();
+  const lobby = { ...baseLobby, ...liveness };
   const openChallenges = refreshVisibleChallenges(db.listOpenChallenges()).map((c) => challengePayload(c, viewer.id));
   const incomingChallenges = refreshVisibleChallenges(db.listIncomingForRecipient(viewer.id)).map((c) =>
     challengePayload(c, viewer.id)
@@ -1610,10 +1637,12 @@ function attachWebSocket(ws, viewer) {
   const gameChannels = new Set();
   const userChannel = CHANNELS.user(viewer.id);
   broker.subscribe(userChannel, client);
+  broker.subscribe(CHANNELS.lobby, client);
 
   const connectChange = presence.connect(viewer.id);
   if (!connectChange.previouslyOnline) {
     publishPresenceChanged(viewer.id);
+    publishLobbyHeartbeat();
   }
   let cleanedUp = false;
   function cleanup() {
@@ -1623,6 +1652,7 @@ function attachWebSocket(ws, viewer) {
     const change = presence.disconnect(viewer.id);
     if (change.previouslyOnline && !change.nowOnline) {
       publishPresenceChanged(viewer.id);
+      publishLobbyHeartbeat();
     }
   }
 

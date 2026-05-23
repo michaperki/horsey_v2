@@ -70,5 +70,6 @@ export function createBroker() {
 
 export const CHANNELS = {
   user: (userId) => `user:${userId}`,
-  game: (gameId) => `game:${gameId}`
+  game: (gameId) => `game:${gameId}`,
+  lobby: "lobby"
 };
