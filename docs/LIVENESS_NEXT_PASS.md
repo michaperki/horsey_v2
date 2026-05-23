@@ -60,12 +60,11 @@ Every account starts at 1200 and never updates. Every `1842` rating in the dossi
   - Surface `ratingDelta` on the settlement screen now that it'll be non-null.
 - **Why this is its own weight class.** Server work + decision on the rating model + migration story for the seed accounts. Don't bundle with the liveness items.
 
-### 5. Profile rematch CTA when h2h exists
+### 5. Profile rematch CTA when h2h exists  *(shipped)*
 
 Small polish item explicitly named in `USER_PROFILE_IA.md` Wave U3 ("Remaining polish: dedicated rematch affordance when h2h exists").
 
-- **Why it matters.** Profile already has a Challenge button; when there's shared history, the verb should reflect that. "Rematch Vish · $25" reads differently from "Challenge Vish · $25" — the former says "you two have a story," the latter says "you're calling them out."
-- **Scope.** Branch the CTA label and copy when `h2h.games > 0`. ~10 minutes.
+- [x] CTA branches on `h2h.games > 0`. Reads `Rematch Vish · $25` when shared history exists, `Challenge Vish · $25` when it doesn't. The opponent handle is now in the label either way — the prior copy was just `Challenge $25` with no name, which felt impersonal for the directed-callout that this CTA is.
 
 ## Recommended sequencing
 

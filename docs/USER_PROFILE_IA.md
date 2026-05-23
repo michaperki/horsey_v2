@@ -154,7 +154,7 @@ Names follow the project's wave convention; this is a new track running parallel
 
 - [x] New `#user/:id` route + `renderUserProfile()`. Fetches `GET /api/users/:id` and `GET /api/users/:id/recent-games`.
 - [x] Initial 3-column dossier with real today blocks only: identity, presence, h2h, record, rating timeline, last10, recent games. Decorative trust/tells/openings blocks omitted entirely.
-- [x] Wired Challenge CTA using the current hero stake/time defaults. Remaining polish: dedicated rematch affordance when h2h exists.
+- [x] Wired Challenge CTA using the current hero stake/time defaults. CTA now branches on shared history: reads `Rematch {handle} · $X` when `h2h.games > 0`, `Challenge {handle} · $X` otherwise. The opponent's handle is in the label in both cases — the prior `Challenge $25` copy was impersonal for what is structurally a directed callout.
 
 ### Wave U4 — Wager-screen enrichment  *(shipped)*
 

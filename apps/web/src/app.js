@@ -2859,7 +2859,7 @@ function renderUserProfile() {
           data-profile-stake="${escapeHtml(challengeStake ?? "")}"
           data-profile-time="${escapeHtml(challengeTime ?? "")}"
           ${!challengeStake || !challengeTime ? "disabled" : ""}>
-          Challenge ${challengeStake ? money(challengeStake) : ""}
+          ${h2h?.games ? "Rematch" : "Challenge"} ${escapeHtml(user.handle)}${challengeStake ? ` · ${money(challengeStake)}` : ""}
         </button>
       </aside>
       <article class="card user-profile-main">
