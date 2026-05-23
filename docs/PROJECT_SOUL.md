@@ -59,3 +59,4 @@ Related focused notes:
 
 - `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
 - `docs/LIVENESS_NEXT_PASS.md` records the next-pass priorities for making the lobby feel live: heartbeat-over-WS, live challenge timers, in-progress games feed, and the real rating system that the entire identity layer is currently faking.
+- `docs/marketing/IMAGE_AD_PROMPTS.md` records reusable image-generation prompts and guardrails for Horsey advertising concepts.
