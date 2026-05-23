@@ -6,6 +6,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 ## Dashboard / Play
 
+- [ ] **Auto-clean contradictory matchmaking state on game start.** When a game is created (from a matchmaking pair OR a challenge accept), the viewer's open queue ticket should be auto-removed and any pending open invites they hold should be auto-withdrawn. Companion: `POST /api/matchmaking/quick`, `POST /api/challenges`, and challenge-accept should reject with a clean error code when the viewer already has a live game. Lets the dashboard keep the matchmaking surfaces fully enabled while the server stays the source of truth. See `docs/LOBBY_DESIGN_GAP.md` Wave 2.5 for the UI side of this.
 - [x] **Live game doesn't surface on `/play`.** The header Resume pill was the only entry back to a game in progress. Added a "Live game" banner on the Play page that links to the board, and guarded both banner + shell pill so finalized games cannot linger as resumable. (`app.js:renderPlay`)
 - [x] **Your own open invite doesn't show in "Open tables".** Open tables now includes your own open invite with a "yours" marker while still listing it under sent for withdrawal.
 - [x] **No way to cancel a sent open invite.** Added a challenger-only `DELETE /api/challenges/:id` route and a Wager-screen "Withdraw invite" action for pending sent invites.

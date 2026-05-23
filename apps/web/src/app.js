@@ -447,18 +447,37 @@ function formatElapsedShort(seconds) {
 }
 
 function manageClockTick() {
-  const wantTicking = state.route === "game" && state.activeGame
-    && state.activeGame.state === "live" && state.activeGame.clock;
+  const onGameRoute = state.route === "game" && state.activeGame;
+  const onPlayWithLive = state.route === "play" && state.activeGame
+    && state.liveGame && state.activeGame.id === state.liveGame.id;
+  const game = state.activeGame;
+  const wantTicking = (onGameRoute || onPlayWithLive)
+    && game?.state === "live" && game?.clock;
   if (wantTicking && !state.clockTickFrame) {
     const tick = () => {
       if (!state.clockTickFrame) return;
-      updateClockDom();
+      if (state.route === "game") updateClockDom();
+      if (state.route === "play") updateLiveTableClockDom();
       state.clockTickFrame = requestAnimationFrame(tick);
     };
     state.clockTickFrame = requestAnimationFrame(tick);
   } else if (!wantTicking && state.clockTickFrame) {
     cancelAnimationFrame(state.clockTickFrame);
     state.clockTickFrame = null;
+  }
+}
+
+function updateLiveTableClockDom() {
+  const game = state.activeGame;
+  if (!game?.clock || !game.turn) return;
+  const node = document.querySelector("[data-live-table-clock] time");
+  if (!node) return;
+  const ms = localRemainingForSide(game.turn);
+  node.textContent = ms == null ? "--:--" : formatClock(ms);
+  const module = node.closest(".live-table-module");
+  if (module) {
+    module.classList.toggle("low", ms != null && ms < 30000);
+    module.classList.toggle("critical", ms != null && ms < 10000);
   }
 }
 
@@ -1026,19 +1045,60 @@ function navLink(id, label) {
   return `<a class="${active}" href="#${id}">${label}</a>`;
 }
 
-function liveGameBanner(game) {
+function renderLiveTableModule(game) {
   const viewer = game.players?.find((p) => p.id === viewerId());
   const opponent = game.players?.find((p) => p.id !== viewerId());
   const turnOwner = game.players?.find((p) => p.color === game.turn);
   const yourTurn = turnOwner && viewer && turnOwner.id === viewer.id;
   const stake = game.pot?.stakeCents ?? 0;
+  const sideMs = turnOwner ? localRemainingForSide(turnOwner.color) : null;
+  const displayClock = sideMs == null ? "--:--" : formatClock(sideMs);
+  const lowClock = sideMs != null && sideMs < 30000;
+  const criticalClock = sideMs != null && sideMs < 10000;
+  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
+  const eyebrowText = yourTurn
+    ? "● LIVE · your move"
+    : opponent
+      ? `● LIVE · ${opponent.handle}'s move`
+      : "● LIVE";
+  const stack = stakeChipStack(stake)
+    .map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`)
+    .join("");
+  const moveLabel = game.moveNumber ? `move ${game.moveNumber}` : "opening";
+  const metaParts = [money(stake)];
+  if (game.timeControl) metaParts.push(game.timeControl);
+  metaParts.push(moveLabel);
+  const resignBusy = actionInFlight("resign", game.id);
   return `
-    <section class="live-game-banner felt">
-      <div>
-        <div class="eyebrow">Live game · ${escapeHtml(yourTurn ? "your move" : opponent ? `${opponent.handle}'s move` : game.status)}</div>
-        <h2>vs ${escapeHtml(opponent?.handle || "opponent")} · ${money(stake)}</h2>
+    <section class="live-table-module ${lowClock ? "low" : ""} ${criticalClock ? "critical" : ""}">
+      <div class="live-table-body">
+        <div class="live-table-eyebrow">${escapeHtml(eyebrowText)}</div>
+        <div class="live-table-row">
+          <div class="live-table-opponent">
+            <div class="avatar">${escapeHtml(initial)}</div>
+            <div class="live-table-id">
+              <span class="live-table-handle">${escapeHtml(opponent?.handle || "opponent")}</span>
+              ${opponent?.rating ? `<span class="live-table-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
+            </div>
+          </div>
+          <div class="live-table-clock" data-live-table-clock="${escapeHtml(turnOwner?.color || "")}">
+            <span class="live-table-clock-icon" aria-hidden="true">⏱</span>
+            <time class="mono tnum">${escapeHtml(displayClock)}</time>
+          </div>
+        </div>
+        <div class="live-table-meta">
+          <span class="chip-stack">${stack}</span>
+          <span class="live-table-meta-text">${escapeHtml(metaParts.join(" · "))}</span>
+        </div>
       </div>
-      <a class="primary" href="#game">Resume game</a>
+      <div class="live-table-actions">
+        <button type="button" class="primary live-table-cta" data-return-to-board>
+          Return to board <span aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="live-table-resign" data-live-resign ${resignBusy ? "disabled" : ""}>
+          ${resignBusy ? "Resigning..." : `Resign · concede ${money(stake)}`}
+        </button>
+      </div>
     </section>
   `;
 }
@@ -1241,7 +1301,7 @@ function renderPlay() {
   const openCount = openChallenges.filter((c) => c.challengerId !== viewerId()).length;
 
   return `
-    ${liveGame ? liveGameBanner(liveGame) : ""}
+    ${liveGame ? renderLiveTableModule(liveGame) : ""}
     <section class="grid two">
       ${renderHero(lobby)}
       <aside class="stack">
@@ -2343,6 +2403,12 @@ function render() {
   });
   document.querySelectorAll("[data-leave-queue]").forEach((b) => {
     b.addEventListener("click", () => leaveQuickMatch());
+  });
+  document.querySelectorAll("[data-return-to-board]").forEach((b) => {
+    b.addEventListener("click", () => navigate("game"));
+  });
+  document.querySelectorAll("[data-live-resign]").forEach((b) => {
+    b.addEventListener("click", () => openResignConfirm());
   });
   const emailForm = document.querySelector("[data-account-email]");
   if (emailForm) {

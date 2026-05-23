@@ -759,16 +759,220 @@ p {
   gap: 12px;
 }
 
-.live-game-banner {
+.live-table-module {
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  padding: 18px 22px;
+  margin-bottom: 18px;
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 85% 20%, rgba(211, 164, 65, 0.22), transparent 32%),
+    linear-gradient(160deg, #14110d, #2a221c);
+  color: #f5ede0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 18px 44px -28px rgba(0, 0, 0, 0.6),
+    inset 0 0 0 1px rgba(241, 201, 107, 0.08);
+}
+
+.live-table-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.live-table-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(245, 237, 224, 0.75);
+}
+
+.live-table-eyebrow::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #d9531e;
+  box-shadow: 0 0 0 3px rgba(217, 83, 30, 0.22);
+  animation: live-pulse 1.4s ease-in-out infinite;
+  margin-right: 2px;
+}
+
+.live-table-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 18px;
 }
 
-.live-game-banner h2 {
-  margin: 6px 0 0;
+.live-table-opponent {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.live-table-opponent .avatar {
+  background: linear-gradient(135deg, var(--paper-2), var(--paper));
+  color: #1b1815;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.live-table-id {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.live-table-handle {
+  font-size: 18px;
+  font-weight: 800;
+  color: #f5ede0;
+  line-height: 1.1;
+}
+
+.live-table-rating {
+  font-size: 11px;
+  color: rgba(245, 237, 224, 0.55);
+}
+
+.live-table-clock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+}
+
+.live-table-clock time {
+  font-size: 22px;
+  font-weight: 800;
+  color: #f5ede0;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.live-table-clock-icon {
+  font-size: 14px;
+  color: rgba(245, 237, 224, 0.6);
+}
+
+.live-table-module.low .live-table-clock {
+  background: rgba(193, 57, 43, 0.18);
+  border-color: rgba(193, 57, 43, 0.4);
+}
+
+.live-table-module.low .live-table-clock time {
+  color: #ffb6a8;
+}
+
+.live-table-module.critical .live-table-clock {
+  background: rgba(193, 57, 43, 0.3);
+  border-color: rgba(193, 57, 43, 0.7);
+  animation: live-clock-pulse 1s ease-in-out infinite;
+}
+
+.live-table-module.critical .live-table-clock time {
+  color: #ff7c66;
+}
+
+.live-table-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  color: rgba(245, 237, 224, 0.7);
+}
+
+.live-table-meta .chip-stack {
+  height: 32px;
+}
+
+.live-table-meta .chip-stack .chip {
+  min-width: 28px;
+  min-height: 28px;
+  width: 28px;
+  height: 28px;
+  margin-left: -12px;
+  border-width: 2px;
+}
+
+.live-table-meta .chip-stack .chip:first-child {
+  margin-left: 0;
+}
+
+.live-table-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.live-table-cta {
+  font-size: 16px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  border-color: #8f641f;
+  background: linear-gradient(160deg, var(--gold-2), var(--gold));
+  color: #17120a;
+  font-weight: 900;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: 0 0 0 0 rgba(241, 201, 107, 0.4), 0 8px 22px -8px rgba(0, 0, 0, 0.5);
+  animation: live-cta-glow 3s ease-in-out infinite;
+}
+
+.live-table-resign {
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  color: rgba(245, 237, 224, 0.6);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.live-table-resign:hover {
+  border-color: rgba(193, 57, 43, 0.5);
+  color: #ff9d8a;
+}
+
+.live-table-resign:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(217, 83, 30, 0.22); }
+  50% { box-shadow: 0 0 0 6px rgba(217, 83, 30, 0.05); }
+}
+
+@keyframes live-clock-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes live-cta-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(241, 201, 107, 0.35), 0 8px 22px -8px rgba(0, 0, 0, 0.5); }
+  50% { box-shadow: 0 0 26px 6px rgba(241, 201, 107, 0.4), 0 8px 22px -8px rgba(0, 0, 0, 0.5); }
 }
 
 .live-dot {
@@ -1708,9 +1912,13 @@ p {
       "when when";
   }
 
-  .live-game-banner {
-    align-items: stretch;
+  .live-table-module {
     flex-direction: column;
+    gap: 16px;
+  }
+
+  .live-table-actions {
+    min-width: 0;
   }
 
   .history-result { grid-area: result; }

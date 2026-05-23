@@ -72,6 +72,30 @@ The IA shift is the next wave; isolated visual polish is paused until the hero s
 
 - [x] **Chip + pill pickers replace `<select>` dropdowns.** Both forms now use poker-denomination chip stacks (`stakeChipStack` greedy-decomposes over `[500, 100, 25, 5, 1]`) and time-control pills with lowercase category labels. Chips are textless casino tokens (color + dashed edge + inner ring); the `$25 / $50 / $1K` total label below the stack does the precise reading and turns gold on active. (`apps/web/src/{app.js,styles.css}`, commit `54e7f50`)
 
+### Wave 2.5 — Live-Table Module  *(shipped)*
+
+The dashboard's active-game state has its own structural problem, separate from the hero state machine. Today there are two Resume affordances competing — a small top-nav pill and a large hero banner — and the banner is rendered as `<a class="primary" href="#game">` which produces an underlined gold-tinted link because `.primary` was authored for `<button>` and only paints color/font (no padding, no `text-decoration: none`). On top of the cosmetic bug, the IA is wrong: the broken banner sits *above* a glowing `Find me a game →` CTA, so the matchmaking hero outshouts the active-game one. The room is shouting "play a new game" while a clock ticks on the one in progress.
+
+**Mental model.** "I'm still in the casino, seated at a live table." The lobby stays a lobby. The active game gets a deliberate first-class surface inside it — not a separate "in-game dashboard" mode. (Considered and rejected: a full State D in the hero state machine — it would have duplicated the game page's clocks/opponent/pot/move-count, doubled maintenance, and felt like a half-in/half-out alternate dashboard.)
+
+- [x] **Deleted `liveGameBanner()` and `.live-game-banner` CSS** including the mobile media query rule. Replaced, not restyled.
+- [x] **New Live-Table Module** (`renderLiveTableModule`) sits above the matchmaking hero on `#play` whenever a live game exists. Dark felt with gold accents. Contents shipped:
+  - `● LIVE · your move` / `● LIVE · {opponent}'s move` eyebrow with red pulse dot (`@keyframes live-pulse`).
+  - Opponent avatar + handle + rating.
+  - Only the side-to-move's clock, with `.low` (under 30s) and `.critical` (under 10s) variants and a critical-state pulse animation.
+  - Stake chip stack (smaller, 28px chips) + `$X · [time control] · move N` meta line. Time control only renders when present on the game object (today it lives on the challenge, not the game blob — non-blocking).
+  - XL glowing primary CTA: `Return to board →` — real `<button>` calling `navigate("game")`. Glow animation matches the felt's gold accents.
+  - Muted dashed secondary: `Resign · concede $X` — opens the existing shell-level resign-confirm dialog via `openResignConfirm()`.
+- [x] **Matchmaking surfaces stay at full visual weight.** No opacity/desaturation/inline notes were added. The module's loudness sets hierarchy.
+- [x] **Topnav Resume pill unchanged.** Complementary cross-route affordance.
+- [x] **Clock-tick reuse.** Extended `manageClockTick` to also tick on `#play` when there's a live game. New `updateLiveTableClockDom()` updates only the `[data-live-table-clock] time` node and toggles `.low` / `.critical` classes, so the display ticks every animation frame without re-rendering the page.
+
+**Parallel server-side cleanup** (filed separately in `PUNCH_LIST.md`, not part of this UI work):
+- Auto-leave queue ticket + auto-withdraw pending open invites when the viewer's game starts.
+- Reject `POST /api/matchmaking/quick` / `POST /api/challenges` / challenge-accept while the viewer has a live game, with a clean error code the client renders inline.
+
+This means the matchmaking hero can stay fully enabled in the UI; the server is the source of truth for "you can't start a second game." Cleaner than client-side disabling.
+
 ### Wave 2 — Lobby IA shift  *(shipped)*
 
 The chip/pill primitives we built in Wave 1 are re-used inside the new hero. No new visual primitives — this was a restructure.
@@ -81,7 +105,11 @@ The chip/pill primitives we built in Wave 1 are re-used inside the new hero. No 
 - [x] **Right rail unification.** Dropped the `Sent` block and the `Open an invite` form card. `Incoming` hides when empty. `Open Tables` is now a 2-column opponent-card grid (avatar + chip stack + time pill + Sit CTA) and filters out the viewer's own invites (those live in the hero in State C).
 - [x] **Heartbeat strip** at the top of the right rail — first slice of item #2. Uses `bootstrap.lobby.onlineCount` and `activeGames`. Hot Upsets / Rivals / Live Games defer to their subsystems.
 
-### Wave 3 — Hero polish inside the new shape
+### Wave 3 — Hero polish inside the new shape  *(blocked on Wave 2.5)*
+
+Defers until the Live-Table Module lands. Polishing State A's body now would make the matchmaking hero visually heavier, worsening the competing-intents problem with a live game above.
+
+
 
 These items previously lived as isolated polish tickets; they now land inside the State A hero card.
 
