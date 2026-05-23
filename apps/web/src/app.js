@@ -234,6 +234,22 @@ async function loadReplay(gameId) {
   }
 }
 
+async function watchLiveGame(gameId) {
+  if (!gameId) return;
+  state.gameError = null;
+  try {
+    const resp = await getJson(`/api/games/${encodeURIComponent(gameId)}`);
+    setActiveGame(resp.game);
+    state.activeSettlement = null;
+    state.replay = null;
+    navigate(`game/${gameId}`);
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.gameError = error.message;
+    render();
+  }
+}
+
 async function loadBootstrap() {
   const data = await getJson("/api/bootstrap");
   state.bootstrap = data;
@@ -416,12 +432,6 @@ function visibleCountdownChallenges() {
     ...state.bootstrap.sentChallenges,
     ...state.bootstrap.lobby.openChallenges
   ];
-}
-
-function challengeExpiryLabel(challenge) {
-  const remaining = challengeSecondsRemaining(challenge);
-  if (remaining == null) return "";
-  return remaining > 0 ? ` · auto-decline ${remaining}s` : " · expired";
 }
 
 function expiryUrgencyClass(remaining) {
@@ -795,6 +805,11 @@ async function handleRealtimeMessage(msg) {
       const id = msg.gameId || msg.game?.id;
       if (!id) return;
       if (!state.activeGame || state.activeGame.id !== id) return;
+      if (!viewerPlayer(state.activeGame)) {
+        if (msg.game) setActiveGame(msg.game);
+        if (state.route === "game") render();
+        return;
+      }
       try {
         const [gameResp, settlementResp, wallet] = await Promise.all([
           getJson(`/api/games/${id}`),
@@ -1237,6 +1252,17 @@ async function enterRoute(parsed) {
     } catch (error) {
       if (authGuard(error)) return;
     }
+  } else if (state.route === "game" && state.routeParam) {
+    state.gameError = null;
+    state.activeSettlement = null;
+    state.replay = null;
+    try {
+      const resp = await getJson(`/api/games/${encodeURIComponent(state.routeParam)}`);
+      setActiveGame(resp.game);
+    } catch (error) {
+      if (authGuard(error)) return;
+      state.gameError = error.message;
+    }
   } else if (state.route === "profile") {
     try {
       const wallet = await getJson("/api/wallet");
@@ -1339,13 +1365,6 @@ function shell(content) {
 function navLink(id, label) {
   const active = state.route === id ? "active" : "";
   return `<a class="${active}" href="#${id}">${label}</a>`;
-}
-
-function memberSinceLabel(iso) {
-  if (!iso) return "new member";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "new member";
-  return `joined ${date.toLocaleDateString(undefined, { month: "short", year: "numeric" })}`;
 }
 
 function scoutWinRate(stats) {
@@ -1745,7 +1764,10 @@ function renderLiveGameRow(game) {
         <span class="live-feed-vs" aria-hidden="true">vs</span>
         ${identity(b)}
       </div>
-      <div class="live-feed-meta mono tnum">${escapeHtml(termsBits.join(" · "))}</div>
+      <div class="live-feed-row-bottom">
+        <div class="live-feed-meta mono tnum">${escapeHtml(termsBits.join(" · "))}</div>
+        <button type="button" class="quiet watch-button" data-watch-game="${escapeHtml(game.id)}">Watch</button>
+      </div>
     </div>
   `;
 }
@@ -2082,13 +2104,12 @@ function renderGame() {
   const drawSection = viewerIsPlayer && game.state === "live"
     ? drawControls(game, viewer.color)
     : "";
-  const opponent = viewerIsPlayer
-    ? game.players.find((player) => player.id !== viewer.id)
-    : null;
   const turnOwner = game.players.find((player) => player.color === game.turn);
   const statusText = game.state === "live"
     ? `${turnOwner?.id === viewerId() ? "Your" : `${turnOwner?.handle ?? game.turn}'s`} move`
     : game.status;
+  const whiteStakeLabel = viewer?.color === "white" ? "Your stake" : `${white?.handle ?? "White"} stake`;
+  const blackStakeLabel = viewer?.color === "black" ? "Your stake" : `${black?.handle ?? "Black"} stake`;
   return `
     <section class="game-layout">
       <aside class="card game-panel move-panel">
@@ -2136,8 +2157,8 @@ function renderGame() {
           <h2>${money(game.pot.netPotCents)}</h2>
           <p>Winner takes after ${money(game.pot.rakeCents)} fake-money rake.</p>
           <div class="stake-grid">
-            <div><small>Your stake</small><strong>${money(game.pot.stakeCents)}</strong></div>
-            <div><small>${opponent ? `${escapeHtml(opponent.handle)} stake` : "Their stake"}</small><strong>${money(game.pot.stakeCents)}</strong></div>
+            <div><small>${escapeHtml(whiteStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
+            <div><small>${escapeHtml(blackStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
           </div>
         </article>
         <article class="card game-panel live-status">
@@ -2151,6 +2172,7 @@ function renderGame() {
             <div><small>Material</small><strong>${viewer ? formatMaterialDelta(materialDelta(game, viewer.color)) : "—"}</strong></div>
             <div><small>State</small><strong>${escapeHtml(game.state)}</strong></div>
           </div>
+          ${viewerIsPlayer ? "" : `<p class="muted small">Spectator mode is read-only for live games.</p>`}
         </article>
         ${drawSection}
         ${canResign ? `<button class="danger resign-button" data-open-resign ${actionInFlight("resign", game.id) ? "disabled" : ""}>${actionInFlight("resign", game.id) ? "Resigning..." : `Resign · concede ${money(game.pot.stakeCents)}`}</button>` : ""}
@@ -3188,6 +3210,9 @@ function render() {
       if (!pick.stakeCents || !pick.timeControl) return;
       joinQuickMatch({ stakeCents: pick.stakeCents, timeControl: pick.timeControl });
     });
+  });
+  document.querySelectorAll("[data-watch-game]").forEach((b) => {
+    b.addEventListener("click", () => watchLiveGame(b.dataset.watchGame));
   });
   document.querySelectorAll("[data-host-invite]").forEach((b) => {
     b.addEventListener("click", () => {

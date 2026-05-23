@@ -9,7 +9,7 @@ import Database from "better-sqlite3";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
-test("API protects game reads and rejects moves after finalization", async (t) => {
+test("API allows live spectators but protects settlement and finalized game reads", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
   const bob = await fixture.signup("bob");
@@ -30,8 +30,8 @@ test("API protects game reads and rejects moves after finalization", async (t) =
   const game = accepted.body.game;
 
   const outsiderGame = await fixture.get(carol, `/api/games/${game.id}`);
-  assert.equal(outsiderGame.status, 403);
-  assert.equal(outsiderGame.body.error, "not_a_player");
+  assert.equal(outsiderGame.status, 200);
+  assert.equal(outsiderGame.body.game.id, game.id);
 
   const outsiderSettlement = await fixture.get(carol, `/api/games/${game.id}/settlement`);
   assert.equal(outsiderSettlement.status, 403);
@@ -45,6 +45,10 @@ test("API protects game reads and rejects moves after finalization", async (t) =
   const resigned = await fixture.post(resigningClient, `/api/games/${game.id}/resign`);
   assert.equal(resigned.status, 200);
   assert.equal(resigned.body.game.state, "finalized");
+
+  const outsiderFinalizedGame = await fixture.get(carol, `/api/games/${game.id}`);
+  assert.equal(outsiderFinalizedGame.status, 403);
+  assert.equal(outsiderFinalizedGame.body.error, "not_a_player");
 
   const currentTurnClient = game.turn === game.players.find((p) => p.id === alice.user.id).color ? alice : bob;
   const move = game.turn === "white" ? { from: "e2", to: "e4" } : { from: "e7", to: "e5" };
@@ -275,7 +279,8 @@ test("replay endpoint walks the move sequence with FEN per ply", async (t) => {
   assert.ok(replay.body.replay.moves[0].fenAfter.startsWith("rnbqkbnr/pppppppp/8/8/4P3"));
 
   const outsider = await fixture.get(carol, `/api/games/${game.id}/replay`);
-  assert.equal(outsider.status, 403);
+  assert.equal(outsider.status, 200);
+  assert.equal(outsider.body.replay.moves.length, 4);
 });
 
 test("game_events records moves and the finalized event", async (t) => {

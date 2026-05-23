@@ -297,9 +297,11 @@ function computeLobbyLiveness() {
 
 function publishLobbyHeartbeat({ force = false } = {}) {
   const snapshot = computeLobbyLiveness();
+  const liveGamesChanged = JSON.stringify(lastHeartbeatSnapshot?.liveGames ?? null) !== JSON.stringify(snapshot.liveGames);
   if (!force && lastHeartbeatSnapshot
       && lastHeartbeatSnapshot.onlineCount === snapshot.onlineCount
-      && lastHeartbeatSnapshot.activeGames === snapshot.activeGames) {
+      && lastHeartbeatSnapshot.activeGames === snapshot.activeGames
+      && !liveGamesChanged) {
     return;
   }
   lastHeartbeatSnapshot = snapshot;
@@ -400,6 +402,18 @@ function requirePlayer(viewer, game) {
     e.code = "not_a_player";
     throw e;
   }
+}
+
+function isGamePlayer(viewer, game) {
+  return !!game?.players?.some((p) => p.id === viewer.id);
+}
+
+function requireGameViewer(viewer, game) {
+  if (isGamePlayer(viewer, game)) return;
+  if (game.state === "live") return;
+  const e = new RangeError("only a player can read this game");
+  e.code = "not_a_player";
+  throw e;
 }
 
 function requireLiveGame(game) {
@@ -1380,7 +1394,7 @@ async function routeApi(req, res) {
   if (req.method === "GET" && (m = pathname.match(/^\/api\/games\/([^/]+)$/))) {
     try {
       const game = getGameOr404(m[1]);
-      requirePlayer(viewer, game);
+      requireGameViewer(viewer, game);
       return json(res, 200, { game: enrichGame(game) });
     } catch (error) { return handleDomainError(error, res); }
   }
@@ -1396,7 +1410,7 @@ async function routeApi(req, res) {
   if (req.method === "GET" && (m = pathname.match(/^\/api\/games\/([^/]+)\/replay$/))) {
     try {
       const game = getGameOr404(m[1]);
-      requirePlayer(viewer, game);
+      requireGameViewer(viewer, game);
       return json(res, 200, { replay: replayPayload(game) });
     } catch (error) { return handleDomainError(error, res); }
   }
@@ -1683,8 +1697,15 @@ function attachWebSocket(ws, viewer) {
 
   function subscribeGame(gameId) {
     const game = db.getGame(gameId);
-    if (!game?.players.some((p) => p.id === viewer.id)) {
-      ws.send(JSON.stringify({ type: "error", code: "not_a_player", channel: CHANNELS.game(gameId) }));
+    try {
+      if (!game) {
+        const e = new RangeError("game not found");
+        e.code = "game_not_found";
+        throw e;
+      }
+      requireGameViewer(viewer, game);
+    } catch (error) {
+      ws.send(JSON.stringify({ type: "error", code: error.code || "not_a_player", channel: CHANNELS.game(gameId) }));
       return;
     }
     const channel = CHANNELS.game(gameId);

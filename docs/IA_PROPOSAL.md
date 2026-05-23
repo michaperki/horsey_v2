@@ -42,11 +42,11 @@ Three primary destinations now, with named slots ready for canonical destination
 - **Game screen** — reached via the Resume-game pill, or auto-navigated on challenge accept / matchmaking pair. Always has a back-to-Play affordance.
 - **Settlement screen** — auto-shown immediately after a game finalizes (existing behavior), then becomes the History detail view for that game. Same component, two entry points.
 
-### Deferred canonical destinations (named, not built)
+### Later canonical destinations (named, not built)
 
 We intentionally name these so they have a slot reserved, not so they ship now:
 
-- **Live** (canonical) — spectator surface for in-progress games. Blocked on the spectator subsystem (see Mock #3 / ADR 0004 "deferred future consumers"). Add when that lands.
+- **Live** (canonical) — a dedicated spectator floor. The first minimal slice now exists inside Play via the `Live now` feed's `Watch` button and read-only `#game/:id`; a full Live destination can land once there is enough density to warrant its own nav.
 - **Friends / Rivals** (canonical) — relationship features. Add with Phase 5 rivalry/head-to-head work.
 - **Admin** — Phase 6.
 
@@ -71,7 +71,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Opponent rating on challenge rows | ✅ | Real ELO; new accounts seed at 1200 and update on every game finalize via `computeRatingChange` + `db.updateUserRating`. |
 | Rivals shortlist (canonical) | 🚫 | Deferred to Phase 5 |
 | Recent rematch card (canonical) | 🚫 | Deferred to Phase 5 |
-| Live floor preview (canonical) | 🚫 | Deferred to spectator subsystem |
+| Live floor preview (canonical) | ✅ | `Live now` feed shows in-progress tables and can open a read-only live board via `Watch`. |
 
 ### Wager (flow stop, reached from Play)
 | Surface | Status | Notes |
