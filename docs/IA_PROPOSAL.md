@@ -55,9 +55,12 @@ We intentionally name these so they have a slot reserved, not so they ship now:
 Legend: ✅ real · ⚠️ mocked (looks real, isn't) · 🚫 absent (canonical but not built) · 🧪 stub (button/link exists, action doesn't)
 
 ### Play (current `lobby`)
+
+Play-screen internal IA (hero state machine, shared picker for Find vs Host, right-rail liveness) is tracked in `docs/LOBBY_DESIGN_GAP.md`. This matrix stays focused on real-vs-mocked surface status.
+
 | Surface | Status | Notes |
 |---|---|---|
-| Quick-match form (stake, time) | ✅ | `lobby.stakes` + `lobby.timeControls` are real |
+| Quick-match form (stake, time) | ✅ | `lobby.stakes` + `lobby.timeControls` are real; rendered as chip-stack + pill pickers since commit `54e7f50` |
 | Matchmaking ticket + poll/WS | ✅ | Real ticket lifecycle |
 | Incoming / open / sent challenge lists | ✅ | Real `bootstrap.*Challenges` |
 | Create-invite form | ✅ | Real `POST /api/challenges` |

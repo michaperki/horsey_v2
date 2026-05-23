@@ -45,8 +45,7 @@ const state = {
   clockTickFrame: null,
   clockAnchor: null,
   picker: {
-    quick: { stakeCents: null, timeControl: null },
-    invite: { stakeCents: null, timeControl: null }
+    hero: { stakeCents: null, timeControl: null }
   }
 };
 
@@ -84,11 +83,9 @@ function ensurePickerDefaults() {
     ? STAKE_TIER_DEFAULT_CENTS
     : lobby.stakes[0]?.amountCents ?? null;
   const fallbackTime = validTime(TIME_DEFAULT) ? TIME_DEFAULT : lobby.timeControls[0] ?? null;
-  for (const key of ["quick", "invite"]) {
-    const pick = state.picker[key];
-    if (!validStake(pick.stakeCents)) pick.stakeCents = fallbackStake;
-    if (!validTime(pick.timeControl)) pick.timeControl = fallbackTime;
-  }
+  const pick = state.picker.hero;
+  if (!validStake(pick.stakeCents)) pick.stakeCents = fallbackStake;
+  if (!validTime(pick.timeControl)) pick.timeControl = fallbackTime;
 }
 
 function viewerId() {
@@ -409,23 +406,44 @@ function challengeExpiryLabel(challenge) {
 }
 
 function manageChallengeCountdown() {
-  const shouldTick = visibleCountdownChallenges()
+  const challengeTicking = visibleCountdownChallenges()
     .some((challenge) => {
       const remaining = challengeSecondsRemaining(challenge);
       return remaining !== null && remaining > 0;
     });
+  const queueTicking = state.route === "play" && !!state.bootstrap?.matchmakingTicket;
+  const shouldTick = challengeTicking || queueTicking;
   if (shouldTick && !state.challengeCountdownTimer) {
-    state.challengeCountdownTimer = setInterval(() => {
-      if (visibleCountdownChallenges().length === 0) {
-        manageChallengeCountdown();
-        return;
-      }
-      render();
-    }, 1000);
+    state.challengeCountdownTimer = setInterval(() => render(), 1000);
   } else if (!shouldTick && state.challengeCountdownTimer) {
     clearInterval(state.challengeCountdownTimer);
     state.challengeCountdownTimer = null;
   }
+}
+
+function viewerPendingSent() {
+  const sent = state.bootstrap?.sentChallenges;
+  if (!sent?.length) return null;
+  return sent.find((c) => c.state === "incoming" || c.state === "countered") || null;
+}
+
+function lobbyHeroState() {
+  if (state.bootstrap?.matchmakingTicket) return "queued";
+  if (viewerPendingSent()) return "hosting";
+  return "idle";
+}
+
+function elapsedSecondsSince(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+function formatElapsedShort(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
 function manageClockTick() {
@@ -729,16 +747,19 @@ async function actOnChallenge(action) {
   }
 }
 
-async function withdrawChallenge() {
+async function withdrawChallenge(challengeId) {
   state.actionError = null;
+  const id = challengeId ?? state.activeChallenge?.id;
+  if (!id) return;
   try {
-    const challengeId = state.activeChallenge.id;
-    const payload = await postJson(`/api/challenges/${challengeId}`, {}, "DELETE");
-    state.activeChallenge = payload.challenge;
+    const payload = await postJson(`/api/challenges/${id}`, {}, "DELETE");
+    if (state.activeChallenge?.id === id) state.activeChallenge = payload.challenge;
     if (payload.viewer) state.bootstrap.viewer = payload.viewer;
     await loadBootstrap();
-    state.activeChallenge = null;
-    navigate("play");
+    if (state.route === "wager") {
+      state.activeChallenge = null;
+      navigate("play");
+    }
     render();
   } catch (error) {
     if (authGuard(error)) return;
@@ -747,18 +768,22 @@ async function withdrawChallenge() {
   }
 }
 
-async function createChallenge({ stakeCents, timeControl }) {
+async function hostOpenInvite({ stakeCents, timeControl }) {
+  if (actionInFlight("host-invite")) return;
   state.actionError = null;
+  setActionInFlight("host-invite", "", true);
+  render();
   try {
-    const payload = await postJson("/api/challenges", { recipientId: null, stakeCents, timeControl });
-    state.activeChallenge = payload.challenge;
+    await postJson("/api/challenges", { recipientId: null, stakeCents, timeControl });
     await loadBootstrap();
-    navigate("wager");
     render();
   } catch (error) {
     if (authGuard(error)) return;
     state.actionError = error.message;
     render();
+  } finally {
+    setActionInFlight("host-invite", "", false);
+    if (state.view === "app") render();
   }
 }
 
@@ -1061,73 +1086,175 @@ function renderTimePicker(formKey, timeControls, selected) {
   `;
 }
 
+function renderHeroIdle(lobby) {
+  const pick = state.picker.hero;
+  const quickBusy = actionInFlight("quick-match");
+  const hostBusy = actionInFlight("host-invite");
+  return `
+    <div>
+      <span class="picker-label">Stake</span>
+      ${renderStakePicker("hero", lobby.stakes, pick.stakeCents)}
+    </div>
+    <div>
+      <span class="picker-label">Time control</span>
+      ${renderTimePicker("hero", lobby.timeControls, pick.timeControl)}
+    </div>
+    <div class="hero-cta-row">
+      <button class="primary hero-cta-primary" type="button"
+        data-find-game ${quickBusy || hostBusy ? "disabled" : ""}>
+        ${quickBusy ? "Joining queue..." : "Find me a game"}
+      </button>
+    </div>
+    <button class="hero-cta-secondary" type="button"
+      data-host-invite ${quickBusy || hostBusy ? "disabled" : ""}>
+      ${hostBusy ? "Posting invite..." : "Host a table at these terms →"}
+    </button>
+  `;
+}
+
+function renderHeroQueued(ticket) {
+  const elapsed = elapsedSecondsSince(ticket.createdAt);
+  return `
+    <div class="hero-state-head">
+      <span class="picker-label">In the queue</span>
+      <h1>Looking for an opponent.</h1>
+    </div>
+    <div class="hero-locked-row">
+      <div class="hero-locked-stake">
+        <span class="chip-stack">
+          ${stakeChipStack(ticket.stakeCents).map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`).join("")}
+        </span>
+        <span class="chip-total">${money(ticket.stakeCents)} · ${escapeHtml(ticket.timeControl)}</span>
+      </div>
+      <div class="hero-state-meta">
+        <span class="lbl-sm">~5s typical wait</span>
+        <span class="mono tnum">${formatElapsedShort(elapsed)} elapsed</span>
+      </div>
+    </div>
+    <div class="hero-cta-row">
+      <button class="primary hero-cta-primary" type="button" data-leave-queue>Leave queue</button>
+    </div>
+  `;
+}
+
+function renderHeroHosting(challenge) {
+  const remaining = challengeSecondsRemaining(challenge);
+  const withdrawing = actionInFlight("withdraw-host");
+  const recipient = challenge.recipient;
+  const headline = recipient
+    ? `Waiting for ${escapeHtml(recipient.handle)} to accept.`
+    : "You're hosting a table.";
+  const subline = recipient
+    ? `Targeted invite · they have ${remaining ?? "—"}s.`
+    : "You appear in Open Tables to other players.";
+  return `
+    <div class="hero-state-head">
+      <span class="picker-label">Hosting</span>
+      <h1>${headline}</h1>
+    </div>
+    <div class="hero-locked-row">
+      <div class="hero-locked-stake">
+        <span class="chip-stack">
+          ${stakeChipStack(challenge.stakeCents).map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`).join("")}
+        </span>
+        <span class="chip-total">${money(challenge.stakeCents)} · ${escapeHtml(challenge.timeControl)}</span>
+      </div>
+      <div class="hero-state-meta">
+        <span class="lbl-sm">${escapeHtml(subline)}</span>
+        ${remaining != null ? `<span class="mono tnum">${remaining > 0 ? `${remaining}s left` : "expired"}</span>` : ""}
+      </div>
+    </div>
+    <div class="hero-cta-row">
+      <button class="primary hero-cta-primary" type="button"
+        data-withdraw-host="${escapeHtml(challenge.id)}" ${withdrawing ? "disabled" : ""}>
+        ${withdrawing ? "Withdrawing..." : "Withdraw invite"}
+      </button>
+    </div>
+  `;
+}
+
+function renderHero(lobby) {
+  const heroState = lobbyHeroState();
+  let body = "";
+  if (heroState === "queued") body = renderHeroQueued(state.bootstrap.matchmakingTicket);
+  else if (heroState === "hosting") body = renderHeroHosting(viewerPendingSent());
+  else body = renderHeroIdle(lobby);
+  const error = state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : "";
+  return `<article class="hero felt hero-state-${heroState}">${body}${error}</article>`;
+}
+
+function renderHeartbeatStrip(lobby) {
+  const online = Number(lobby.onlineCount ?? 0);
+  const active = Number(lobby.activeGames ?? 0);
+  return `
+    <div class="heartbeat-strip">
+      <span class="heartbeat-dot"></span>
+      <span class="heartbeat-count"><strong>${online.toLocaleString()}</strong> online</span>
+      <span class="heartbeat-sep">·</span>
+      <span class="heartbeat-active">${active.toLocaleString()} in active games</span>
+    </div>
+  `;
+}
+
+function renderOpenTableCard(challenge) {
+  const opponent = challenge.opponent;
+  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
+  const stack = stakeChipStack(challenge.stakeCents)
+    .map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`)
+    .join("");
+  const kind = timeControlKind(challenge.timeControl);
+  const rating = opponent?.rating ? `<span class="open-card-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : "";
+  return `
+    <button class="open-table-card" data-select-challenge="${challenge.id}">
+      <div class="open-card-head">
+        <div class="avatar">${escapeHtml(initial)}</div>
+        <div class="open-card-id">
+          <span class="open-card-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
+          ${rating}
+        </div>
+      </div>
+      <div class="open-card-stake">
+        <span class="chip-stack">${stack}</span>
+        <span class="chip-total">${money(challenge.stakeCents)}</span>
+      </div>
+      <div class="open-card-meta">
+        <span class="time-pill"><span>${escapeHtml(challenge.timeControl)}</span><span class="time-pill-kind">${kind}</span></span>
+      </div>
+      <span class="open-card-cta">Sit · ${money(challenge.stakeCents)}</span>
+    </button>
+  `;
+}
+
+function renderOpenTablesGrid(openChallenges) {
+  const viewer = viewerId();
+  const others = openChallenges.filter((c) => c.challengerId !== viewer);
+  if (others.length === 0) {
+    return `<p class="muted small open-tables-empty">No tables open right now. Be the first to sit.</p>`;
+  }
+  return `<div class="open-tables-grid">${others.map(renderOpenTableCard).join("")}</div>`;
+}
+
 function renderPlay() {
-  const { lobby, incomingChallenges, sentChallenges, matchmakingTicket } = state.bootstrap;
+  const { lobby, incomingChallenges } = state.bootstrap;
   const openChallenges = lobby.openChallenges;
   const liveGame = liveGameForShell();
-  const quickMatchBusy = actionInFlight("quick-match");
-  const quickPick = state.picker.quick;
-  const invitePick = state.picker.invite;
+  const openCount = openChallenges.filter((c) => c.challengerId !== viewerId()).length;
 
   return `
     ${liveGame ? liveGameBanner(liveGame) : ""}
     <section class="grid two">
-      <article class="hero felt">
-        <div class="eyebrow">Quick match</div>
-        <h1>Pick a stake. Find a game.</h1>
-        <p>Pick a stake and time control. Both sides escrow before the first move.</p>
-        ${matchmakingTicket ? `
-          <div class="escrow">In queue · ${money(matchmakingTicket.stakeCents)} · ${matchmakingTicket.timeControl}</div>
-          <button data-leave-queue>Leave queue</button>
-        ` : `
-          <form data-quick-match class="stack">
-            <div>
-              <span class="picker-label">Stake</span>
-              ${renderStakePicker("quick", lobby.stakes, quickPick.stakeCents)}
-            </div>
-            <div>
-              <span class="picker-label">Time control</span>
-              ${renderTimePicker("quick", lobby.timeControls, quickPick.timeControl)}
-            </div>
-            <input type="hidden" name="stakeCents" value="${quickPick.stakeCents ?? ""}" />
-            <input type="hidden" name="timeControl" value="${escapeHtml(quickPick.timeControl ?? "")}" />
-            <button class="primary" type="submit" ${quickMatchBusy ? "disabled" : ""}>${quickMatchBusy ? "Joining..." : "Join quick match"}</button>
-          </form>
-        `}
-        ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
-      </article>
-
+      ${renderHero(lobby)}
       <aside class="stack">
-        <article class="card">
-          <div class="between"><h2>Incoming</h2><small>${incomingChallenges.length}</small></div>
-          ${incomingChallenges.length === 0 ? "<p>No challenges waiting on you.</p>" : incomingChallenges.map(challengeRow).join("")}
-        </article>
-        <article class="card">
-          <div class="between"><h2>Open tables</h2><small>${openChallenges.length}</small></div>
-          ${openChallenges.length === 0 ? "<p>No open tables. Create one below.</p>" : openChallenges.map(challengeRow).join("")}
-        </article>
-        ${sentChallenges.length === 0 ? "" : `
-          <article class="card">
-            <div class="between"><h2>Your sent</h2><small>${sentChallenges.length}</small></div>
-            ${sentChallenges.map(challengeRow).join("")}
+        ${renderHeartbeatStrip(lobby)}
+        ${incomingChallenges.length === 0 ? "" : `
+          <article class="card incoming-card">
+            <div class="between"><h2>Incoming</h2><small>${incomingChallenges.length}</small></div>
+            ${incomingChallenges.map(challengeRow).join("")}
           </article>
         `}
-        <article class="card">
-          <h2>Open an invite</h2>
-          <p class="muted small">Posted to the open tables; anyone can accept.</p>
-          <form data-create-challenge class="stack">
-            <div>
-              <span class="picker-label">Stake</span>
-              ${renderStakePicker("invite", lobby.stakes, invitePick.stakeCents)}
-            </div>
-            <div>
-              <span class="picker-label">Time control</span>
-              ${renderTimePicker("invite", lobby.timeControls, invitePick.timeControl)}
-            </div>
-            <input type="hidden" name="stakeCents" value="${invitePick.stakeCents ?? ""}" />
-            <input type="hidden" name="timeControl" value="${escapeHtml(invitePick.timeControl ?? "")}" />
-            <button class="primary" type="submit">Post invite</button>
-          </form>
+        <article class="card open-tables-card">
+          <div class="between"><h2>Open tables</h2><small>${openCount}</small></div>
+          ${renderOpenTablesGrid(openChallenges)}
         </article>
       </aside>
     </section>
@@ -2195,28 +2322,25 @@ function render() {
       render();
     });
   });
-  const createForm = document.querySelector("[data-create-challenge]");
-  if (createForm) {
-    createForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const fd = new FormData(createForm);
-      createChallenge({
-        stakeCents: Number(fd.get("stakeCents")),
-        timeControl: fd.get("timeControl")
-      });
+  document.querySelectorAll("[data-find-game]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const pick = state.picker.hero;
+      if (!pick.stakeCents || !pick.timeControl) return;
+      joinQuickMatch({ stakeCents: pick.stakeCents, timeControl: pick.timeControl });
     });
-  }
-  const quickForm = document.querySelector("[data-quick-match]");
-  if (quickForm) {
-    quickForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      const fd = new FormData(quickForm);
-      joinQuickMatch({
-        stakeCents: Number(fd.get("stakeCents")),
-        timeControl: fd.get("timeControl")
-      });
+  });
+  document.querySelectorAll("[data-host-invite]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const pick = state.picker.hero;
+      if (!pick.stakeCents || !pick.timeControl) return;
+      hostOpenInvite({ stakeCents: pick.stakeCents, timeControl: pick.timeControl });
     });
-  }
+  });
+  document.querySelectorAll("[data-withdraw-host]").forEach((b) => {
+    b.addEventListener("click", () => {
+      withdrawChallenge(b.dataset.withdrawHost);
+    });
+  });
   document.querySelectorAll("[data-leave-queue]").forEach((b) => {
     b.addEventListener("click", () => leaveQuickMatch());
   });
