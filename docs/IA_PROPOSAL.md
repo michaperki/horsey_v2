@@ -68,7 +68,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Matchmaking ticket + poll/WS | ✅ | Real ticket lifecycle |
 | Incoming / open / sent challenge lists | ✅ | Real `bootstrap.*Challenges` |
 | Create-invite form | ✅ | Real `POST /api/challenges` |
-| Opponent rating on challenge rows | ✅ | Real but defaulted (every new account = 1200; see Mock #4 — rating brackets pending) |
+| Opponent rating on challenge rows | ✅ | Real ELO; new accounts seed at 1200 and update on every game finalize via `computeRatingChange` + `db.updateUserRating`. |
 | Rivals shortlist (canonical) | 🚫 | Deferred to Phase 5 |
 | Recent rematch card (canonical) | 🚫 | Deferred to Phase 5 |
 | Live floor preview (canonical) | 🚫 | Deferred to spectator subsystem |
@@ -80,7 +80,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Time control | ✅ | |
 | Accept / counter / decline | ✅ | Real state machine |
 | Opponent handle | ✅ | |
-| Opponent rating | ✅ | Real but defaulted (1200) |
+| Opponent rating | ✅ | Real ELO; updates on every game finalize. |
 | Opponent dossier (tenure label, sample frame, win rate / streak / joined, last 10 beads, h2h) | ✅ | Wave U4 landed — wager fetches `GET /api/users/:id` for the opposite party and renders the dossier under the headline. See `docs/USER_PROFILE_IA.md`. |
 | Opponent country / reputation / verified / note | 🚫 | Still deferred to Phase 5 + trust subsystem; the dossier deliberately renders only data we can back. |
 | Counter terms | ✅ | Inline stake/time picker; server transitions to `countered` and the original challenger becomes the responding party via `requireRespondingParty`. No more no-op counter. |
@@ -110,7 +110,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Credited amount + pot + rake | ✅ | |
 | Balance after | ✅ | |
 | Last move | ✅ | |
-| Rating delta | 🚫 | Returns `null` from the API and the row is hidden until a real rating system exists |
+| Rating delta | ✅ | Returned by `settlementPayload` when the game has rating-change data; rendered via `formatRatingDelta`. (Pre-rating-pipeline games stay null and the row hides.) |
 | Rematch button | ✅ | Issues a real `POST /api/challenges` against the prior opponent at the same stake + time control |
 | "Find new opponent" | 🧪 | Still nav-only — fine as a navigation affordance, no action needed |
 

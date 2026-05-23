@@ -62,21 +62,16 @@ The backend already tracks `expiresInSeconds` + `updatedAt`; the existing `manag
 
 **Not done** (left as a follow-up): switch the second-tick from full `render()` to targeted DOM updates on `[data-expiry-base]` nodes. The existing full-render-every-second is wasteful but correct; targeted updates are a separate perf commit when it actually matters.
 
-### 4. Real rating system  *(largest, most foundational)*
+### 4. Real rating system  *(already shipped — was a roadmap mistake)*
 
-Every account starts at 1200 and never updates. Every `1842` rating in the dossier / scout card / open tables / settlement is defaulted. The entire scouting/identity layer is built on a number that isn't a number.
+While building item #1 I discovered ratings are already wired end-to-end. The original "every account is 1200 forever" framing was based on a stale IA_PROPOSAL note, not the actual code. Verified:
 
-- **Why it matters.** Highest-leverage long-term move. Until ratings are real:
-  - The Scout Card's rating tile is a lie.
-  - The settlement screen's `ratingDelta` returns `null` and the row is hidden.
-  - The win-rate / streak / last-10 reads exist but have no anchor to opponent strength.
-  - Rivalries can't be calibrated.
-- **Scope.** Bigger lift than the others:
-  - Pick a system (ELO with a moderate K-factor or Glicko-2; ELO is simpler for v1).
-  - Update both players' ratings on game finalization in the existing post-game hook.
-  - Record `ratingChange` snapshots (already partially scaffolded — `stats.ratingTimeline` reads from these).
-  - Surface `ratingDelta` on the settlement screen now that it'll be non-null.
-- **Why this is its own weight class.** Server work + decision on the rating model + migration story for the seed accounts. Don't bundle with the liveness items.
+- [x] ELO with `DEFAULT_K_FACTOR` lives in `packages/shared/rating.mjs`.
+- [x] `acceptChallenge` reads both players' ratings; `finalizeGame` calls `computeRatingChange()` and `db.updateUserRating()` on each side.
+- [x] `game.ratingChange` is persisted; `settlementPayload` returns `ratingDelta` + `ratingBefore` + `ratingAfter` for the viewer; `renderSettlement` already displays it via `formatRatingDelta`.
+- [x] `stats.ratingTimeline` (used by Scout Card / Profile rating sparkline) reads from these snapshots.
+
+The actual remaining work in this space is calibration / display polish (rating sparkline density, provisional rating display, K-factor tuning), not building the system. Pulled from the roadmap because the premise was false; IA_PROPOSAL rows updated to reflect reality.
 
 ### 5. Profile rematch CTA when h2h exists  *(shipped)*
 
@@ -92,11 +87,11 @@ The rating system (#4) is a separate weight class and should not be bundled with
 
 Suggested order:
 
-1. **#5 Profile rematch CTA** — trivial polish, finishes a U3 follow-up.
-2. **#3 Expiry countdown** — small but adds tension to the wager moment.
-3. **#2 Heartbeat over WS** — biggest "room is breathing" payoff per LOC.
-4. **#1 Live Games feed** — largest visual delta; lands the casino-floor fantasy.
-5. **#4 Real ratings** — its own pass, after the liveness slice settles.
+1. **#5 Profile rematch CTA** — trivial polish, finishes a U3 follow-up. *(shipped)*
+2. **#3 Expiry countdown** — small but adds tension to the wager moment. *(shipped)*
+3. **#2 Heartbeat over WS** — biggest "room is breathing" payoff per LOC. *(shipped)*
+4. **#1 Live Games feed** — largest visual delta; lands the casino-floor fantasy. *(shipped)*
+5. **#4 Real ratings** — discovered to be already shipped; doc-only correction.
 
 ## Constraints worth respecting
 
