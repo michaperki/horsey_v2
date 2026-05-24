@@ -35,6 +35,25 @@ import {
   parseTimeControl
 } from "../../packages/shared/clocks.mjs";
 import { computeRatingChange } from "../../packages/shared/rating.mjs";
+import {
+  computeTrustTier,
+  effectiveStakeCapCents,
+  stakeCapForTier
+} from "../../packages/shared/trust.mjs";
+import {
+  calibratingThresholdForTier,
+  claimedSeedFromAccounts,
+  ExternalAccountError,
+  fetchProviderProfile,
+  fetchProviderRawProfile,
+  findTokenInRawProfile,
+  generateClaimToken,
+  isCalibrating,
+  isClaimTokenExpired,
+  newClaimTokenExpiry,
+  normalizeProvider,
+  publicExternalAccountPayload
+} from "./external-accounts.mjs";
 import { createPresenceRegistry } from "../../packages/shared/presence.mjs";
 import {
   acceptDraw,
@@ -59,7 +78,8 @@ const rateLimits = new Map();
 const RATE_LIMITS = {
   auth: { limit: 12, windowMs: 60_000 },
   challenge: { limit: 30, windowMs: 60_000 },
-  matchmaking: { limit: 40, windowMs: 60_000 }
+  matchmaking: { limit: 40, windowMs: 60_000 },
+  externalAccounts: { limit: 8, windowMs: 60_000 }
 };
 
 const contentTypes = {
@@ -327,7 +347,185 @@ function publishMatchmakingMatched(game) {
 
 function viewerPayload(viewerId) {
   const user = db.getUser(viewerId);
-  return { ...user, ...walletSummary(db.listLedger(), viewerId) };
+  return {
+    ...user,
+    ...walletSummary(db.listLedger(), viewerId),
+    ...trustChipsForUser(viewerId)
+  };
+}
+
+function trustTierForUser(userId) {
+  const finishedGames = db.listFinalizedGamesForUser(userId, 50).length;
+  const accounts = db.listExternalAccountsForUser(userId);
+  return computeTrustTier({ externalAccounts: accounts, finishedGames });
+}
+
+function requireStakeWithinCap(stakeCents, viewerId, opponentId = null) {
+  const viewerTier = trustTierForUser(viewerId);
+  const opponentTier = opponentId ? trustTierForUser(opponentId) : null;
+  const cap = effectiveStakeCapCents(viewerTier, opponentTier);
+  if (stakeCents > cap) {
+    const e = new RangeError(
+      opponentTier
+        ? `Stake exceeds the lower of the two players' trust caps ($${(cap / 100).toFixed(0)}). Verify your chess account to raise the limit.`
+        : `Stake exceeds your trust-tier cap ($${(cap / 100).toFixed(0)}). Verify your chess account to raise the limit.`
+    );
+    e.code = "stake_exceeds_trust_cap";
+    throw e;
+  }
+}
+
+function trustChipsForUser(userId) {
+  // Cap the count at the established threshold so we never load 50+ rows just
+  // to ask "is this user calibrating?". listFinalizedGamesForUser already
+  // accepts a limit.
+  const finishedGames = db.listFinalizedGamesForUser(userId, 50).length;
+  const accounts = db.listExternalAccountsForUser(userId);
+  const trustTier = computeTrustTier({ externalAccounts: accounts, finishedGames });
+  return {
+    calibrating: isCalibrating(finishedGames, trustTier),
+    calibratingThreshold: calibratingThresholdForTier(trustTier),
+    finishedGames,
+    externalAccounts: accounts.map(publicExternalAccountPayload),
+    trustTier,
+    stakeCapCents: stakeCapForTier(trustTier)
+  };
+}
+
+async function linkExternalAccount(viewer, body) {
+  const provider = normalizeProvider(body?.provider);
+  if (db.getExternalAccountByProvider(viewer.id, provider)) {
+    throw new ExternalAccountError("external_account_taken", "this provider is already linked");
+  }
+  const fetched = await fetchProviderProfile(provider, body?.username);
+  const now = new Date().toISOString();
+  const account = {
+    id: newId("ext"),
+    userId: viewer.id,
+    provider,
+    externalUsername: fetched.externalUsername,
+    externalId: fetched.externalId,
+    status: "claimed",
+    importedStats: {
+      ratings: fetched.ratings,
+      title: fetched.title,
+      accountCreatedAt: fetched.accountCreatedAt
+    },
+    lastSyncedAt: now,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  let seededTo = null;
+  db.transaction(() => {
+    db.insertExternalAccount(account);
+    // Apply claimed-tier seed only when the user has no Horsey games yet.
+    // Once any game has finalized, the on-platform K-factor owns the rating.
+    const horseyGames = db.listFinalizedGamesForUser(viewer.id, 1).length;
+    if (horseyGames === 0) {
+      const accounts = db.listExternalAccountsForUser(viewer.id);
+      const seed = claimedSeedFromAccounts(accounts);
+      if (seed != null && seed !== db.getUser(viewer.id).rating) {
+        db.updateUserRating(viewer.id, seed);
+        seededTo = seed;
+      }
+    }
+    // A successful link counts as completing onboarding (idempotent).
+    db.markOnboardingCompleted(viewer.id);
+  })();
+  return { account: db.getExternalAccount(account.id), seededTo };
+}
+
+function unlinkExternalAccount(viewer, accountId) {
+  const account = db.getExternalAccount(accountId);
+  if (!account || account.userId !== viewer.id) {
+    throw new ExternalAccountError("external_account_not_found", "linked account not found");
+  }
+  db.deleteExternalAccount(accountId);
+  return account;
+}
+
+function requireOwnedAccount(viewer, accountId) {
+  const account = db.getExternalAccount(accountId);
+  if (!account || account.userId !== viewer.id) {
+    throw new ExternalAccountError("external_account_not_found", "linked account not found");
+  }
+  return account;
+}
+
+function startVerification(viewer, accountId, { regenerate = false } = {}) {
+  const account = requireOwnedAccount(viewer, accountId);
+  if (account.status === "verified") {
+    throw new ExternalAccountError("external_account_already_verified", "this account is already verified");
+  }
+  // Default: idempotent — return the existing token so clicking Verify a
+  // second time doesn't invalidate the one the user already pasted.
+  // regenerate=true forces a fresh token (used by the "Get new token" link).
+  let claimToken = account.claimToken;
+  let claimTokenExpiresAt = account.claimTokenExpiresAt;
+  const needsNew = regenerate || !claimToken || isClaimTokenExpired(claimTokenExpiresAt);
+  if (needsNew) {
+    claimToken = generateClaimToken();
+    claimTokenExpiresAt = newClaimTokenExpiry();
+    db.updateExternalAccountClaimToken(account.id, {
+      status: "verification_pending",
+      claimToken,
+      claimTokenExpiresAt
+    });
+  } else if (account.status !== "verification_pending") {
+    db.updateExternalAccountClaimToken(account.id, {
+      status: "verification_pending",
+      claimToken,
+      claimTokenExpiresAt
+    });
+  }
+  return {
+    account: db.getExternalAccount(account.id),
+    claimToken,
+    claimTokenExpiresAt
+  };
+}
+
+async function checkVerification(viewer, accountId) {
+  const account = requireOwnedAccount(viewer, accountId);
+  if (account.status === "verified") {
+    throw new ExternalAccountError("external_account_already_verified", "this account is already verified");
+  }
+  if (!account.claimToken) {
+    throw new ExternalAccountError("claim_token_missing", "no verification in progress — start one first");
+  }
+  if (isClaimTokenExpired(account.claimTokenExpiresAt)) {
+    throw new ExternalAccountError("claim_token_expired", "verification token expired — start again");
+  }
+  const raw = await fetchProviderRawProfile(account.provider, account.externalUsername);
+  if (!findTokenInRawProfile(account.provider, raw, account.claimToken)) {
+    throw new ExternalAccountError(
+      "claim_token_not_found_in_profile",
+      "Token not found in your Lichess profile. Paste it into your bio (or first/last name / location), save, then click Check now."
+    );
+  }
+
+  let seededTo = null;
+  db.transaction(() => {
+    db.markExternalAccountVerified(account.id);
+    // Drop other Horsey users' claims for the same external handle. Once
+    // someone proves ownership, prior claims are stale by definition.
+    const conflicts = db.listExternalAccountsByProviderHandle(account.provider, account.externalUsername);
+    for (const conflict of conflicts) {
+      if (conflict.id !== account.id) db.deleteExternalAccount(conflict.id);
+    }
+    // Verified-tier reseed: only if the user has no Horsey games yet.
+    const horseyGames = db.listFinalizedGamesForUser(viewer.id, 1).length;
+    if (horseyGames === 0) {
+      const accounts = db.listExternalAccountsForUser(viewer.id);
+      const seed = claimedSeedFromAccounts(accounts);
+      if (seed != null && seed !== db.getUser(viewer.id).rating) {
+        db.updateUserRating(viewer.id, seed);
+        seededTo = seed;
+      }
+    }
+  })();
+  return { account: db.getExternalAccount(account.id), seededTo };
 }
 
 function challengePayload(challenge, viewerId) {
@@ -452,7 +650,20 @@ function handleDomainError(error, res) {
     no_draw_offer: 409,
     not_your_offer_to_accept: 409,
     not_your_offer_to_decline: 409,
-    dev_finalize_disabled: 403
+    dev_finalize_disabled: 403,
+    invalid_provider: 400,
+    invalid_external_handle: 400,
+    external_account_taken: 409,
+    external_account_not_found: 404,
+    external_handle_not_found: 404,
+    external_rate_limited: 502,
+    external_fetch_timeout: 504,
+    external_fetch_failed: 502,
+    stake_exceeds_trust_cap: 403,
+    external_account_already_verified: 409,
+    claim_token_missing: 409,
+    claim_token_expired: 410,
+    claim_token_not_found_in_profile: 422
   };
   const headers = {};
   if (error.code === "rate_limited" && error.retryAfterSeconds) {
@@ -671,6 +882,12 @@ function userProfilePayload(targetId, viewerId) {
   const liveGame = db.findLiveGameForUser(targetId);
   const liveOpponentPlayer = liveGame?.players?.find((p) => p.id !== targetId);
   const liveOpponent = liveOpponentPlayer ? db.getUser(liveOpponentPlayer.id) : null;
+  const rawAccounts = db.listExternalAccountsForUser(targetId);
+  const externalAccounts = rawAccounts.map(publicExternalAccountPayload);
+  const trustTier = computeTrustTier({
+    externalAccounts: rawAccounts,
+    finishedGames: games.length
+  });
   return {
     id: user.id,
     handle: user.handle,
@@ -685,7 +902,12 @@ function userProfilePayload(targetId, viewerId) {
         stakeCents: liveGame.pot?.stakeCents ?? 0
       }
       : null,
-    h2hVsViewer: userH2hVsViewer(targetId, viewerId)
+    h2hVsViewer: userH2hVsViewer(targetId, viewerId),
+    calibrating: isCalibrating(games.length, trustTier),
+    calibratingThreshold: calibratingThresholdForTier(trustTier),
+    externalAccounts,
+    trustTier,
+    stakeCapCents: stakeCapForTier(trustTier)
   };
 }
 
@@ -752,6 +974,8 @@ function createChallenge({ challengerId, recipientId, stakeCents, timeControl })
     e.code = "invalid_challenge_input"; throw e;
   }
 
+  requireStakeWithinCap(stakeCents, challengerId, recipientId);
+
   const pot = calculatePot({ stakeCents });
   const challenge = {
     id: newId("chg"),
@@ -777,6 +1001,10 @@ function acceptChallenge(challenge, accepterId) {
     const e = new RangeError(`cannot accept challenge in state ${challenge.state}`);
     e.code = "invalid_challenge_transition"; throw e;
   }
+
+  // An open table's host already passed their cap at creation, but the taker
+  // can be at a lower tier; check both sides at accept time.
+  requireStakeWithinCap(challenge.stakeCents, accepterId, challenge.challengerId);
 
   let createdGame;
   db.transaction(() => {
@@ -984,6 +1212,8 @@ function quickMatch(viewer, { stakeCents, timeControl }) {
     const e = new RangeError(err.message);
     e.code = "invalid_challenge_input"; throw e;
   }
+
+  requireStakeWithinCap(stakeCents, viewer.id);
 
   let matchedGame = null;
   db.transaction(() => {
@@ -1251,6 +1481,11 @@ async function routeApi(req, res) {
       const user = await updateAccountPassword(viewer, body);
       return json(res, 200, { viewer: viewerPayload(user.id) });
     } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/onboarding/complete") {
+    db.markOnboardingCompleted(viewer.id);
+    return json(res, 200, { viewer: viewerPayload(viewer.id) });
   }
 
   if (req.method === "POST" && pathname === "/api/auth/logout-others") {
@@ -1605,6 +1840,57 @@ async function routeApi(req, res) {
   if (req.method === "DELETE" && pathname === "/api/matchmaking/quick") {
     db.deleteTicket(viewer.id);
     return json(res, 200, { ticket: null });
+  }
+
+  if (req.method === "GET" && pathname === "/api/external-accounts") {
+    const accounts = db.listExternalAccountsForUser(viewer.id).map(publicExternalAccountPayload);
+    return json(res, 200, { externalAccounts: accounts });
+  }
+
+  if (req.method === "POST" && pathname === "/api/external-accounts") {
+    try {
+      checkRateLimit(req, "externalAccounts");
+      const body = await readJson(req);
+      const { account, seededTo } = await linkExternalAccount(viewer, body);
+      return json(res, 201, {
+        externalAccount: publicExternalAccountPayload(account),
+        viewer: viewerPayload(viewer.id),
+        seededTo
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "DELETE" && (m = pathname.match(/^\/api\/external-accounts\/([^/]+)$/))) {
+    try {
+      unlinkExternalAccount(viewer, m[1]);
+      return json(res, 200, { viewer: viewerPayload(viewer.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/external-accounts\/([^/]+)\/verify\/start$/))) {
+    try {
+      checkRateLimit(req, "externalAccounts");
+      const body = await readJson(req);
+      const result = startVerification(viewer, m[1], { regenerate: !!body?.regenerate });
+      return json(res, 200, {
+        externalAccount: publicExternalAccountPayload(result.account),
+        claimToken: result.claimToken,
+        claimTokenExpiresAt: result.claimTokenExpiresAt,
+        viewer: viewerPayload(viewer.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/external-accounts\/([^/]+)\/verify\/check$/))) {
+    try {
+      checkRateLimit(req, "externalAccounts");
+      const result = await checkVerification(viewer, m[1]);
+      return json(res, 200, {
+        externalAccount: publicExternalAccountPayload(result.account),
+        seededTo: result.seededTo,
+        viewer: viewerPayload(viewer.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
   }
 
   return notFound(res);

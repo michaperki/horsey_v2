@@ -102,6 +102,110 @@ Today: every entry is fake-money; "house" is a pseudo-account; no payment integr
 Real version: jurisdiction + legal review, payment + payout provider, KYC, AML, sanctions, responsible-play controls, security review of wallet and escrow flows. The ledger schema is intentionally shaped to support real money via a `currency` column without domain rewrites.
 Phase: **7** (gated decision).
 
+## Trust Tiers
+
+The trust system is one ladder that connects identity, matchmaking, stake limits, and (eventually) the real-money gate. Every other surface — dossier chips, matchmaking pool selection, stake cap enforcement, dual-currency policy — reads from this one model.
+
+### The ladder
+
+| Tier | How a user reaches it | What it unlocks |
+|---|---|---|
+| `provisional` | Default state for any new account. No external link, no finalized Horsey games. | Play tokens only. Low per-game stake cap. Matchmaking biased toward other provisionals. |
+| `claimed` | Linked an external Lichess or Chess.com handle; we fetched public stats. Binding to this Horsey user is *not* proven. | Rating seed up to 1800. External game count visible on dossier as a separate signal. Still play tokens only. Higher stake cap than provisional. |
+| `verified` | Chess.com bio-token claim challenge passed *or* Lichess OAuth/PKCE completed. We have proof this Horsey user controls the external account. | Rating seed cap raised (target: 2400, possibly uncapped). Higher stake cap. Sweeps-token earning unlocked once placement completes. |
+| `placed` | Completed N placement games per time control they want to wager at (target: 10/time-control). | Combined with `verified` → sweeps-token writes allowed for that time control only. |
+| `established` | 50+ finalized Horsey games at acceptable timeout rate. | Display badge on dossier. No new mechanical privileges — purely a trust read. |
+
+`verified` and `placed` are intentionally separate. Verified proves the *seed* is honest. Placed proves the Horsey K-factor has converged enough that we believe our own number. A 2400-rated Lichess player can verify and still need placement before betting at high stakes.
+
+`provisional`/`claimed`/`verified`/`established` are user states. `placed` is per-time-control state because skill across bullet/blitz/rapid is uncorrelated enough that placement should be earned per surface they want to bet at.
+
+### Calibration scales with tier
+
+The `calibrating` chip on a user's identity reflects how settled their Horsey rating is. The threshold isn't fixed — it scales with how much prior information we had when seeding:
+
+| Tier at link time | Calibration games on Horsey | Why |
+|---|---|---|
+| `provisional` (no external link) | 10 | Zero prior — full cold-start, the K-factor has to do all the work. |
+| `claimed` (linked, unverified) | 5 | Real external seed, no proof of ownership — moderate confidence in the seed. |
+| `verified` (proven ownership) | 3 | Real seed + proven binding — we just need a handful of Horsey games to confirm the user *is* the player. |
+
+Calibration is a *display* state today (the chip + the "still calibrating" narrative label). It is not yet a policy gate. When `placed` ships (per-time-control), calibration becomes one of the inputs to the placed gate alongside per-time-control game counts.
+
+### Claimed vs verified deltas
+
+| Axis | claimed | verified |
+|---|---|---|
+| Rating seed cap | 1800 | 2400 (or uncapped) |
+| Sweeps eligibility | No | Yes, after placement |
+| Dossier chip styling | muted "?" treatment | gold check glyph |
+| Matchmaking pool | weighted toward other claimed/provisional users | full pool |
+
+### Game-count policy: surface, never merge
+
+External game counts are real signal, but they live in their own column. The dossier renders them next to — not summed with — Horsey's `finishedGames`:
+
+`Lichess · 1791 blitz · 3,400 games  |  Horsey · 1791 · 12 games`
+
+Reasons:
+- Provenance stays clean. We can always answer "did this game happen here or there?"
+- External game count becomes its own trust signal independent of seed correctness — 3,400 Lichess blitz games behind a 1791 means the seed is probably calibrated; 12 games means it isn't.
+- We never need to migrate the meanings later when sweeps rules change.
+
+Historical rating timelines from external platforms are *not* imported into Horsey's rating ledger. The Horsey rating starts at the seed and evolves only through finalized Horsey games — same source of truth as today.
+
+### Dual-currency model (sweepstakes-compatible)
+
+Real-money readiness (mock #9 / Phase 7) lands as a *second* currency alongside the existing play tokens. The existing wallet, ledger entries, and escrow flows continue to represent the play-token tier — they don't need a rewrite.
+
+Plan shape:
+- `play_tokens_cents` (today's `available_delta_cents`): always earnable, always spendable on play-token games. No legal constraints.
+- `sweeps_cents` (new column or a `currency` enum on ledger rows): earned only via verified+placed activity, spent only against other verified+placed players, redeemable per Phase 7 rules.
+- The ledger schema is already shaped to support this — `domain.mjs` math is currency-agnostic.
+
+Gates for *earning* sweeps tokens:
+- `verified` tier (Lichess OAuth or Chess.com bio-token claim).
+- `placed` for the time control they're playing.
+- Account age + region + Phase 7 controls.
+
+Welcome bonuses, daily rewards, referral grants, and similar engagement loops all continue to land in the play-token ledger. Sweeps stay narrow until the Phase 7 go/no-go.
+
+### Matchmaking implications
+
+Matchmaking tickets carry the user's trust tier. Pool preference:
+1. Same-tier first.
+2. ±1 tier after a short delay.
+3. Wider pool only when ticket has aged out, with a visible "no matches at your tier — opening pool" cue.
+
+Stake caps are a function of tier (initial pass — caps tune as the loop calibrates):
+
+| Tier | Per-game stake cap (play tokens) |
+|---|---|
+| provisional | $25 |
+| claimed | $100 |
+| verified | $500 |
+| established | $1,000 |
+
+When a challenge has a specific recipient, the *lower* of the two caps applies — preventing a verified user from coaxing a provisional user into a stake the provisional tier shouldn't see. Open tables enforce the host's cap; takers must also be at-or-above the cap themselves.
+
+### Admin oversight surfaces (Phase 6 follow-ons)
+
+The tier ladder makes admin queries trivial:
+- Recent external-account links (audit). Already in `external_accounts.created_at`.
+- Accounts where claimed-tier rating diverges sharply from Horsey rating (potential sandbag). One JOIN on `external_accounts.imported_stats_json` vs `users.rating`.
+- High-stake activity by provisional users (review queue). One filter on `trust_tier`.
+- Verification disputes (two Horsey accounts claiming the same external handle). Already implied by the `external_accounts.status='verification_pending'` lifecycle.
+
+None of these need a separate trust subsystem — they're queries against existing tables plus the tier-computation function.
+
+### What's shipped vs pending
+
+- **Shipped:** `claimed` tier via Settings/Onboarding link (mock #2 follow-on, Phase 6 deliverable). `external_accounts` table (schema v3). Rating seed at 1800 cap (claimed) / 2400 cap (verified). Calibrating flag for first 10 Horsey games. Onboarding modal with skip-to-completion (schema v4). Tier computation as a shared function (`packages/shared/trust.mjs`). Tier + stake-cap on viewer/profile payloads. Stake cap enforced in `createChallenge` + `acceptChallenge` + `quickMatch` (lower of both sides applies when a recipient is set). `verified` tier via profile-token claim-challenge on **Lichess only** — token in bio / first / last / location, server fetches raw profile + case-insensitive scan, idempotent token (regenerate on demand), conflicting claims auto-dropped on verify, verified-tier reseed runs in the same transaction.
+- **In flight:** none currently named.
+- **Pending:** Chess.com verification (needs OAuth, club-name claim, or a different mechanism — Chess.com's public API has no reliably user-editable text field, so bio-claim can't ship there). Lichess OAuth/PKCE (higher-confidence verified channel than bio-claim). Per-time-control placement tracking + `placed` tier. Matchmaking tier preference. Dual-currency split (sweeps tokens). Phase 7 sweeps gate. Admin queue for handle disputes / sandbag flags.
+
+This whole section is a load-bearing input to Phase 6 and Phase 7 below — those phases own *building* the surfaces, this section owns the *model*. When the model changes, update here first.
+
 ## Phased Plan
 
 Status legend per deliverable: **done**, **partial**, **pending**.
@@ -264,6 +368,7 @@ Exit criteria:
 
 Run alongside the phases, not after them:
 
+- **Arena atmosphere.** Horsey's defining feel is "competitive wagering arena," not "chess product with casino aesthetics on top" (see `PROJECT_SOUL.md` § Anti-casino principle and `docs/ARENA_NEXT_PASS.md`). The arena doc tracks named slots — animated buy-ins, settlement animations, watcher counts, featured tables, streak heaters, match intros, momentum cues — grouped by play-loop phase with shipped/partial/pending status. Atmosphere is built across many small slices over time, not one redesign; treat the arena doc as a backlog feeding the phased plan, not a milestone of its own.
 - **Information architecture.** First pass landed: top nav is now Play · History · Profile, with a Resume-game pill that appears only when a live game exists. Wager/Game/Settlement keep their routes but are reached through the flow, not the chrome. Wallet folded into Profile. History list + detail (reusing the settlement renderer) shipped. Deferred destinations (Live spectator, Friends/Rivals, Admin) remain named slots. **See `IA_PROPOSAL.md` for the per-screen real-vs-mocked matrix; it stays live as mocks turn real.**
 - **UI surfaces still showing seed/decorative data.** Distinct from the numbered subsystem mocks (#1–#9). Status after the IA pass:
   - Wager page opponent `country` / `reputation` / `verified` / `h2h` / `note` — **deleted from API and UI.** Will re-emerge with real backing under Phase 5 (rivalry/h2h) + trust subsystem (Phase 6).

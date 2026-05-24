@@ -15,6 +15,8 @@ The design language leans toward:
 - live game tension around board, clock, pot, and momentum;
 - post-game settlement that makes the money outcome explicit.
 
+**Anti-casino principle.** Chess.com and similar skill products borrow heavily from gambling/mobile-game grammar (full-screen upsell modals, premium-currency aesthetics, "claim/redeem" loot-language, "limited-time" urgency) to *simulate* stakes their underlying product doesn't naturally have. Horsey doesn't need to simulate — the stakes are real. The product should feel like a **competitive wagering arena**, not a chess product wearing a casino skin: honest expiry over fake urgency, real chip stacks over glowing gems, real settlement over loot-box ceremony. See `docs/ARENA_NEXT_PASS.md` for the feature backlog this principle drives.
+
 ## Collaboration Memory
 
 Future agents should preserve durable context here or in nearby docs. The goal is continuity across agents, not a diary.
@@ -57,6 +59,7 @@ For execution planning, use `docs/IMPLEMENTATION_PLAN.md` as the current staged 
 
 Related focused notes:
 
+- `docs/ARENA_NEXT_PASS.md` records the "competitive wagering arena" atmosphere thesis and feature backlog — anticipation surfaces, animated buy-ins, spectator presence, settlement animations, streak/momentum cues, and the explicit list of casino-grammar patterns we're rejecting.
 - `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
 - `docs/LIVENESS_NEXT_PASS.md` records the next-pass priorities for making the lobby feel live: heartbeat-over-WS, live challenge timers, in-progress games feed, and the real rating system that the entire identity layer is currently faking.
 - `docs/marketing/IMAGE_AD_PROMPTS.md` records reusable image-generation prompts and guardrails for Horsey advertising concepts.

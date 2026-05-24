@@ -145,6 +145,8 @@ Guardrails:
 
 ## 5. Trust metrics and wagering policy
 
+> **See `IMPLEMENTATION_PLAN.md` § Trust Tiers for the unified tier ladder.** The model below pre-dates that consolidation and is preserved as the signal/UX taxonomy; the tier ladder is the authoritative source on what each state means policy-wise (stake caps, matchmaking pool, dual-currency gates).
+
 This is trust infrastructure for betting, not social decoration. The trust system should help answer:
 
 - Is this account established enough for this stake?
@@ -258,9 +260,11 @@ Plus a small background sync to refresh imported_stats periodically (cron or on 
 
 Sequencing inside the trust roadmap:
 
-1. **Schema + manual handle intake.** Settings → add Lichess/Chess.com handle. Server fetches public stats. Status starts as `claimed`. Scout/profile render `claimed` chip. Initial rating seed applied to new accounts only. *(Smallest viable slice.)*
-2. **Onboarding modal on signup.** Same handle intake, surfaced at the right moment.
-3. **Chess.com claim-challenge.** Token-in-bio verification flow. Auto-verifies the happy path.
+1. **Schema + manual handle intake.** *(shipped)* `external_accounts` table (schema v3) with the columns spec'd above. Settings → Linked chess accounts card lets the user add a Lichess or Chess.com handle; the server validates via `/api/external-accounts`, fetches Lichess `/api/user/{handle}` or Chess.com `/pub/player/{handle}` + `/stats`, stores normalized ratings in `imported_stats_json`, and tags status `claimed`. UNIQUE(user_id, provider) so a user can have at most one of each. Public payload on `/api/users/:id` and `/api/auth/me` now includes `externalAccounts[]` with a `status` chip plus per-time-control ratings; the user profile rail renders a `Lichess claimed · 1791 blitz` chip. Initial rating seed (blitz only, capped at 1800) is applied **only** when the user has zero finalized Horsey games — once they play, the K-factor owns the rating. A `calibrating` flag is exposed for the first 10 games regardless of seed.
+2. **Onboarding modal on signup.** *(shipped)* `users.onboarding_completed_at` column (schema v4, backfilled from `created_at` for pre-existing accounts so they don't get prompted). Modal renders on `#play` whenever `viewer.onboardingCompletedAt` is null, with provider select + handle input (reuses `/api/external-accounts`) and a Skip button (`POST /api/auth/onboarding/complete`). A successful link auto-marks onboarding done inside the same transaction. Modal can't gate play — Skip is always reachable and writes the completion timestamp so the prompt never re-appears.
+3. **Claim-challenge verification.** *(shipped, Lichess only)* `POST /api/external-accounts/:id/verify/start` issues an 8-char `horsey-XXXXXXXX` token with a 30-minute TTL and sets the row to `verification_pending`. The user pastes the token into their Lichess bio (or first/last name / location). `POST /api/external-accounts/:id/verify/check` fetches the raw Lichess profile, scans those fields case-insensitively for the token, and on match flips `status='verified'`, populates `verified_at` + `verified_by='profile_token'`, runs the verified-tier reseed (cap 2400) when the user has no Horsey games yet, and deletes any conflicting claimed rows for the same provider+handle from other Horsey users. The Verify button is shown only on Lichess rows; the `/verify/start` call is idempotent (returns the same token on repeat clicks unless `regenerate: true` is set).
+
+   **Chess.com verification is not implemented.** The public API exposes no reliable user-editable text field — the "About me" field isn't in the API at all, and `name`/`location` aren't editable on every account tier. A working Chess.com verification path will need a different mechanism (OAuth, club-name claim, or a played-game challenge) and is tracked under the Lichess OAuth slice / Chess.com follow-on.
 4. **Admin queue.** Build only when there are real edge cases to triage; until then the claim flow can run open-loop.
 5. **Lichess OAuth/PKCE.** Full Wave T2 — the gold-standard verification. Token storage, refresh, scopes.
 6. **Cross-platform calibration.** Use imported game samples to calibrate the Horsey rating model, not just the seed. Phase 6+.

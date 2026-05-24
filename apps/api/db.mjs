@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 4;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -13,7 +13,8 @@ const SCHEMA = `
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
     rating INTEGER NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    onboarding_completed_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -96,6 +97,25 @@ const SCHEMA = `
     occurred_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_game_events_game ON game_events(game_id, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS external_accounts (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    external_username TEXT NOT NULL,
+    external_id TEXT,
+    status TEXT NOT NULL,
+    claim_token TEXT,
+    claim_token_expires_at TEXT,
+    imported_stats_json TEXT,
+    last_synced_at TEXT,
+    verified_at TEXT,
+    verified_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, provider)
+  );
+  CREATE INDEX IF NOT EXISTS idx_external_accounts_user ON external_accounts(user_id);
 `;
 
 function rowToPublicUser(row) {
@@ -105,7 +125,8 @@ function rowToPublicUser(row) {
     email: row.email,
     handle: row.handle,
     rating: row.rating,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    onboardingCompletedAt: row.onboarding_completed_at ?? null
   };
 }
 
@@ -161,6 +182,26 @@ function rowToChallenge(row) {
   };
 }
 
+function rowToExternalAccount(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    provider: row.provider,
+    externalUsername: row.external_username,
+    externalId: row.external_id,
+    status: row.status,
+    claimToken: row.claim_token ?? null,
+    claimTokenExpiresAt: row.claim_token_expires_at ?? null,
+    importedStats: row.imported_stats_json ? JSON.parse(row.imported_stats_json) : null,
+    lastSyncedAt: row.last_synced_at,
+    verifiedAt: row.verified_at,
+    verifiedBy: row.verified_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function rowToTicket(row) {
   if (!row) return null;
   return {
@@ -205,6 +246,20 @@ function migrateSchema(db) {
   }
 
   // v1 → v2: game_events table is created by the SCHEMA exec on the next line.
+  // v2 → v3: external_accounts table is likewise created by the SCHEMA exec.
+  // v3 → v4: add users.onboarding_completed_at; backfill existing rows from
+  //          created_at so accounts that pre-date the onboarding modal don't
+  //          get prompted on their next login.
+  if (currentVersion < 4 && currentVersion >= 1) {
+    const cols = db.prepare("PRAGMA table_info('users')").all();
+    if (!cols.some((c) => c.name === "onboarding_completed_at")) {
+      db.exec("ALTER TABLE users ADD COLUMN onboarding_completed_at TEXT");
+    }
+    db.prepare(`
+      UPDATE users SET onboarding_completed_at = created_at
+      WHERE onboarding_completed_at IS NULL
+    `).run();
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -240,6 +295,10 @@ function makeApi(db) {
     updateUserEmail: db.prepare("UPDATE users SET email = ? WHERE id = ?"),
     updateUserPassword: db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?"),
     updateUserRating: db.prepare("UPDATE users SET rating = ? WHERE id = ?"),
+    markOnboardingCompleted: db.prepare(`
+      UPDATE users SET onboarding_completed_at = ?
+      WHERE id = ? AND onboarding_completed_at IS NULL
+    `),
 
     getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
     insertSession: db.prepare(`
@@ -343,7 +402,44 @@ function makeApi(db) {
       ORDER BY created_at ASC LIMIT 1
     `),
     deleteTicket: db.prepare("DELETE FROM matchmaking_tickets WHERE user_id = ?"),
-    getTicket: db.prepare("SELECT * FROM matchmaking_tickets WHERE user_id = ?")
+    getTicket: db.prepare("SELECT * FROM matchmaking_tickets WHERE user_id = ?"),
+
+    listExternalAccountsForUser: db.prepare(`
+      SELECT * FROM external_accounts WHERE user_id = ? ORDER BY created_at ASC
+    `),
+    getExternalAccount: db.prepare("SELECT * FROM external_accounts WHERE id = ?"),
+    getExternalAccountByProvider: db.prepare(`
+      SELECT * FROM external_accounts WHERE user_id = ? AND provider = ?
+    `),
+    insertExternalAccount: db.prepare(`
+      INSERT INTO external_accounts (
+        id, user_id, provider, external_username, external_id, status,
+        claim_token, claim_token_expires_at,
+        imported_stats_json, last_synced_at,
+        verified_at, verified_by, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    updateExternalAccountStats: db.prepare(`
+      UPDATE external_accounts
+      SET external_username = ?, external_id = ?, imported_stats_json = ?, last_synced_at = ?, updated_at = ?
+      WHERE id = ?
+    `),
+    updateExternalAccountClaimToken: db.prepare(`
+      UPDATE external_accounts
+      SET status = ?, claim_token = ?, claim_token_expires_at = ?, updated_at = ?
+      WHERE id = ?
+    `),
+    markExternalAccountVerified: db.prepare(`
+      UPDATE external_accounts
+      SET status = 'verified', verified_at = ?, verified_by = ?,
+          claim_token = NULL, claim_token_expires_at = NULL, updated_at = ?
+      WHERE id = ?
+    `),
+    listExternalAccountsByProviderHandle: db.prepare(`
+      SELECT * FROM external_accounts
+      WHERE provider = ? AND LOWER(external_username) = LOWER(?)
+    `),
+    deleteExternalAccount: db.prepare("DELETE FROM external_accounts WHERE id = ?")
   };
 
   return {
@@ -375,6 +471,9 @@ function makeApi(db) {
     },
     updateUserRating(userId, rating) {
       stmts.updateUserRating.run(rating, userId);
+    },
+    markOnboardingCompleted(userId, nowIso = new Date().toISOString()) {
+      stmts.markOnboardingCompleted.run(nowIso, userId);
     },
     updateUserEmail(userId, email) {
       stmts.updateUserEmail.run(email, userId);
@@ -503,6 +602,63 @@ function makeApi(db) {
     },
     getTicket(userId) { return rowToTicket(stmts.getTicket.get(userId)); },
     deleteTicket(userId) { stmts.deleteTicket.run(userId); },
+
+    listExternalAccountsForUser(userId) {
+      return stmts.listExternalAccountsForUser.all(userId).map(rowToExternalAccount);
+    },
+    getExternalAccount(id) {
+      return rowToExternalAccount(stmts.getExternalAccount.get(id));
+    },
+    getExternalAccountByProvider(userId, provider) {
+      return rowToExternalAccount(stmts.getExternalAccountByProvider.get(userId, provider));
+    },
+    insertExternalAccount(account) {
+      stmts.insertExternalAccount.run(
+        account.id,
+        account.userId,
+        account.provider,
+        account.externalUsername,
+        account.externalId ?? null,
+        account.status,
+        account.claimToken ?? null,
+        account.claimTokenExpiresAt ?? null,
+        account.importedStats != null ? JSON.stringify(account.importedStats) : null,
+        account.lastSyncedAt ?? null,
+        account.verifiedAt ?? null,
+        account.verifiedBy ?? null,
+        account.createdAt,
+        account.updatedAt
+      );
+    },
+    updateExternalAccountStats(id, { externalUsername, externalId, importedStats }) {
+      const now = new Date().toISOString();
+      stmts.updateExternalAccountStats.run(
+        externalUsername,
+        externalId ?? null,
+        importedStats != null ? JSON.stringify(importedStats) : null,
+        now,
+        now,
+        id
+      );
+    },
+    deleteExternalAccount(id) {
+      stmts.deleteExternalAccount.run(id);
+    },
+    updateExternalAccountClaimToken(id, { status, claimToken, claimTokenExpiresAt }) {
+      stmts.updateExternalAccountClaimToken.run(
+        status,
+        claimToken ?? null,
+        claimTokenExpiresAt ?? null,
+        new Date().toISOString(),
+        id
+      );
+    },
+    markExternalAccountVerified(id, { verifiedBy = "profile_token", verifiedAt = new Date().toISOString() } = {}) {
+      stmts.markExternalAccountVerified.run(verifiedAt, verifiedBy, verifiedAt, id);
+    },
+    listExternalAccountsByProviderHandle(provider, username) {
+      return stmts.listExternalAccountsByProviderHandle.all(provider, username).map(rowToExternalAccount);
+    },
 
     transaction(fn) { return db.transaction(fn); },
 

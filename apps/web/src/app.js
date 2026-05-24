@@ -36,6 +36,8 @@ const state = {
   actionError: null,
   accountError: null,
   accountNotice: null,
+  onboardingError: null,
+  verifying: { accountId: null, claimToken: null, expiresAt: null, error: null },
   inFlight: new Set(),
   matchmakingPoll: null,
   route: initialRoute.name,
@@ -90,14 +92,17 @@ function timeControlKind(tc) {
 function ensurePickerDefaults() {
   const lobby = state.bootstrap?.lobby;
   if (!lobby) return;
+  const cap = state.bootstrap?.viewer?.stakeCapCents ?? Infinity;
+  const withinCap = (cents) => cents != null && cents <= cap;
   const validStake = (cents) => lobby.stakes.some((s) => s.amountCents === cents);
+  const allowableStakes = lobby.stakes.filter((s) => s.amountCents <= cap);
   const validTime = (tc) => lobby.timeControls.includes(tc);
-  const fallbackStake = validStake(STAKE_TIER_DEFAULT_CENTS)
+  const fallbackStake = (validStake(STAKE_TIER_DEFAULT_CENTS) && withinCap(STAKE_TIER_DEFAULT_CENTS))
     ? STAKE_TIER_DEFAULT_CENTS
-    : lobby.stakes[0]?.amountCents ?? null;
+    : (allowableStakes[0]?.amountCents ?? lobby.stakes[0]?.amountCents ?? null);
   const fallbackTime = validTime(TIME_DEFAULT) ? TIME_DEFAULT : lobby.timeControls[0] ?? null;
   const pick = state.picker.hero;
-  if (!validStake(pick.stakeCents)) pick.stakeCents = fallbackStake;
+  if (!validStake(pick.stakeCents) || !withinCap(pick.stakeCents)) pick.stakeCents = fallbackStake;
   if (!validTime(pick.timeControl)) pick.timeControl = fallbackTime;
 }
 
@@ -1156,6 +1161,136 @@ async function updateAccountPassword({ currentPassword, nextPassword }) {
   }
 }
 
+async function linkExternalAccount({ provider, username, source = "settings" }) {
+  if (actionInFlight("external-link")) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  state.onboardingError = null;
+  setActionInFlight("external-link", "", true);
+  render();
+  try {
+    const payload = await postJson("/api/external-accounts", { provider, username });
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    const seedNote = payload.seededTo
+      ? ` Rating seeded to ${payload.seededTo}.`
+      : "";
+    if (source === "settings") {
+      state.accountNotice = `Linked ${formatProvider(provider)} @${payload.externalAccount.username}.${seedNote}`;
+    }
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    if (source === "onboarding") state.onboardingError = error.message;
+    else state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("external-link", "", false);
+    if (state.view === "app") render();
+  }
+}
+
+async function startVerification(accountId, { regenerate = false } = {}) {
+  if (!accountId || actionInFlight("verify-start", accountId)) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  if (!regenerate) state.verifying = { accountId, claimToken: null, expiresAt: null, error: null };
+  setActionInFlight("verify-start", accountId, true);
+  render();
+  try {
+    const payload = await postJson(
+      `/api/external-accounts/${encodeURIComponent(accountId)}/verify/start`,
+      { regenerate }
+    );
+    state.verifying = {
+      accountId,
+      claimToken: payload.claimToken,
+      expiresAt: payload.claimTokenExpiresAt,
+      error: null
+    };
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.verifying = { accountId: null, claimToken: null, expiresAt: null, error: null };
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("verify-start", accountId, false);
+    if (state.view === "app") render();
+  }
+}
+
+async function checkVerification(accountId) {
+  if (!accountId || actionInFlight("verify-check", accountId)) return;
+  state.verifying.error = null;
+  setActionInFlight("verify-check", accountId, true);
+  render();
+  try {
+    const payload = await postJson(`/api/external-accounts/${encodeURIComponent(accountId)}/verify/check`);
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    const seedNote = payload.seededTo ? ` Rating updated to ${payload.seededTo}.` : "";
+    state.accountNotice = `Verified ${formatProvider(payload.externalAccount.provider)} @${payload.externalAccount.username}.${seedNote}`;
+    state.verifying = { accountId: null, claimToken: null, expiresAt: null, error: null };
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.verifying.error = error.message;
+    render();
+  } finally {
+    setActionInFlight("verify-check", accountId, false);
+    if (state.view === "app") render();
+  }
+}
+
+function cancelVerification() {
+  state.verifying = { accountId: null, claimToken: null, expiresAt: null, error: null };
+  render();
+}
+
+async function skipOnboarding() {
+  if (actionInFlight("onboarding-skip")) return;
+  state.onboardingError = null;
+  setActionInFlight("onboarding-skip", "", true);
+  render();
+  try {
+    const payload = await postJson("/api/auth/onboarding/complete");
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.onboardingError = error.message;
+    render();
+  } finally {
+    setActionInFlight("onboarding-skip", "", false);
+    if (state.view === "app") render();
+  }
+}
+
+async function unlinkExternalAccount(accountId) {
+  if (!accountId || actionInFlight("external-unlink", accountId)) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("external-unlink", accountId, true);
+  render();
+  try {
+    const payload = await postJson(`/api/external-accounts/${encodeURIComponent(accountId)}`, {}, "DELETE");
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    state.accountNotice = "Linked account removed.";
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("external-unlink", accountId, false);
+    if (state.view === "app") render();
+  }
+}
+
+function formatProvider(provider) {
+  return provider === "lichess" ? "Lichess" : provider === "chesscom" ? "Chess.com" : provider;
+}
+
 async function logoutOtherSessions() {
   if (actionInFlight("logout-others")) return;
   state.accountError = null;
@@ -1359,6 +1494,51 @@ function shell(content) {
     <main>${content}</main>
     ${renderScoutPopover()}
     ${resignConfirmDialog()}
+    ${renderOnboardingModal()}
+  `;
+}
+
+function shouldShowOnboardingModal() {
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer) return false;
+  if (viewer.onboardingCompletedAt) return false;
+  return state.route === "play";
+}
+
+function renderOnboardingModal() {
+  if (!shouldShowOnboardingModal()) return "";
+  const linkBusy = actionInFlight("external-link");
+  const skipBusy = actionInFlight("onboarding-skip");
+  return `
+    <div class="modal-backdrop onboarding-backdrop" role="presentation">
+      <section class="card onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <span class="picker-label">Welcome to Horsey</span>
+        <h1 id="onboarding-title">Link a chess account to start calibrated.</h1>
+        <p class="muted">We'll fetch your public Lichess or Chess.com stats and seed your starting rating from your blitz strength. Optional — you can skip and play right away.</p>
+        <form class="stack" data-onboarding-link>
+          <label>Provider
+            <select name="provider">
+              <option value="lichess">Lichess</option>
+              <option value="chesscom">Chess.com</option>
+            </select>
+          </label>
+          <label>Handle
+            <input name="username" type="text" autocomplete="off" minlength="2" maxlength="30" required autofocus />
+            <small class="muted">No password needed — public data only.</small>
+          </label>
+          ${state.onboardingError ? `<em class="account-error">${escapeHtml(state.onboardingError)}</em>` : ""}
+          <div class="onboarding-actions">
+            <button type="submit" class="primary" ${linkBusy || skipBusy ? "disabled" : ""}>
+              ${linkBusy ? "Linking..." : "Link account"}
+            </button>
+            <button type="button" class="link" data-onboarding-skip ${linkBusy || skipBusy ? "disabled" : ""}>
+              ${skipBusy ? "Skipping..." : "Skip for now"}
+            </button>
+          </div>
+          <p class="muted small">You can link any time from Profile → Linked chess accounts.</p>
+        </form>
+      </section>
+    </div>
   `;
 }
 
@@ -1535,17 +1715,23 @@ function renderLiveTableModule(game) {
 }
 
 function renderStakePicker(formKey, stakes, selectedCents) {
+  const cap = state.bootstrap?.viewer?.stakeCapCents ?? Infinity;
   return `
     <div class="chip-pick-row" data-stake-picker="${formKey}">
       ${stakes
         .map((s) => {
           const active = s.amountCents === selectedCents;
+          const overCap = s.amountCents > cap;
           const stack = stakeChipStack(s.amountCents);
           const chips = stack.map((d) => `<span class="chip d-${d}" aria-hidden="true"></span>`).join("");
+          const title = overCap
+            ? `Above your trust-tier cap (${money(cap)}). Verify a chess account to raise the limit.`
+            : s.label;
           return `
-            <button type="button" class="chip-pick ${active ? "active" : ""}"
+            <button type="button" class="chip-pick ${active ? "active" : ""} ${overCap ? "over-cap" : ""}"
               data-pick-stake="${formKey}" data-stake-cents="${s.amountCents}"
-              aria-pressed="${active ? "true" : "false"}" title="${escapeHtml(s.label)}">
+              ${overCap ? "disabled" : ""}
+              aria-pressed="${active ? "true" : "false"}" title="${escapeHtml(title)}">
               <span class="chip-stack">${chips}</span>
               <span class="chip-total">${escapeHtml(s.label)}</span>
             </button>
@@ -1633,6 +1819,7 @@ function renderHeroIdle(lobby) {
           <div class="avatar">${escapeHtml(viewerInitial)}</div>
           <strong>${escapeHtml(viewer.handle)}</strong>
           ${viewer.rating ? `<span class="hero-identity-rating mono tnum">${escapeHtml(String(viewer.rating))}</span>` : ""}
+          ${renderTrustTierChip(viewer)}
         </div>
       </div>
     </div>
@@ -2855,12 +3042,102 @@ function endReasonLabel(reason) {
   return labels[reason] || reason || "—";
 }
 
+function renderVerifyPanel(account) {
+  const v = state.verifying;
+  if (!v || v.accountId !== account.id || !v.claimToken) return "";
+  const checkBusy = actionInFlight("verify-check", account.id);
+  const instructions = "Open Lichess → Edit profile → paste this into your bio (or First name / Last name / Location). Save.";
+  return `
+    <div class="verify-panel">
+      <p class="muted small">${escapeHtml(instructions)}</p>
+      <code class="verify-token mono" title="Click to select">${escapeHtml(v.claimToken)}</code>
+      <p class="muted small">Token expires ${escapeHtml(formatDateTime(v.expiresAt))}.</p>
+      ${v.error ? `<em class="account-error">${escapeHtml(v.error)}</em>` : ""}
+      <div class="verify-actions">
+        <button type="button" class="primary" data-verify-check="${escapeHtml(account.id)}" ${checkBusy ? "disabled" : ""}>
+          ${checkBusy ? "Checking..." : "Check now"}
+        </button>
+        <button type="button" class="link" data-verify-regenerate="${escapeHtml(account.id)}" ${checkBusy ? "disabled" : ""}>Get new token</button>
+        <button type="button" class="link" data-verify-cancel ${checkBusy ? "disabled" : ""}>Cancel</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLinkedAccountsCard(viewer) {
+  const accounts = viewer.externalAccounts ?? [];
+  const linkBusy = actionInFlight("external-link");
+  const linkedProviders = new Set(accounts.map((a) => a.provider));
+  const availableProviders = ["lichess", "chesscom"].filter((p) => !linkedProviders.has(p));
+  const rows = accounts.map((account) => {
+    const blitz = account.ratings?.blitz;
+    const rapid = account.ratings?.rapid;
+    const bullet = account.ratings?.bullet;
+    const headline = blitz != null ? `blitz ${blitz}` : rapid != null ? `rapid ${rapid}` : bullet != null ? `bullet ${bullet}` : "no rated games";
+    const unlinkBusy = actionInFlight("external-unlink", account.id);
+    const verifyStartBusy = actionInFlight("verify-start", account.id);
+    const showVerifyButton = account.status !== "verified" && account.provider === "lichess";
+    const statusChipClass = account.status === "verified" ? "linked-chip" : "muted";
+    const statusLabel = account.status === "verification_pending" ? "verifying" : account.status;
+    return `
+      <div class="linked-account-row">
+        <div class="linked-account-identity">
+          <strong>${escapeHtml(formatProvider(account.provider))}</strong>
+          <span class="muted">@${escapeHtml(account.username)}</span>
+        </div>
+        <div class="linked-account-tag-row">
+          <span class="trust-chip ${statusChipClass}">${escapeHtml(statusLabel)}</span>
+          <span class="linked-account-stats">${escapeHtml(headline)}</span>
+        </div>
+        <div class="linked-account-actions">
+          ${showVerifyButton ? `
+            <button type="button" data-verify-start="${escapeHtml(account.id)}" ${verifyStartBusy ? "disabled" : ""}>
+              ${verifyStartBusy ? "Starting..." : "Verify"}
+            </button>
+          ` : ""}
+          <button type="button" data-unlink-external="${escapeHtml(account.id)}" ${unlinkBusy ? "disabled" : ""}>
+            ${unlinkBusy ? "Removing..." : "Unlink"}
+          </button>
+        </div>
+      </div>
+      ${renderVerifyPanel(account)}
+    `;
+  }).join("");
+  const form = availableProviders.length === 0 ? "" : `
+    <form class="stack compact-form" data-link-external>
+      <label>Provider
+        <select name="provider">
+          ${availableProviders.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(formatProvider(p))}</option>`).join("")}
+        </select>
+      </label>
+      <label>Handle
+        <input name="username" type="text" autocomplete="off" minlength="2" maxlength="30" required />
+        <small class="muted">We'll fetch public stats. No password needed.</small>
+      </label>
+      <button type="submit" ${linkBusy ? "disabled" : ""}>${linkBusy ? "Linking..." : "Link account"}</button>
+    </form>
+  `;
+  return `
+    <section class="grid one">
+      <article class="card account-card">
+        <h2>Linked chess accounts</h2>
+        <p class="muted small">Lichess or Chess.com handles seed your initial Horsey rating from your blitz strength.</p>
+        ${rows ? `<div class="linked-accounts-list">${rows}</div>` : `<p class="muted small">No accounts linked yet.</p>`}
+        ${form}
+      </article>
+    </section>
+  `;
+}
+
 function renderProfile() {
   const viewer = state.bootstrap.viewer;
   const ledgerRows = ledgerRowsWithBalances(state.walletLedger);
   const emailBusy = actionInFlight("account-email");
   const passwordBusy = actionInFlight("account-password");
   const logoutBusy = actionInFlight("logout-others");
+  const calibratingChip = viewer.calibrating
+    ? `<span class="trust-chip muted" title="Rating still calibrating from your first Horsey games at this tier">calibrating · ${escapeHtml(viewer.finishedGames ?? 0)}/${escapeHtml(viewer.calibratingThreshold ?? 10)}</span>`
+    : "";
   return `
     <section class="profile">
       <article class="card profile-header">
@@ -2868,7 +3145,7 @@ function renderProfile() {
         <div>
           <h1>${escapeHtml(viewer.handle)}</h1>
           <p class="muted">${escapeHtml(viewer.email)}</p>
-          <div class="tag-row"><span>rating ${escapeHtml(viewer.rating)}</span></div>
+          <div class="tag-row"><span>rating ${escapeHtml(viewer.rating)}</span>${renderTrustTierChip(viewer)}${calibratingChip}</div>
         </div>
       </article>
       <section class="grid two">
@@ -2902,6 +3179,7 @@ function renderProfile() {
           ${state.accountError ? `<em class="account-error">${escapeHtml(state.accountError)}</em>` : ""}
         </article>
       </section>
+      ${renderLinkedAccountsCard(viewer)}
       <section class="grid one">
         <article class="card ledger-card">
           <h2>Ledger</h2>
@@ -2966,6 +3244,25 @@ function renderAuth() {
   `;
 }
 
+function renderTrustTierChip(user) {
+  const tier = user?.trustTier;
+  if (!tier) return "";
+  const cap = user.stakeCapCents != null ? ` · cap ${money(user.stakeCapCents)}` : "";
+  const title = `Trust tier: ${tier}${cap}. Verify a chess account to raise your tier and stake cap.`;
+  return `<span class="trust-chip tier-chip tier-${escapeHtml(tier)}" title="${escapeHtml(title)}">${escapeHtml(tier)}</span>`;
+}
+
+function renderProfileLinkedChips(accounts) {
+  if (!Array.isArray(accounts) || accounts.length === 0) return "";
+  const chips = accounts.map((account) => {
+    const blitz = account.ratings?.blitz;
+    const rapid = account.ratings?.rapid;
+    const headline = blitz != null ? `${blitz} blitz` : rapid != null ? `${rapid} rapid` : "no rated games";
+    return `<span class="trust-chip linked-chip"><strong>${escapeHtml(formatProvider(account.provider))} ${escapeHtml(account.status)}</strong> · ${escapeHtml(headline)}</span>`;
+  }).join("");
+  return `<div class="profile-linked-chips">${chips}</div>`;
+}
+
 function renderUserProfile() {
   if (state.actionError) {
     return `<p class="muted">${escapeHtml(state.actionError)} <a href="#play">Back to lobby.</a></p>`;
@@ -2998,7 +3295,10 @@ function renderUserProfile() {
         <div class="tag-row">
           <span>${user.presence?.online ? "online" : "offline"}</span>
           ${user.liveGame ? `<span>in a live game</span>` : ""}
+          ${renderTrustTierChip(user)}
+          ${user.calibrating ? `<span class="trust-chip muted">calibrating</span>` : ""}
         </div>
+        ${renderProfileLinkedChips(user.externalAccounts)}
         <div class="profile-h2h">
           <small>H2H vs you</small>
           <strong>${escapeHtml(h2hScore)} ${h2hMoney}</strong>
@@ -3265,6 +3565,48 @@ function render() {
   }
   document.querySelectorAll("[data-logout-others]").forEach((b) => {
     b.addEventListener("click", () => logoutOtherSessions());
+  });
+  const linkExternalForm = document.querySelector("[data-link-external]");
+  if (linkExternalForm) {
+    linkExternalForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(linkExternalForm);
+      linkExternalAccount({
+        provider: fd.get("provider"),
+        username: String(fd.get("username") || "").trim(),
+        source: "settings"
+      });
+    });
+  }
+  document.querySelectorAll("[data-unlink-external]").forEach((b) => {
+    b.addEventListener("click", () => unlinkExternalAccount(b.dataset.unlinkExternal));
+  });
+  document.querySelectorAll("[data-verify-start]").forEach((b) => {
+    b.addEventListener("click", () => startVerification(b.dataset.verifyStart));
+  });
+  document.querySelectorAll("[data-verify-check]").forEach((b) => {
+    b.addEventListener("click", () => checkVerification(b.dataset.verifyCheck));
+  });
+  document.querySelectorAll("[data-verify-cancel]").forEach((b) => {
+    b.addEventListener("click", () => cancelVerification());
+  });
+  document.querySelectorAll("[data-verify-regenerate]").forEach((b) => {
+    b.addEventListener("click", () => startVerification(b.dataset.verifyRegenerate, { regenerate: true }));
+  });
+  const onboardingForm = document.querySelector("[data-onboarding-link]");
+  if (onboardingForm) {
+    onboardingForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(onboardingForm);
+      linkExternalAccount({
+        provider: fd.get("provider"),
+        username: String(fd.get("username") || "").trim(),
+        source: "onboarding"
+      });
+    });
+  }
+  document.querySelectorAll("[data-onboarding-skip]").forEach((b) => {
+    b.addEventListener("click", () => skipOnboarding());
   });
   document.querySelectorAll("[data-square]").forEach((square) => {
     square.addEventListener("click", () => {
