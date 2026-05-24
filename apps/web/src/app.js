@@ -136,8 +136,36 @@ function captureClockAnchor(clock) {
 }
 
 function setActiveGame(game) {
+  // Detect new moves to fire chess interaction sound. Compare against the
+  // prior game's move count for the same game id; firing only when count
+  // grew avoids replaying sound on bootstrap/reconnect snapshots.
+  const prior = state.activeGame;
+  const sameGame = prior && game && prior.id === game.id;
+  const priorMoves = sameGame ? (prior.moves?.length ?? 0) : null;
+  const newMoves = game?.moves?.length ?? 0;
   state.activeGame = game;
   captureClockAnchor(game?.clock ?? null);
+  if (sameGame && priorMoves != null && newMoves > priorMoves) {
+    const last = game.moves[newMoves - 1];
+    playMoveSound(last, game);
+  }
+}
+
+// Fire the right chess-interaction sound for a just-played move. Order
+// of precedence: mate > check > capture > regular drop. Mate is handled
+// by the settlement audio cue instead (it triggers via game.finalized),
+// so we play check on a checking move and the drop sound otherwise.
+function playMoveSound(move, game) {
+  if (!move) return;
+  if (game?.inCheck && game.state === "live") {
+    playSound("check_chime");
+    return;
+  }
+  if (move.captured) {
+    playSound("piece_capture");
+    return;
+  }
+  playSound("piece_drop");
 }
 
 function liveGameForShell() {
@@ -3048,48 +3076,15 @@ function promotionDialog() {
   `;
 }
 
-// Settlement chip-slide. The mode (win/loss/draw) drives asymmetric weight:
-// wins are brisk and golden, losses are slow and heavy, draws split the
-// stack. See docs/ARENA_NEXT_PASS.md § Phase 4 for the full spec and
-// docs/MILESTONES_NEXT_PASS.md for the composition rules with milestone
-// overlays. The rake chip always splits off to "house" regardless of
-// outcome — that's a fact the prior animation hid.
-//
-// Reduced-motion: chips remain in place (no arc); the textual headline
-// + amount line carry the result.
-const POT_SLIDE_CHIP_COUNT = 5;
-
-function renderPotSlide({ mode, viewerInitial, opponentInitial, opponentLabel, potCents, rakeCents }) {
-  const chips = Array.from({ length: POT_SLIDE_CHIP_COUNT }, (_, i) =>
-    `<span class="pot-slide-chip" data-chip="${i}"></span>`
-  ).join("");
-  const youSide = `
-    <div class="pot-slide-target pot-slide-you">
-      <span class="avatar sm">${escapeHtml(viewerInitial)}</span>
-      <span class="pot-slide-label">You</span>
-    </div>
-  `;
-  const oppSide = `
-    <div class="pot-slide-target pot-slide-opp">
-      <span class="avatar sm">${escapeHtml(opponentInitial)}</span>
-      <span class="pot-slide-label">${escapeHtml(opponentLabel || "Opponent")}</span>
-    </div>
-  `;
-  return `
-    <div class="pot-slide pot-slide-${escapeHtml(mode)}" aria-hidden="true">
-      ${oppSide}
-      <div class="pot-slide-center">
-        <div class="pot-slide-stack">${chips}</div>
-        <span class="pot-slide-pot mono tnum">${money(potCents)}</span>
-        <div class="pot-slide-rake-line">
-          <span class="pot-slide-rake-chip"></span>
-          <span class="pot-slide-rake-label">house · rake ${money(rakeCents)}</span>
-        </div>
-      </div>
-      ${youSide}
-    </div>
-  `;
-}
+// Settlement chrome stays text-driven: the headline, the big +/- amount
+// (counter-tween), and the bankroll counter (counter-tween) carry the
+// result. Earlier attempts at an animated chip-slide visualization read
+// as gimmicky on screen even when the spec sounded right on paper.
+// Asymmetric outcome weight is now expressed through:
+//   - loss-settle keyframe on the amount line (heavy landing)
+//   - bankroll counter only tweens on win/draw (loss snaps — no movement
+//     because the escrow was already taken at game start)
+//   - settlement chip-cascade SFX from sound.mjs paired with the moment
 
 function renderSettlement() {
   const settlement = state.activeSettlement;
@@ -3140,8 +3135,6 @@ function renderSettlement() {
     amountCents = settlement.creditedCents;
   }
 
-  const viewerInitial = (state.bootstrap?.viewer?.handle?.[0] ?? "?").toUpperCase();
-  const oppInitial = (opponentHandle[0] ?? "?").toUpperCase();
   const slideMode = won ? "win" : drew ? "draw" : "loss";
 
   // Bankroll tween: the metric-grid Balance ticks up on win/draw (escrow
@@ -3161,14 +3154,6 @@ function renderSettlement() {
         <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
         <h1>${headline}</h1>
         <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
-        ${renderPotSlide({
-          mode: slideMode,
-          viewerInitial,
-          opponentInitial: oppInitial,
-          opponentLabel: opponentHandle,
-          potCents: settlement.grossPotCents,
-          rakeCents: settlement.rakeCents
-        })}
         <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
         <div class="metric-grid">
           <div>

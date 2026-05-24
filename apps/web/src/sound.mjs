@@ -34,8 +34,8 @@ const ESSENTIAL_EVENTS = new Set([
   "milestone_unlock_t1",
   "milestone_unlock_t2",
   "milestone_unlock_t3",
-  "check",
-  "mate"
+  "check_chime",
+  "mate_chime"
 ]);
 
 let ctx = null;
@@ -193,6 +193,115 @@ function playMilestoneCallout() {
   });
 }
 
+// Wood-on-felt piece drop. Noise burst low-passed to remove the metallic
+// high-end, with a quick attack/decay envelope. Reads as a tactile thud
+// rather than a click. ~60ms total.
+function playPieceDrop() {
+  if (!ctx) return;
+  const dur = 0.06;
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.5;
+
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf;
+
+  const lp = ctx.createBiquadFilter();
+  lp.type = "lowpass";
+  // Slight per-call variation keeps repeated drops from sounding robotic.
+  lp.frequency.value = 1100 + (Math.random() * 200 - 100);
+  lp.Q.value = 1.2;
+
+  const env = ctx.createGain();
+  const now = ctx.currentTime;
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(TIER_GAIN.action, now + 0.003);
+  env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+  src.connect(lp).connect(env).connect(masterGain);
+  src.start(now);
+  src.stop(now + dur);
+}
+
+// Capture: heavier and slightly longer than a regular drop. Two-stage —
+// the contact thud followed by a brief lower-pitched body resonance so it
+// reads as wood-on-wood with mass.
+function playPieceCapture() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+
+  // Contact thud (filtered noise burst, ~80ms)
+  const dur = 0.08;
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = (Math.random() * 2 - 1) * 0.7;
+  const src = ctx.createBufferSource();
+  src.buffer = noiseBuf;
+  const lp = ctx.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 850;
+  lp.Q.value = 1.5;
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0, now);
+  env.gain.linearRampToValueAtTime(TIER_GAIN.action * 1.1, now + 0.004);
+  env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  src.connect(lp).connect(env).connect(masterGain);
+  src.start(now);
+  src.stop(now + dur);
+
+  // Body resonance — low triangle with quick decay
+  const body = ctx.createOscillator();
+  body.type = "triangle";
+  body.frequency.value = 110 + Math.random() * 20;
+  const bodyEnv = ctx.createGain();
+  bodyEnv.gain.setValueAtTime(0, now);
+  bodyEnv.gain.linearRampToValueAtTime(TIER_GAIN.ambient, now + 0.005);
+  bodyEnv.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+  body.connect(bodyEnv).connect(masterGain);
+  body.start(now);
+  body.stop(now + 0.17);
+}
+
+// Check chime: single low resolving tone. Sine wave at ~330 Hz with a
+// short attack and a longer tail than the piece sounds — distinct enough
+// to register through a flurry of moves.
+function playCheckChime() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const osc = ctx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.value = 330;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(TIER_GAIN.action * 0.8, now + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+  osc.connect(g).connect(masterGain);
+  osc.start(now);
+  osc.stop(now + 0.45);
+}
+
+// Mate cue: two-stage descending tone + soft impact. The match-ending
+// sound — distinct from check, deserves real production weight.
+function playMateChime() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [
+    { freq: 330, start: 0,    dur: 0.32 },
+    { freq: 220, start: 0.18, dur: 0.5 }
+  ].forEach(({ freq, start, dur }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now + start);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.action, now + start + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(now + start);
+    osc.stop(now + start + dur);
+  });
+}
+
 // Two-stage chord + chip-cascade overlay — tier-3 milestone burst.
 function playMilestoneBurst() {
   if (!ctx) return;
@@ -233,6 +342,14 @@ export function playSound(eventKey, opts = {}) {
       return playMilestoneCallout();
     case "milestone_unlock_t3":
       return playMilestoneBurst();
+    case "piece_drop":
+      return playPieceDrop();
+    case "piece_capture":
+      return playPieceCapture();
+    case "check_chime":
+      return playCheckChime();
+    case "mate_chime":
+      return playMateChime();
     default:
       // Unknown event keys are silent — they'll surface as events that
       // need to be added to the registry, not as runtime errors.
