@@ -90,9 +90,9 @@ The dashboard's active-game state has its own structural problem, separate from 
 - [x] **Topnav Resume pill unchanged.** Complementary cross-route affordance.
 - [x] **Clock-tick reuse.** Extended `manageClockTick` to also tick on `#play` when there's a live game. New `updateLiveTableClockDom()` updates only the `[data-live-table-clock] time` node and toggles `.low` / `.critical` classes, so the display ticks every animation frame without re-rendering the page.
 
-**Parallel server-side cleanup** (filed separately in `PUNCH_LIST.md`, not part of this UI work):
-- Auto-leave queue ticket + auto-withdraw pending open invites when the viewer's game starts.
-- Reject `POST /api/matchmaking/quick` / `POST /api/challenges` / challenge-accept while the viewer has a live game, with a clean error code the client renders inline.
+**Parallel server-side cleanup** (shipped after the UI work; tracked in `PUNCH_LIST.md`):
+- [x] Auto-leave queue tickets + auto-withdraw pending hosted invites for both players when a game starts.
+- [x] Reject `POST /api/matchmaking/quick` / `POST /api/challenges` / challenge-accept while the viewer has a live game, with `has_live_game` and inline client error copy.
 
 This means the matchmaking hero can stay fully enabled in the UI; the server is the source of truth for "you can't start a second game." Cleaner than client-side disabling.
 

@@ -61,6 +61,7 @@ test("expired open challenges cannot be accepted", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
   const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
 
   const created = await fixture.post(alice, "/api/challenges", {
     stakeCents: 2500,
@@ -80,6 +81,102 @@ test("expired open challenges cannot be accepted", async (t) => {
   const bootstrap = await fixture.get(bob, "/api/bootstrap");
   assert.equal(bootstrap.status, 200);
   assert.equal(bootstrap.body.lobby.openChallenges.some((c) => c.id === created.body.challenge.id), false);
+});
+
+test("starting a game clears queue tickets and pending hosted invites", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
+  const dave = await fixture.signup("dave");
+
+  const acceptedInvite = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  assert.equal(acceptedInvite.status, 201);
+  const aliceExtraInvite = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "3+0"
+  });
+  assert.equal(aliceExtraInvite.status, 201);
+  const bobExtraInvite = await fixture.post(bob, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "1+0"
+  });
+  assert.equal(bobExtraInvite.status, 201);
+
+  const carolQueued = await fixture.post(carol, "/api/matchmaking/quick", {
+    stakeCents: 2500,
+    timeControl: "3+0",
+    tierPref: "any"
+  });
+  assert.equal(carolQueued.status, 200);
+  assert.equal(carolQueued.body.ticket.userId, carol.user.id);
+  const bobQueued = await fixture.post(bob, "/api/matchmaking/quick", {
+    stakeCents: 1000,
+    timeControl: "3+0",
+    tierPref: "any"
+  });
+  assert.equal(bobQueued.status, 200);
+  assert.equal(bobQueued.body.ticket.userId, bob.user.id);
+
+  const accepted = await fixture.post(bob, `/api/challenges/${acceptedInvite.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 200);
+  assert.equal(accepted.body.game.state, "live");
+
+  const db = new Database(fixture.dbPath);
+  const extraRows = db.prepare("SELECT id, state, data_json FROM challenges WHERE id IN (?, ?) ORDER BY id")
+    .all(aliceExtraInvite.body.challenge.id, bobExtraInvite.body.challenge.id);
+  const tickets = db.prepare("SELECT user_id FROM matchmaking_tickets ORDER BY user_id").all();
+  db.close();
+
+  assert.deepEqual(extraRows.map((row) => row.state), ["declined", "declined"]);
+  assert.equal(extraRows.every((row) => JSON.parse(row.data_json).autoWithdrawnForLiveGame === true), true);
+  assert.deepEqual(tickets.map((row) => row.user_id), [carol.user.id]);
+
+  const lobby = await fixture.get(dave, "/api/bootstrap");
+  assert.equal(lobby.body.lobby.openChallenges.some((c) => c.id === aliceExtraInvite.body.challenge.id), false);
+  assert.equal(lobby.body.lobby.openChallenges.some((c) => c.id === bobExtraInvite.body.challenge.id), false);
+});
+
+test("live players cannot start another challenge or quick match", async (t) => {
+  const fixture = await startFixture(t);
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  assert.equal(created.status, 201);
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  assert.equal(accepted.status, 200);
+
+  const secondChallenge = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  assert.equal(secondChallenge.status, 409);
+  assert.equal(secondChallenge.body.error, "has_live_game");
+
+  const secondQueue = await fixture.post(bob, "/api/matchmaking/quick", {
+    stakeCents: 2500,
+    timeControl: "3+0",
+    tierPref: "any"
+  });
+  assert.equal(secondQueue.status, 409);
+  assert.equal(secondQueue.body.error, "has_live_game");
+
+  const carolInvite = await fixture.post(carol, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "1+0"
+  });
+  assert.equal(carolInvite.status, 201);
+  const acceptedWhileLive = await fixture.post(alice, `/api/challenges/${carolInvite.body.challenge.id}/accept`);
+  assert.equal(acceptedWhileLive.status, 409);
+  assert.equal(acceptedWhileLive.body.error, "has_live_game");
 });
 
 test("signup conflicts use generic messaging", async (t) => {
@@ -456,6 +553,7 @@ test("sub-minute bullet time control is accepted end-to-end", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
   const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
 
   const created = await fixture.post(alice, "/api/challenges", {
     stakeCents: 1000,
@@ -468,7 +566,7 @@ test("sub-minute bullet time control is accepted end-to-end", async (t) => {
   assert.equal(accepted.body.game.clock.whiteMs, 30_000);
   assert.equal(accepted.body.game.clock.incrementMs, 0);
 
-  const rejected = await fixture.post(alice, "/api/challenges", {
+  const rejected = await fixture.post(carol, "/api/challenges", {
     stakeCents: 1000,
     timeControl: "5s+0"
   });

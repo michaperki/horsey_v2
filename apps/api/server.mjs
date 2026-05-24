@@ -686,6 +686,29 @@ function requireLiveGame(game) {
   }
 }
 
+function requireNoLiveGame(userId) {
+  const game = db.findLiveGameForUser(userId);
+  if (!game) return;
+  const e = new RangeError("Finish your live game before starting another table.");
+  e.code = "has_live_game";
+  throw e;
+}
+
+function withdrawPendingSentChallenges(userId, { exceptId = null, now = new Date().toISOString() } = {}) {
+  const withdrawn = [];
+  for (const challenge of db.listSentByChallenger(userId)) {
+    if (challenge.id === exceptId) continue;
+    if (challenge.state !== "incoming" && challenge.state !== "countered") continue;
+    const next = transitionChallenge(challenge, "declined", {
+      withdrawnAt: now,
+      autoWithdrawnForLiveGame: true
+    });
+    db.saveChallenge(next);
+    withdrawn.push(db.getChallenge(challenge.id));
+  }
+  return withdrawn;
+}
+
 function handleDomainError(error, res) {
   const statuses = {
     insufficient_funds: 409,
@@ -699,6 +722,7 @@ function handleDomainError(error, res) {
     challenge_not_found: 404,
     game_not_found: 404,
     invalid_challenge_input: 400,
+    has_live_game: 409,
     unauthenticated: 401,
     email_taken: 409,
     handle_taken: 409,
@@ -1017,6 +1041,7 @@ function historyEntry(game, viewerId) {
 }
 
 function createChallenge({ challengerId, recipientId, stakeCents, timeControl }) {
+  requireNoLiveGame(challengerId);
   if (!Number.isInteger(stakeCents) || stakeCents <= 0) {
     const e = new RangeError("stakeCents must be a positive integer");
     e.code = "invalid_challenge_input"; throw e;
@@ -1059,7 +1084,7 @@ function createChallenge({ challengerId, recipientId, stakeCents, timeControl })
 
 function acceptChallenge(challenge, accepterId) {
   if (challenge.state === "accepted") {
-    return db.getGame(challenge.gameId);
+    return { game: db.getGame(challenge.gameId), cleanedChallenges: [] };
   }
   if (challenge.state !== "incoming" && challenge.state !== "countered") {
     const e = new RangeError(`cannot accept challenge in state ${challenge.state}`);
@@ -1068,9 +1093,12 @@ function acceptChallenge(challenge, accepterId) {
 
   // An open table's host already passed their cap at creation, but the taker
   // can be at a lower tier; check both sides at accept time.
+  requireNoLiveGame(accepterId);
+  requireNoLiveGame(challenge.challengerId);
   requireStakeWithinCap(challenge.stakeCents, accepterId, challenge.challengerId);
 
   let createdGame;
+  let cleanedChallenges = [];
   db.transaction(() => {
     const recipientId = challenge.recipientId || accepterId;
     if (recipientId === challenge.challengerId) {
@@ -1130,8 +1158,12 @@ function acceptChallenge(challenge, accepterId) {
     ));
     db.deleteTicket(recipientId);
     db.deleteTicket(challenge.challengerId);
+    cleanedChallenges = [
+      ...withdrawPendingSentChallenges(recipientId, { exceptId: challenge.id, now }),
+      ...withdrawPendingSentChallenges(challenge.challengerId, { exceptId: challenge.id, now })
+    ];
   })();
-  return createdGame;
+  return { game: createdGame, cleanedChallenges };
 }
 
 function finalizeGame(game, { result, reason }) {
@@ -1280,6 +1312,7 @@ function rehydrateClockTimeouts() {
 }
 
 function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
+  requireNoLiveGame(viewer.id);
   if (!Number.isInteger(stakeCents) || stakeCents <= 0) {
     const e = new RangeError("stakeCents must be a positive integer");
     e.code = "invalid_challenge_input"; throw e;
@@ -1298,11 +1331,16 @@ function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
   const viewerTier = trustTierForUser(viewer.id);
 
   let matchedGame = null;
+  let cleanedChallenges = [];
   db.transaction(() => {
     const candidates = db.listMatchingTickets(stakeCents, timeControl, viewer.id);
     // A match is only valid when both sides satisfy each other's tier floor.
     // Viewer asked for >= pref; the queued opponent asked for >= ticket.tierPref.
     const opponentTicket = candidates.find((ticket) => {
+      if (db.findLiveGameForUser(ticket.userId)) {
+        db.deleteTicket(ticket.userId);
+        return false;
+      }
       const oppTier = trustTierForUser(ticket.userId);
       if (!meetsTierFloor(oppTier, pref)) return false;
       if (!meetsTierFloor(viewerTier, ticket.tierPref)) return false;
@@ -1315,7 +1353,9 @@ function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
         stakeCents,
         timeControl
       });
-      matchedGame = acceptChallenge(db.getChallenge(challenge.id), viewer.id);
+      const accepted = acceptChallenge(db.getChallenge(challenge.id), viewer.id);
+      matchedGame = accepted.game;
+      cleanedChallenges = accepted.cleanedChallenges;
     } else {
       db.upsertTicket({
         userId: viewer.id,
@@ -1326,7 +1366,7 @@ function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
       });
     }
   })();
-  return { matched: !!matchedGame, game: matchedGame, ticket: db.getTicket(viewer.id) };
+  return { matched: !!matchedGame, game: matchedGame, ticket: db.getTicket(viewer.id), cleanedChallenges };
 }
 
 async function signupAccount({ email, handle, password }) {
@@ -1651,9 +1691,11 @@ async function routeApi(req, res) {
     try {
       const challenge = refreshChallengeState(getChallengeOr404(m[1]));
       requireRespondingParty(viewer, challenge);
-      const game = acceptChallenge(challenge, viewer.id);
+      const accepted = acceptChallenge(challenge, viewer.id);
+      const game = accepted.game;
       const updated = getChallengeOr404(m[1]);
       publishChallengeUpdated(updated);
+      for (const cleaned of accepted.cleanedChallenges) publishChallengeUpdated(cleaned);
       publishMatchmakingMatched(game);
       scheduleClockTimeout(game);
       return json(res, 200, {
@@ -1912,6 +1954,7 @@ async function routeApi(req, res) {
       const body = await readJson(req);
       const result = quickMatch(viewer, body);
       if (result.matched && result.game) {
+        for (const cleaned of result.cleanedChallenges) publishChallengeUpdated(cleaned);
         publishMatchmakingMatched(result.game);
         scheduleClockTimeout(result.game);
       }
