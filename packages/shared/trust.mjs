@@ -7,6 +7,33 @@ import { cents } from "./domain.mjs";
 
 export const TIERS = ["provisional", "claimed", "verified", "established"];
 
+// Rank used for "minimum tier" floors in matchmaking and challenge filters.
+// established sits at the top because it implies real platform history on top
+// of (usually) a linked account.
+const TIER_RANK = {
+  provisional: 0,
+  claimed: 1,
+  verified: 2,
+  established: 3
+};
+
+export function tierRank(tier) {
+  return TIER_RANK[tier] ?? 0;
+}
+
+// "any" is the open floor — every tier qualifies. The named tier values
+// raise the floor. Used by quickMatch tier preferences and open-table filters.
+export const TIER_FLOORS = ["any", "claimed", "verified"];
+
+export function isValidTierFloor(value) {
+  return TIER_FLOORS.includes(value);
+}
+
+export function meetsTierFloor(actualTier, requiredFloor) {
+  if (!requiredFloor || requiredFloor === "any") return true;
+  return tierRank(actualTier) >= tierRank(requiredFloor);
+}
+
 export const ESTABLISHED_GAMES_THRESHOLD = 50;
 
 // Per-game play-token stake caps. Tune as the loop calibrates.

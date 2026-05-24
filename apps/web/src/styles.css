@@ -889,6 +889,43 @@ p {
   background: rgba(200, 151, 56, 0.22);
 }
 
+.tier-pref-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.tier-pref-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: rgba(27, 24, 21, 0.04);
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tier-pref-pill.active {
+  border-color: var(--gold);
+  background: rgba(211, 164, 65, 0.18);
+}
+
+.felt .tier-pref-pill {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  color: #f5ede0;
+}
+
+.felt .tier-pref-pill.active {
+  border-color: var(--gold-2);
+  background: rgba(200, 151, 56, 0.22);
+}
+
 .chip-pick-row {
   display: flex;
   flex-wrap: wrap;
@@ -1534,6 +1571,33 @@ p {
   flex-shrink: 0;
 }
 
+.live-feed-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.watcher-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.watcher-eye {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.watcher-count {
+  color: var(--ink);
+}
+
 .wager-dossier {
   display: grid;
   gap: 14px;
@@ -2155,6 +2219,32 @@ p {
 .trust-chip.tier-established {
   color: var(--ink);
   border-color: var(--gold, var(--rule));
+}
+
+.tier-pip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 4px;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+
+.tier-pip.tier-claimed {
+  color: var(--muted);
+}
+
+.tier-pip.tier-verified,
+.tier-pip.tier-established {
+  color: var(--gold, var(--ink));
+  background: rgba(211, 164, 65, 0.12);
 }
 
 .chip-pick.over-cap {
@@ -2915,4 +3005,126 @@ p {
 .presence-dot.offline {
   background: var(--muted);
   box-shadow: 0 0 0 3px rgba(109, 98, 83, 0.18);
+}
+
+/* Settlement chip-slide: a single decisive payout animation. Pot chips
+   slide from the center toward the winner; on draws they split. No loops,
+   no shine — keep it physical and final (see ARENA_NEXT_PASS § anti-patterns). */
+.pot-slide {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 14px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.pot-slide-target {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: rgba(255, 247, 232, 0.78);
+  font-size: 12px;
+}
+
+.pot-slide-opp {
+  justify-self: start;
+}
+
+.pot-slide-you {
+  justify-self: end;
+}
+
+.pot-slide-stack {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 60px;
+}
+
+.pot-slide-pot {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold-2, #c89738);
+  letter-spacing: 0.02em;
+}
+
+.pot-slide-chip {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, var(--gold, #d3a441), #8a5e1c);
+  border: 1px solid rgba(255, 247, 232, 0.4);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.pot-slide-chip[data-chip="0"] { margin-bottom: -10px; }
+.pot-slide-chip[data-chip="1"] { margin-bottom: -10px; }
+.pot-slide-chip[data-chip="2"] { margin-bottom: 0; }
+
+/* Slide direction is driven by a mode class on the parent. translate is in
+   the inline (X) axis only; vertical stack arrangement stays put. */
+.pot-slide-win .pot-slide-chip {
+  animation: pot-slide-right 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.pot-slide-loss .pot-slide-chip {
+  animation: pot-slide-left 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.pot-slide-draw .pot-slide-chip[data-chip="0"] {
+  animation: pot-slide-left 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.pot-slide-draw .pot-slide-chip[data-chip="2"] {
+  animation: pot-slide-right 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+/* The "1" chip on a draw stays in place — the split is visually clearer
+   when one stays anchored. */
+
+.pot-slide-win .pot-slide-pot,
+.pot-slide-loss .pot-slide-pot {
+  animation: pot-label-fade 700ms ease-out forwards;
+}
+
+.pot-slide-win .pot-slide-you .avatar,
+.pot-slide-loss .pot-slide-opp .avatar {
+  animation: pot-target-pulse 700ms ease-out 600ms forwards;
+}
+
+@keyframes pot-slide-right {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(120px); opacity: 0.92; }
+}
+
+@keyframes pot-slide-left {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-120px); opacity: 0.92; }
+}
+
+@keyframes pot-label-fade {
+  0%   { opacity: 1; }
+  60%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes pot-target-pulse {
+  0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 164, 65, 0); }
+  40%  { transform: scale(1.08); box-shadow: 0 0 0 4px rgba(211, 164, 65, 0.28); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 164, 65, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pot-slide-chip,
+  .pot-slide-pot,
+  .pot-slide-target .avatar {
+    animation: none !important;
+  }
 }

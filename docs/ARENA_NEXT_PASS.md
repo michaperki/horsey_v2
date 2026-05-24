@@ -34,12 +34,12 @@ Each item is a named slot. Status: **done**, **partial**, **pending**.
 The "before the cards are dealt" period. Most addictive layer per the thesis above; under-developed today.
 
 - **Live action feed.** In-progress games visible on Play. Status: **partial** — `Live now` row shipped, shows opponent identities, stake, move number-ish; missing real per-move tick.
-- **Watcher count per live table.** "X watching" on the live game and the Live now row. Status: **pending** — already named as candidate #3 in the post-onboarding plan.
+- **Watcher count per live table.** "X watching" on the live game and the Live now row. Status: **shipped** — server tracks per-game spectator subscriptions (non-player WS connections, ref-counted across tabs), broadcasts `spectators.changed` on the game channel, and surfaces `watcherCount` on the lobby live-game projection and on `enrichGame`. UI: eye-chip on the Live now row, "Watching" stat on the game-page Table status card, live-updates over the existing realtime channel.
 - **Featured table.** Highlighted high-stakes / high-skill table at top of the live feed; should be a real signal (largest pot, highest combined rating, established players) rather than editorial pick. Status: **pending**.
 - **Open tables hierarchy.** Single-column rows over card-grid. Status: **done** (Wave O1).
 - **Scout-on-hover / scout-on-tap.** Opening the dossier from any handle on Play. Status: **done** — scout popover.
 - **Crowd / online count.** "N online" on lobby. Status: **done** — heartbeat strip.
-- **Tier-aware lobby.** Tickets and challenges visibly carry trust tier (chips on rows). Status: **partial** — tier on viewer badge shipped; not on opponent identities in live feed / open tables yet.
+- **Tier-aware lobby.** Tickets and challenges visibly carry trust tier (chips on rows). Status: **partial** — viewer badge, Quick Match tier-floor picker (`any` / `claimed` / `verified`), and compact `tier-pip` on opponent identities (live feed, open tables, player strips) shipped. Pending: tier filter on the Open Tables rail itself.
 
 ### Phase 2 — Posting & accepting (wager negotiation)
 
@@ -55,13 +55,13 @@ The "before the cards are dealt" period. Most addictive layer per the thesis abo
 - **Animated buy-in entering the pot.** When both sides escrow, chips visibly slide to the center. Status: **pending**.
 - **Visible momentum.** A "heat" indicator (board edge glow, light gold halo) when one side has a clear material or positional advantage. Must be backed by a real signal (eval pipeline) — defer until eval lands or use a coarser heuristic. Status: **pending — gated on eval policy**.
 - **Streak heaters.** W3 / W5 visual treatment on the identity badge or scout chip. Subtle, not Vegas. Status: **pending**.
-- **Audience / spectator presence.** Watch button + spectator count for live games. Status: **partial** — Watch button shipped (read-only board); presence count pending.
+- **Audience / spectator presence.** Watch button + spectator count for live games. Status: **shipped** — Watch button (read-only board) plus live-updating spectator count on both Live now feed and game-page Table status.
 - **Rank volatility cue.** Mid-game indicator that this match's rating swing will be unusually large (large rating gap, high-stake match). Status: **pending**.
 - **Clock tension.** Sub-30s and sub-10s clock styling. Status: **done**.
 
 ### Phase 4 — Settlement (the climax money moment)
 
-- **Settlement animation.** Pot chip slide to winner, rake chip slide to house. Currently snaps to a static number. Status: **pending**.
+- **Settlement animation.** Pot chip slide to winner, rake chip slide to house. Status: **partial — pot chip-slide shipped** (single 700ms decisive slide from center toward winner; draw splits the stack; reduced-motion fallback honored). Rake-to-house chip and tier-weighted dramatization still pending.
 - **Rating volatility display.** Visible +Δ / −Δ after settlement, with tier-appropriate dramatization (verified high-stake matches feel weightier). Status: **partial** — number shipped; no animation/dramatization.
 - **Rematch invitation timing.** Rematch CTA appears after settlement animation finishes, not before. Status: **partial** — CTA shipped, no animation gate.
 - **Hand summary.** Short cinematic recap of the winning blow, last move, key tactical moment. Status: **pending**.
@@ -72,7 +72,7 @@ The "before the cards are dealt" period. Most addictive layer per the thesis abo
 - **Scout cards (compact + full dossier).** Two reveals. Status: **done** for the current data layer.
 - **Playstyle archetypes.** Narrative labels like `aggressive opener`, `time-pressure survivor`. Must be data-backed — defer until we have move-time + opening data. Status: **pending — gated on real signal**.
 - **Opening badges.** ECO-classified opening preference. Status: **pending — gated on ECO pipeline**.
-- **Established / verified / placed chips.** Trust ladder visible on every identity surface. Status: **partial** — tier chip on hero badge + Settings; not yet on every identity surface (open tables, scout card, live tables).
+- **Established / verified / placed chips.** Trust ladder visible on every identity surface. Status: **partial** — tier chip on hero badge + Settings; compact `tier-pip` on opponent identities in live feed, open tables, and player strips. Still missing: scout card embed of the tier.
 - **Rivalry threads.** H2H, recent matches with same opponent. Status: **partial** — H2H shown on scout / profile; no rivalry pinning.
 
 ## Sequencing notes

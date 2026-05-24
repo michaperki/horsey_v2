@@ -55,6 +55,7 @@ const state = {
     hero: { stakeCents: null, timeControl: null },
     counter: { stakeCents: null, timeControl: null }
   },
+  matchTierPref: "any",
   scout: {
     userId: null,
     user: null,
@@ -806,6 +807,12 @@ async function handleRealtimeMessage(msg) {
       if (state.route === "game") render();
       return;
     }
+    case "spectators.changed": {
+      if (!state.activeGame || msg.gameId !== state.activeGame.id) return;
+      state.activeGame.watcherCount = msg.watcherCount ?? 0;
+      if (state.route === "game") updateWatcherChipDom();
+      return;
+    }
     case "game.finalized": {
       const id = msg.gameId || msg.game?.id;
       if (!id) return;
@@ -1078,13 +1085,17 @@ async function hostOpenInvite({ stakeCents, timeControl }) {
   }
 }
 
-async function joinQuickMatch({ stakeCents, timeControl }) {
+async function joinQuickMatch({ stakeCents, timeControl, tierPref }) {
   if (actionInFlight("quick-match")) return;
   state.actionError = null;
   setActionInFlight("quick-match", "", true);
   render();
   try {
-    const payload = await postJson("/api/matchmaking/quick", { stakeCents, timeControl });
+    const payload = await postJson("/api/matchmaking/quick", {
+      stakeCents,
+      timeControl,
+      tierPref: tierPref || state.matchTierPref || "any"
+    });
     if (payload.matched && payload.game) {
       setActiveGame(payload.game);
       if (payload.viewer) state.bootstrap.viewer = payload.viewer;
@@ -1763,6 +1774,35 @@ function renderTimePicker(formKey, timeControls, selected) {
   `;
 }
 
+const TIER_PREF_OPTIONS = [
+  { value: "any", label: "Anyone", hint: "Match the first opponent waiting." },
+  { value: "claimed", label: "Linked", hint: "Match only players who linked Lichess or Chess.com." },
+  { value: "verified", label: "Verified", hint: "Match only players who proved ownership of a linked account." }
+];
+
+function renderTierPrefPicker(selected) {
+  const choice = selected || "any";
+  return `
+    <div>
+      <span class="picker-label">Opponent tier</span>
+      <div class="tier-pref-row" data-tier-pref-picker>
+        ${TIER_PREF_OPTIONS.map((opt) => {
+          const active = opt.value === choice;
+          return `
+            <button type="button"
+              class="tier-pref-pill ${active ? "active" : ""}"
+              data-pick-tier-pref="${escapeHtml(opt.value)}"
+              aria-pressed="${active ? "true" : "false"}"
+              title="${escapeHtml(opt.hint)}">
+              ${escapeHtml(opt.label)}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderHeroIdle(lobby) {
   const pick = state.picker.hero;
   const quickBusy = actionInFlight("quick-match");
@@ -1831,6 +1871,7 @@ function renderHeroIdle(lobby) {
       <span class="picker-label">Time control</span>
       ${renderTimePicker("hero", lobby.timeControls, pick.timeControl)}
     </div>
+    ${renderTierPrefPicker(state.matchTierPref)}
     <div class="hero-cta-row">
       <button class="primary hero-cta-primary" type="button"
         data-find-game ${quickBusy || hostBusy ? "disabled" : ""}>
@@ -1932,6 +1973,7 @@ function renderLiveGameRow(game) {
     const inner = `
       <span class="avatar sm">${escapeHtml(initial)}</span>
       <span class="live-feed-handle">${escapeHtml(p.handle ?? "player")}</span>
+      ${renderTierPip(p)}
       ${p.rating ? `<span class="live-feed-rating mono tnum">${escapeHtml(String(p.rating))}</span>` : ""}
     `;
     return scoutTrigger(p, inner, "live-feed-scout");
@@ -1944,6 +1986,13 @@ function renderLiveGameRow(game) {
   const termsBits = [money(game.stakeCents)];
   if (game.timeControl) termsBits.push(`${game.timeControl}${kind ? ` ${kind}` : ""}`);
   termsBits.push(elapsedText);
+  const watcherCount = game.watcherCount ?? 0;
+  const watcherChip = watcherCount > 0
+    ? `<span class="watcher-chip" title="${watcherCount} watching">
+        <span class="watcher-eye" aria-hidden="true">👁</span>
+        <span class="watcher-count mono tnum">${watcherCount}</span>
+      </span>`
+    : "";
   return `
     <div class="live-feed-row" data-live-game-id="${escapeHtml(game.id)}" data-live-game-started="${escapeHtml(game.startedAt ?? "")}">
       <div class="live-feed-players">
@@ -1953,7 +2002,10 @@ function renderLiveGameRow(game) {
       </div>
       <div class="live-feed-row-bottom">
         <div class="live-feed-meta mono tnum">${escapeHtml(termsBits.join(" · "))}</div>
-        <button type="button" class="quiet watch-button" data-watch-game="${escapeHtml(game.id)}">Watch</button>
+        <div class="live-feed-row-actions">
+          ${watcherChip}
+          <button type="button" class="quiet watch-button" data-watch-game="${escapeHtml(game.id)}">Watch</button>
+        </div>
       </div>
     </div>
   `;
@@ -2006,6 +2058,16 @@ function renderHeartbeatStrip(lobby) {
   `;
 }
 
+function updateWatcherChipDom() {
+  if (typeof document === "undefined") return;
+  const game = state.activeGame;
+  if (!game) return;
+  const count = Number(game.watcherCount ?? 0);
+  document.querySelectorAll("[data-watcher-count]").forEach((node) => {
+    node.textContent = String(count);
+  });
+}
+
 function updateHeartbeatDom() {
   if (typeof document === "undefined") return;
   const lobby = state.bootstrap?.lobby;
@@ -2029,6 +2091,7 @@ function renderOpenTableRow(challenge) {
   const identity = `
     <span class="avatar sm">${escapeHtml(initial)}</span>
     <span class="open-row-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
+    ${opponent ? renderTierPip(opponent) : ""}
     ${opponent?.rating ? `<span class="open-row-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
   `;
   return `
@@ -2357,7 +2420,7 @@ function renderGame() {
             <div><small>Side</small><strong>${viewer ? viewer.color : "spectator"}</strong></div>
             <div><small>Last move</small><strong>${game.lastMove ? escapeHtml(game.lastMove.san) : "—"}</strong></div>
             <div><small>Material</small><strong>${viewer ? formatMaterialDelta(materialDelta(game, viewer.color)) : "—"}</strong></div>
-            <div><small>State</small><strong>${escapeHtml(game.state)}</strong></div>
+            <div><small>Watching</small><strong data-watcher-count>${game.watcherCount ?? 0}</strong></div>
           </div>
           ${viewerIsPlayer ? "" : `<p class="muted small">Spectator mode is read-only for live games.</p>`}
         </article>
@@ -2450,7 +2513,7 @@ function playerStrip(game, player, active = false) {
     <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
     <span class="player-main">
       <span>
-        <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}</strong>
+        <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}${renderTierPip(player)}</strong>
         <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? ` · ${escapeHtml(onlineLabel)}` : ""}</small>
       </span>
       <span class="player-subline">
@@ -2878,6 +2941,40 @@ function promotionDialog() {
   `;
 }
 
+// Animated chip-slide on the settlement screen: shows the pot visually
+// resolving from the center toward the winner. For draws the chip stack
+// splits in half. Pure CSS animation; the markup just sets a mode class
+// that picks the right keyframes.
+//
+// Anti-casino note: this is one quick, decisive slide — no looped sparkle,
+// no coin-shower payout reel. The point is to make settlement feel
+// physical and final, not to imitate a slot machine.
+function renderPotSlide({ mode, viewerInitial, opponentInitial, opponentLabel, potCents }) {
+  const chips = [0, 1, 2].map((i) => `<span class="pot-slide-chip" data-chip="${i}"></span>`).join("");
+  const youSide = `
+    <div class="pot-slide-target pot-slide-you">
+      <span class="avatar sm">${escapeHtml(viewerInitial)}</span>
+      <span class="pot-slide-label">You</span>
+    </div>
+  `;
+  const oppSide = `
+    <div class="pot-slide-target pot-slide-opp">
+      <span class="avatar sm">${escapeHtml(opponentInitial)}</span>
+      <span class="pot-slide-label">${escapeHtml(opponentLabel || "Opponent")}</span>
+    </div>
+  `;
+  return `
+    <div class="pot-slide pot-slide-${escapeHtml(mode)}" aria-hidden="true">
+      ${oppSide}
+      <div class="pot-slide-stack">
+        ${chips}
+        <span class="pot-slide-pot mono tnum">${money(potCents)}</span>
+      </div>
+      ${youSide}
+    </div>
+  `;
+}
+
 function renderSettlement() {
   const settlement = state.activeSettlement;
   if (!settlement) return `<p class="muted">No settlement yet. <a href="#play">Back to lobby.</a></p>`;
@@ -2927,12 +3024,17 @@ function renderSettlement() {
     amountCents = settlement.creditedCents;
   }
 
+  const viewerInitial = (state.bootstrap?.viewer?.handle?.[0] ?? "?").toUpperCase();
+  const oppInitial = (opponentHandle[0] ?? "?").toUpperCase();
+  const slideMode = won ? "win" : drew ? "draw" : "loss";
+
   return `
     <section class="grid two">
       <article class="felt settlement">
         <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
         <h1>${headline}</h1>
         <div class="${amountClass}">${amountPrefix}${money(amountCents)}</div>
+        ${renderPotSlide({ mode: slideMode, viewerInitial, opponentInitial: oppInitial, opponentLabel: opponentHandle, potCents: settlement.grossPotCents })}
         <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
         <div class="metric-grid">
           <div><small>Balance</small><strong>${money(settlement.balanceAfterCents)}</strong></div>
@@ -3252,6 +3354,16 @@ function renderTrustTierChip(user) {
   return `<span class="trust-chip tier-chip tier-${escapeHtml(tier)}" title="${escapeHtml(title)}">${escapeHtml(tier)}</span>`;
 }
 
+// Compact one-letter pip used inline beside opponent handles in dense rows
+// (live feed, open tables, player strips). Hidden for provisional since
+// "everyone is provisional by default" → showing it adds noise.
+function renderTierPip(user) {
+  const tier = user?.trustTier;
+  if (!tier || tier === "provisional") return "";
+  const letter = tier === "claimed" ? "C" : tier === "verified" ? "V" : tier === "established" ? "E" : tier[0].toUpperCase();
+  return `<span class="tier-pip tier-${escapeHtml(tier)}" title="Trust tier: ${escapeHtml(tier)}">${escapeHtml(letter)}</span>`;
+}
+
 function renderProfileLinkedChips(accounts) {
   if (!Array.isArray(accounts) || accounts.length === 0) return "";
   const chips = accounts.map((account) => {
@@ -3501,6 +3613,14 @@ function render() {
       if (!state.picker[formKey]) return;
       if (state.picker[formKey].timeControl === tc) return;
       state.picker[formKey].timeControl = tc;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-pick-tier-pref]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const pref = btn.dataset.pickTierPref;
+      if (!pref || pref === state.matchTierPref) return;
+      state.matchTierPref = pref;
       render();
     });
   });

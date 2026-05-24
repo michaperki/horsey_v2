@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -85,6 +85,7 @@ const SCHEMA = `
     user_id TEXT PRIMARY KEY,
     stake_cents INTEGER NOT NULL,
     time_control TEXT NOT NULL,
+    tier_pref TEXT NOT NULL DEFAULT 'any',
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_matchmaking_match ON matchmaking_tickets(stake_cents, time_control);
@@ -208,6 +209,7 @@ function rowToTicket(row) {
     userId: row.user_id,
     stakeCents: row.stake_cents,
     timeControl: row.time_control,
+    tierPref: row.tier_pref || "any",
     createdAt: row.created_at
   };
 }
@@ -259,6 +261,14 @@ function migrateSchema(db) {
       UPDATE users SET onboarding_completed_at = created_at
       WHERE onboarding_completed_at IS NULL
     `).run();
+  }
+  // v4 → v5: matchmaking_tickets gains tier_pref so each ticket can express a
+  // minimum opponent tier. Default 'any' preserves existing behavior.
+  if (currentVersion < 5 && currentVersion >= 1) {
+    const cols = db.prepare("PRAGMA table_info('matchmaking_tickets')").all();
+    if (!cols.some((c) => c.name === "tier_pref")) {
+      db.exec("ALTER TABLE matchmaking_tickets ADD COLUMN tier_pref TEXT NOT NULL DEFAULT 'any'");
+    }
   }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
@@ -389,17 +399,18 @@ function makeApi(db) {
     `),
 
     insertTicket: db.prepare(`
-      INSERT INTO matchmaking_tickets (user_id, stake_cents, time_control, created_at)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO matchmaking_tickets (user_id, stake_cents, time_control, tier_pref, created_at)
+      VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(user_id) DO UPDATE SET
         stake_cents = excluded.stake_cents,
         time_control = excluded.time_control,
+        tier_pref = excluded.tier_pref,
         created_at = excluded.created_at
     `),
-    findMatchingTicket: db.prepare(`
+    listMatchingTickets: db.prepare(`
       SELECT * FROM matchmaking_tickets
       WHERE stake_cents = ? AND time_control = ? AND user_id != ?
-      ORDER BY created_at ASC LIMIT 1
+      ORDER BY created_at ASC
     `),
     deleteTicket: db.prepare("DELETE FROM matchmaking_tickets WHERE user_id = ?"),
     getTicket: db.prepare("SELECT * FROM matchmaking_tickets WHERE user_id = ?"),
@@ -595,10 +606,16 @@ function makeApi(db) {
     },
 
     upsertTicket(ticket) {
-      stmts.insertTicket.run(ticket.userId, ticket.stakeCents, ticket.timeControl, ticket.createdAt);
+      stmts.insertTicket.run(
+        ticket.userId,
+        ticket.stakeCents,
+        ticket.timeControl,
+        ticket.tierPref || "any",
+        ticket.createdAt
+      );
     },
-    findMatchingTicket(stakeCents, timeControl, excludingUserId) {
-      return rowToTicket(stmts.findMatchingTicket.get(stakeCents, timeControl, excludingUserId));
+    listMatchingTickets(stakeCents, timeControl, excludingUserId) {
+      return stmts.listMatchingTickets.all(stakeCents, timeControl, excludingUserId).map(rowToTicket);
     },
     getTicket(userId) { return rowToTicket(stmts.getTicket.get(userId)); },
     deleteTicket(userId) { stmts.deleteTicket.run(userId); },

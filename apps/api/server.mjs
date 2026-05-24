@@ -38,7 +38,10 @@ import { computeRatingChange } from "../../packages/shared/rating.mjs";
 import {
   computeTrustTier,
   effectiveStakeCapCents,
-  stakeCapForTier
+  isValidTierFloor,
+  meetsTierFloor,
+  stakeCapForTier,
+  TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
 import {
   calibratingThresholdForTier,
@@ -145,6 +148,50 @@ function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}`;
 }
 
+// Per-game spectator tracker. A "watcher" is a viewer subscribed to the game
+// channel who is NOT one of the game's two players. Multiple tabs/sessions
+// for the same viewer collapse to one watcher via the per-viewer ref count.
+//
+// We can't derive this from broker.channelSize because that count blends
+// player and spectator subscriptions; for the lobby liveness payload we want
+// only the spectator side.
+const watchers = new Map(); // gameId -> Map<viewerId, refCount>
+
+function watcherCountForGame(gameId) {
+  return watchers.get(gameId)?.size ?? 0;
+}
+
+function addWatcher(gameId, viewerId) {
+  let m = watchers.get(gameId);
+  if (!m) { m = new Map(); watchers.set(gameId, m); }
+  const previousSize = m.size;
+  m.set(viewerId, (m.get(viewerId) ?? 0) + 1);
+  return m.size !== previousSize;
+}
+
+function removeWatcher(gameId, viewerId) {
+  const m = watchers.get(gameId);
+  if (!m) return false;
+  const cur = m.get(viewerId) ?? 0;
+  if (cur <= 0) return false;
+  if (cur === 1) {
+    m.delete(viewerId);
+    if (m.size === 0) watchers.delete(gameId);
+    return true;
+  }
+  m.set(viewerId, cur - 1);
+  return false;
+}
+
+function publishWatcherCount(gameId) {
+  broker.publish(CHANNELS.game(gameId), {
+    type: "spectators.changed",
+    gameId,
+    watcherCount: watcherCountForGame(gameId)
+  });
+  publishLobbyHeartbeat();
+}
+
 function recordGameEvent(gameId, type, payload = {}) {
   db.appendGameEvent({
     id: newId("evt"),
@@ -161,7 +208,8 @@ function enrichGame(game) {
   const summary = summarizeGame(game.fen);
   const playersWithPresence = (game.players || []).map((player) => ({
     ...player,
-    presence: presence.snapshot(player.id)
+    presence: presence.snapshot(player.id),
+    trustTier: trustTierForUser(player.id)
   }));
   return {
     ...summary,
@@ -169,7 +217,8 @@ function enrichGame(game) {
     players: playersWithPresence,
     moveNumber: Math.floor(moves.length / 2) + 1,
     lastMove: moves[moves.length - 1] || null,
-    moveRows: moveRows(moves)
+    moveRows: moveRows(moves),
+    watcherCount: watcherCountForGame(game.id)
   };
 }
 
@@ -290,12 +339,14 @@ function lobbyLiveGameProjection(game) {
     players: (game.players || []).map((p) => ({
       id: p.id,
       handle: p.handle,
-      rating: p.rating
+      rating: p.rating,
+      trustTier: trustTierForUser(p.id)
     })),
     stakeCents: game.pot?.stakeCents ?? 0,
     timeControl: game.timeControl,
     moveCount: (game.moves || []).length,
-    startedAt: game.createdAt
+    startedAt: game.createdAt,
+    watcherCount: watcherCountForGame(game.id)
   };
 }
 
@@ -352,6 +403,16 @@ function viewerPayload(viewerId) {
     ...walletSummary(db.listLedger(), viewerId),
     ...trustChipsForUser(viewerId)
   };
+}
+
+function normalizeTierPref(value) {
+  if (value === undefined || value === null || value === "") return "any";
+  if (!isValidTierFloor(value)) {
+    const e = new RangeError(`tierPref must be one of: ${TIER_FLOORS.join(", ")}`);
+    e.code = "invalid_tier_pref";
+    throw e;
+  }
+  return value;
 }
 
 function trustTierForUser(userId) {
@@ -546,7 +607,8 @@ function withOpponentDecor(user) {
   return {
     id: user.id,
     handle: user.handle,
-    rating: user.rating
+    rating: user.rating,
+    trustTier: trustTierForUser(user.id)
   };
 }
 
@@ -1199,7 +1261,7 @@ function rehydrateClockTimeouts() {
   }
 }
 
-function quickMatch(viewer, { stakeCents, timeControl }) {
+function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
   if (!Number.isInteger(stakeCents) || stakeCents <= 0) {
     const e = new RangeError("stakeCents must be a positive integer");
     e.code = "invalid_challenge_input"; throw e;
@@ -1212,12 +1274,22 @@ function quickMatch(viewer, { stakeCents, timeControl }) {
     const e = new RangeError(err.message);
     e.code = "invalid_challenge_input"; throw e;
   }
+  const pref = normalizeTierPref(tierPref);
 
   requireStakeWithinCap(stakeCents, viewer.id);
+  const viewerTier = trustTierForUser(viewer.id);
 
   let matchedGame = null;
   db.transaction(() => {
-    const opponentTicket = db.findMatchingTicket(stakeCents, timeControl, viewer.id);
+    const candidates = db.listMatchingTickets(stakeCents, timeControl, viewer.id);
+    // A match is only valid when both sides satisfy each other's tier floor.
+    // Viewer asked for >= pref; the queued opponent asked for >= ticket.tierPref.
+    const opponentTicket = candidates.find((ticket) => {
+      const oppTier = trustTierForUser(ticket.userId);
+      if (!meetsTierFloor(oppTier, pref)) return false;
+      if (!meetsTierFloor(viewerTier, ticket.tierPref)) return false;
+      return true;
+    });
     if (opponentTicket) {
       const challenge = createChallenge({
         challengerId: opponentTicket.userId,
@@ -1231,6 +1303,7 @@ function quickMatch(viewer, { stakeCents, timeControl }) {
         userId: viewer.id,
         stakeCents,
         timeControl,
+        tierPref: pref,
         createdAt: new Date().toISOString()
       });
     }
@@ -1960,6 +2033,10 @@ function attachWebSocket(ws, viewer) {
     isClosed() { return ws.readyState !== ws.OPEN; }
   };
   const gameChannels = new Set();
+  // gameIds where this connection was counted as a spectator (i.e., the viewer
+  // is not a player). Tracked here so cleanup() can decrement watcher refcounts
+  // even when the socket closes without an explicit unsubscribe.
+  const watchedGameIds = new Set();
   const userChannel = CHANNELS.user(viewer.id);
   broker.subscribe(userChannel, client);
   broker.subscribe(CHANNELS.lobby, client);
@@ -1974,6 +2051,11 @@ function attachWebSocket(ws, viewer) {
     if (cleanedUp) return;
     cleanedUp = true;
     broker.unsubscribeAll(client);
+    for (const gameId of watchedGameIds) {
+      const changed = removeWatcher(gameId, viewer.id);
+      if (changed) publishWatcherCount(gameId);
+    }
+    watchedGameIds.clear();
     const change = presence.disconnect(viewer.id);
     if (change.previouslyOnline && !change.nowOnline) {
       publishPresenceChanged(viewer.id);
@@ -1998,7 +2080,17 @@ function attachWebSocket(ws, viewer) {
     if (gameChannels.has(channel)) return;
     broker.subscribe(channel, client);
     gameChannels.add(channel);
-    ws.send(JSON.stringify({ type: "subscribed", channel }));
+    const isSpectator = !isGamePlayer(viewer, game) && game.state === "live";
+    if (isSpectator) {
+      watchedGameIds.add(gameId);
+      const changed = addWatcher(gameId, viewer.id);
+      if (changed) publishWatcherCount(gameId);
+    }
+    ws.send(JSON.stringify({
+      type: "subscribed",
+      channel,
+      watcherCount: watcherCountForGame(gameId)
+    }));
   }
 
   function unsubscribeGame(gameId) {
@@ -2006,6 +2098,10 @@ function attachWebSocket(ws, viewer) {
     if (!gameChannels.has(channel)) return;
     broker.unsubscribe(channel, client);
     gameChannels.delete(channel);
+    if (watchedGameIds.delete(gameId)) {
+      const changed = removeWatcher(gameId, viewer.id);
+      if (changed) publishWatcherCount(gameId);
+    }
     ws.send(JSON.stringify({ type: "unsubscribed", channel }));
   }
 
