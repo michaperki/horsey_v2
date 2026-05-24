@@ -2550,6 +2550,25 @@ p {
   background: var(--paper);
 }
 
+.sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sound-toggle:hover {
+  border-color: var(--gold, var(--rule));
+}
+
 .resume-pill {
   display: inline-flex;
   align-items: center;
@@ -3007,18 +3026,28 @@ p {
   box-shadow: 0 0 0 3px rgba(109, 98, 83, 0.18);
 }
 
-/* Settlement chip-slide: a single decisive payout animation. Pot chips
-   slide from the center toward the winner; on draws they split. No loops,
-   no shine — keep it physical and final (see ARENA_NEXT_PASS § anti-patterns). */
+/* Settlement chip-slide — the physicality pass.
+   See docs/ARENA_NEXT_PASS.md § Phase 4 for the spec.
+
+   - 5 disc-shaped chips with edge shading, stacked with vertical overlap
+   - Cascade timing: each chip kicks 60ms after the previous
+   - Parabolic arc: chips lift then settle (translate + slight rotation)
+   - Asymmetric outcome weight: wins brisk (~700ms gold), losses slow
+     (~1100ms muted, toward opponent), draws split half-distance both ways
+   - Rake chip always splits off to "house" — visualizes a fact the prior
+     chip-slide hid
+   - Reduced-motion: animations no-op, chips stay in stack (the text
+     headline carries the result)
+*/
 .pot-slide {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin: 18px 0 14px;
-  padding: 14px 18px;
+  padding: 18px 22px;
   border-radius: 14px;
-  background: rgba(0, 0, 0, 0.18);
+  background: rgba(0, 0, 0, 0.22);
   overflow: hidden;
 }
 
@@ -3026,7 +3055,7 @@ p {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   color: rgba(255, 247, 232, 0.78);
   font-size: 12px;
 }
@@ -3039,92 +3068,298 @@ p {
   justify-self: end;
 }
 
-.pot-slide-stack {
-  position: relative;
-  display: inline-flex;
+.pot-slide-label {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pot-slide-center {
+  display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  min-width: 60px;
+  gap: 8px;
+  min-width: 90px;
+  position: relative;
+}
+
+.pot-slide-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  height: 38px;
+  width: 28px;
 }
 
 .pot-slide-pot {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--gold-2, #c89738);
   letter-spacing: 0.02em;
 }
 
+/* Disc-style chip. The radial highlight + inset edge ring + drop shadow
+   together read as a poker chip seen edge-on. */
 .pot-slide-chip {
-  width: 14px;
-  height: 14px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: linear-gradient(160deg, var(--gold, #d3a441), #8a5e1c);
-  border: 1px solid rgba(255, 247, 232, 0.4);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 240, 200, 0.55), transparent 55%),
+    linear-gradient(160deg, var(--gold, #d3a441) 0%, #8a5e1c 100%);
+  border: 1.5px solid rgba(255, 247, 232, 0.55);
+  box-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.35),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  margin-top: -19px;
+  position: relative;
+  will-change: transform, opacity;
 }
 
-.pot-slide-chip[data-chip="0"] { margin-bottom: -10px; }
-.pot-slide-chip[data-chip="1"] { margin-bottom: -10px; }
-.pot-slide-chip[data-chip="2"] { margin-bottom: 0; }
+.pot-slide-chip[data-chip="0"] { margin-top: 0; }
 
-/* Slide direction is driven by a mode class on the parent. translate is in
-   the inline (X) axis only; vertical stack arrangement stays put. */
+.pot-slide-rake-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: rgba(255, 247, 232, 0.5);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+}
+
+.pot-slide-rake-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #aaa, #555);
+  border: 1px solid rgba(255, 247, 232, 0.3);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+  will-change: transform, opacity;
+}
+
+/* === WIN: brisk, gold, satisfying rake toward viewer (right) === */
 .pot-slide-win .pot-slide-chip {
-  animation: pot-slide-right 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  animation: chip-arc-right 700ms cubic-bezier(0.34, 1.2, 0.5, 1) forwards;
+}
+.pot-slide-win .pot-slide-chip[data-chip="0"] { animation-delay: 0ms; }
+.pot-slide-win .pot-slide-chip[data-chip="1"] { animation-delay: 55ms; }
+.pot-slide-win .pot-slide-chip[data-chip="2"] { animation-delay: 110ms; }
+.pot-slide-win .pot-slide-chip[data-chip="3"] { animation-delay: 165ms; }
+.pot-slide-win .pot-slide-chip[data-chip="4"] { animation-delay: 220ms; }
+
+.pot-slide-win .pot-slide-you .avatar {
+  animation: pot-target-pulse-gold 700ms ease-out 600ms forwards;
 }
 
+/* === LOSS: slow, heavy, muted, drift away toward opponent (left) === */
 .pot-slide-loss .pot-slide-chip {
-  animation: pot-slide-left 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  animation: chip-arc-left-heavy 1100ms cubic-bezier(0.4, 0, 0.7, 1) forwards;
+  filter: saturate(0.6) brightness(0.85);
+}
+.pot-slide-loss .pot-slide-chip[data-chip="0"] { animation-delay: 0ms; }
+.pot-slide-loss .pot-slide-chip[data-chip="1"] { animation-delay: 80ms; }
+.pot-slide-loss .pot-slide-chip[data-chip="2"] { animation-delay: 160ms; }
+.pot-slide-loss .pot-slide-chip[data-chip="3"] { animation-delay: 240ms; }
+.pot-slide-loss .pot-slide-chip[data-chip="4"] { animation-delay: 320ms; }
+
+/* No celebration on the opponent's avatar — losses don't get a target
+   pulse on either side. The weight is in the chip motion itself. */
+
+/* === DRAW: split down the middle, half-distance both ways === */
+.pot-slide-draw .pot-slide-chip[data-chip="0"],
+.pot-slide-draw .pot-slide-chip[data-chip="2"],
+.pot-slide-draw .pot-slide-chip[data-chip="4"] {
+  animation: chip-arc-right-half 800ms cubic-bezier(0.4, 0.1, 0.4, 1) forwards;
+}
+.pot-slide-draw .pot-slide-chip[data-chip="1"],
+.pot-slide-draw .pot-slide-chip[data-chip="3"] {
+  animation: chip-arc-left-half 800ms cubic-bezier(0.4, 0.1, 0.4, 1) forwards;
 }
 
-.pot-slide-draw .pot-slide-chip[data-chip="0"] {
-  animation: pot-slide-left 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+/* Rake chip always splits off to "house" label regardless of outcome.
+   Slides down-and-left and dims. */
+.pot-slide-rake-chip {
+  animation: rake-slide 600ms ease-out 350ms forwards;
 }
 
-.pot-slide-draw .pot-slide-chip[data-chip="2"] {
-  animation: pot-slide-right 700ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+/* === Keyframes === */
+@keyframes chip-arc-right {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  50%  { transform: translate(60px, -22px) rotate(15deg); }
+  100% { transform: translate(120px, 0) rotate(28deg); opacity: 0.95; }
 }
 
-/* The "1" chip on a draw stays in place — the split is visually clearer
-   when one stays anchored. */
-
-.pot-slide-win .pot-slide-pot,
-.pot-slide-loss .pot-slide-pot {
-  animation: pot-label-fade 700ms ease-out forwards;
+@keyframes chip-arc-left-heavy {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  50%  { transform: translate(-55px, -10px) rotate(-10deg); }
+  100% { transform: translate(-120px, 4px) rotate(-22deg); opacity: 0.85; }
 }
 
-.pot-slide-win .pot-slide-you .avatar,
-.pot-slide-loss .pot-slide-opp .avatar {
-  animation: pot-target-pulse 700ms ease-out 600ms forwards;
+@keyframes chip-arc-right-half {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  50%  { transform: translate(35px, -14px) rotate(8deg); }
+  100% { transform: translate(70px, 0) rotate(14deg); }
 }
 
-@keyframes pot-slide-right {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(120px); opacity: 0.92; }
+@keyframes chip-arc-left-half {
+  0%   { transform: translate(0, 0) rotate(0deg); }
+  50%  { transform: translate(-35px, -14px) rotate(-8deg); }
+  100% { transform: translate(-70px, 0) rotate(-14deg); }
 }
 
-@keyframes pot-slide-left {
-  0%   { transform: translateX(0); }
-  100% { transform: translateX(-120px); opacity: 0.92; }
+@keyframes rake-slide {
+  0%   { transform: translate(0, 0); opacity: 1; }
+  100% { transform: translate(-22px, 14px); opacity: 0.45; }
 }
 
-@keyframes pot-label-fade {
-  0%   { opacity: 1; }
-  60%  { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-@keyframes pot-target-pulse {
+@keyframes pot-target-pulse-gold {
   0%   { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 164, 65, 0); }
-  40%  { transform: scale(1.08); box-shadow: 0 0 0 4px rgba(211, 164, 65, 0.28); }
+  40%  { transform: scale(1.12); box-shadow: 0 0 0 6px rgba(211, 164, 65, 0.32); }
   100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(211, 164, 65, 0); }
+}
+
+/* Loss settle: the amount line lands with weight instead of appearing
+   flatly. Applies only to .money-loss inside .settlement-loss to avoid
+   leaking into the history list (which reuses .money-loss). */
+.settlement-loss .money-loss {
+  animation: loss-settle 800ms cubic-bezier(0.4, 0, 0.4, 1) forwards;
+}
+
+@keyframes loss-settle {
+  0%   { transform: translateY(-6px) scale(0.97); opacity: 0.35; filter: blur(1px); }
+  60%  { transform: translateY(2px) scale(1.01); opacity: 0.85; filter: blur(0); }
+  100% { transform: translateY(0) scale(1); opacity: 1; filter: blur(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .pot-slide-chip,
-  .pot-slide-pot,
-  .pot-slide-target .avatar {
+  .pot-slide-rake-chip,
+  .pot-slide-target .avatar,
+  .settlement-loss .money-loss {
     animation: none !important;
   }
+}
+
+/* === Milestone stack ===
+   See docs/MILESTONES_NEXT_PASS.md.
+   - Tier 1: small toast chip, top-right, soft fade
+   - Tier 2: callout banner, slightly larger, gold accent
+   - Tier 3: callout + contained chip-burst overlay
+   Stack is fixed-positioned top-right; multiple unlocks stack vertically.
+*/
+.milestone-stack {
+  position: fixed;
+  top: 80px;
+  right: 18px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.milestone-card {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 247, 232, 0.15);
+  background: rgba(20, 17, 14, 0.92);
+  color: #f5ede0;
+  text-align: left;
+  cursor: pointer;
+  min-width: 240px;
+  max-width: 320px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  position: relative;
+  overflow: hidden;
+  animation: milestone-in 240ms cubic-bezier(0.4, 1, 0.5, 1) forwards;
+  font-family: inherit;
+}
+
+.milestone-card:hover {
+  border-color: rgba(211, 164, 65, 0.5);
+}
+
+.milestone-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold-2, #c89738);
+}
+
+.milestone-headline {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.milestone-tier-2 {
+  border-color: rgba(211, 164, 65, 0.45);
+  background: linear-gradient(180deg, rgba(40, 30, 18, 0.95), rgba(20, 17, 14, 0.95));
+}
+
+.milestone-tier-3 {
+  border-color: rgba(211, 164, 65, 0.7);
+  background: linear-gradient(180deg, rgba(60, 45, 24, 0.97), rgba(25, 20, 16, 0.97));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(211, 164, 65, 0.25);
+}
+
+.milestone-tier-3 .milestone-headline {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* Tier-3 contained chip burst. Six chips fly out radially from the card's
+   leading edge, then fade. Stays inside the card via overflow:hidden on
+   .milestone-card. */
+.milestone-burst {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.milestone-burst-chip {
+  position: absolute;
+  top: 50%;
+  left: 14px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255, 240, 200, 0.9), var(--gold, #d3a441));
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+  transform: translateY(-50%);
+  opacity: 0;
+  animation: milestone-burst-chip 1200ms cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+
+.milestone-burst-chip[data-i="0"] { --burst-x: 110px; --burst-y: -34px; animation-delay: 0ms; }
+.milestone-burst-chip[data-i="1"] { --burst-x: 140px; --burst-y: -8px;  animation-delay: 50ms; }
+.milestone-burst-chip[data-i="2"] { --burst-x: 150px; --burst-y: 18px;  animation-delay: 100ms; }
+.milestone-burst-chip[data-i="3"] { --burst-x: 130px; --burst-y: 40px;  animation-delay: 150ms; }
+.milestone-burst-chip[data-i="4"] { --burst-x: 90px;  --burst-y: -50px; animation-delay: 200ms; }
+.milestone-burst-chip[data-i="5"] { --burst-x: 80px;  --burst-y: 50px;  animation-delay: 250ms; }
+
+@keyframes milestone-burst-chip {
+  0%   { transform: translateY(-50%) translate(0, 0) scale(0.6); opacity: 0; }
+  15%  { opacity: 1; }
+  100% { transform: translateY(-50%) translate(var(--burst-x), var(--burst-y)) scale(1); opacity: 0; }
+}
+
+@keyframes milestone-in {
+  0%   { transform: translateX(20px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .milestone-card { animation: none !important; }
+  .milestone-burst { display: none; }
 }

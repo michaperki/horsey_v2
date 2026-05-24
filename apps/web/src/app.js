@@ -1,3 +1,12 @@
+import {
+  getSoundMode,
+  initSound,
+  playMilestoneSound,
+  playSettlementSound,
+  playSound,
+  setSoundMode
+} from "./sound.mjs";
+
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
 
 function parseHash() {
@@ -56,6 +65,7 @@ const state = {
     counter: { stakeCents: null, timeControl: null }
   },
   matchTierPref: "any",
+  milestones: [],
   scout: {
     userId: null,
     user: null,
@@ -813,6 +823,11 @@ async function handleRealtimeMessage(msg) {
       if (state.route === "game") updateWatcherChipDom();
       return;
     }
+    case "milestone.unlocked": {
+      if (!msg.milestone) return;
+      enqueueMilestone(msg.milestone);
+      return;
+    }
     case "game.finalized": {
       const id = msg.gameId || msg.game?.id;
       if (!id) return;
@@ -1478,6 +1493,13 @@ document.addEventListener("click", (event) => {
   closeScout();
 });
 
+// Initialize the WebAudio context on the first user gesture. The browser
+// blocks audio playback until a user gesture has occurred; this captures
+// the first click and resumes/creates the context for subsequent
+// playSound calls. Idempotent — safe to call on every click.
+document.addEventListener("click", () => initSound(), { capture: true });
+document.addEventListener("keydown", () => initSound(), { capture: true });
+
 function shell(content) {
   const viewer = state.bootstrap.viewer;
   const liveGame = liveGameForShell();
@@ -1491,6 +1513,7 @@ function shell(content) {
       </nav>
       <div class="topbar-actions">
         ${connectionPill()}
+        ${renderSoundToggle()}
         ${liveGame ? `<a class="resume-pill" href="#game"><span class="dot"></span>Resume game</a>` : ""}
         <a class="wallet-pill" href="#profile" title="Wallet detail in Profile">
           <span>${money(viewer.balanceCents)}</span>
@@ -1503,10 +1526,94 @@ function shell(content) {
       </div>
     </header>
     <main>${content}</main>
+    ${renderMilestoneStack()}
     ${renderScoutPopover()}
     ${resignConfirmDialog()}
     ${renderOnboardingModal()}
   `;
+}
+
+// === Milestone overlays ===
+// See docs/MILESTONES_NEXT_PASS.md for the intensity tier system.
+// Tier 1 = toast (top-right chip, 2s)
+// Tier 2 = callout (banner, 3s)
+// Tier 3 = burst (callout + contained chip-burst on the settlement card, 1.2s pre-burst then dismisses)
+//
+// Multiple concurrent unlocks stack — we render the most recent on top,
+// each with its own auto-dismiss timer. Click to dismiss.
+const MILESTONE_DURATIONS = { 1: 2200, 2: 3200, 3: 3600 };
+
+function enqueueMilestone(milestone) {
+  if (!milestone) return;
+  state.milestones = [...state.milestones, milestone];
+  render();
+  playMilestoneSound(milestone.tier);
+  const dur = MILESTONE_DURATIONS[milestone.tier] ?? 2500;
+  setTimeout(() => dismissMilestone(milestone.id), dur);
+}
+
+function dismissMilestone(id) {
+  const before = state.milestones.length;
+  state.milestones = state.milestones.filter((m) => m.id !== id);
+  if (state.milestones.length !== before) render();
+}
+
+function milestoneCopy(milestone) {
+  const md = milestone.metadata ?? {};
+  switch (milestone.eventKey) {
+    case "first_win":
+      return { eyebrow: "First win", headline: "You took your first pot." };
+    case "win_streak_3":
+      return { eyebrow: "3 in a row", headline: "Streak: three straight wins." };
+    case "win_streak_5":
+      return { eyebrow: "5 in a row", headline: "Five-win heater." };
+    case "win_streak_7":
+      return { eyebrow: "7 in a row", headline: "Seven wins on the bounce." };
+    case "win_streak_10":
+      return { eyebrow: "10 in a row", headline: "Ten straight. The room is watching." };
+    case "win_streak_15":
+      return { eyebrow: "15 in a row", headline: "Fifteen. Untouchable run." };
+    default:
+      return { eyebrow: milestone.eventKey, headline: `Unlocked — ${milestone.eventKey} (streak ${md.streak ?? ""})` };
+  }
+}
+
+function renderMilestoneStack() {
+  if (!state.milestones?.length) return "";
+  const items = state.milestones.map((m) => renderMilestoneCard(m)).join("");
+  return `<div class="milestone-stack" data-milestone-stack>${items}</div>`;
+}
+
+function renderMilestoneCard(milestone) {
+  const tier = milestone.tier ?? 1;
+  const copy = milestoneCopy(milestone);
+  const burst = tier >= 3 ? `<div class="milestone-burst" aria-hidden="true">${
+    Array.from({ length: 6 }, (_, i) => `<span class="milestone-burst-chip" data-i="${i}"></span>`).join("")
+  }</div>` : "";
+  return `
+    <button type="button"
+      class="milestone-card milestone-tier-${tier}"
+      data-milestone-dismiss="${escapeHtml(milestone.id)}"
+      aria-label="Milestone — ${escapeHtml(copy.headline)}. Click to dismiss.">
+      ${burst}
+      <span class="milestone-eyebrow">${escapeHtml(copy.eyebrow)}</span>
+      <span class="milestone-headline">${escapeHtml(copy.headline)}</span>
+    </button>
+  `;
+}
+
+// Sound-mode toggle in the topbar. Cycles full → essentials → mute on
+// click. See docs/SOUNDSCAPE_NEXT_PASS.md § Reduced sensory intensity.
+function renderSoundToggle() {
+  const m = getSoundMode();
+  const next = m === "full" ? "essentials" : m === "essentials" ? "mute" : "full";
+  const label = m === "full" ? "🔊" : m === "essentials" ? "🔉" : "🔇";
+  const title = m === "full"
+    ? "Sound: full. Click for essentials only."
+    : m === "essentials"
+      ? "Sound: essentials only (settlement, milestones). Click to mute."
+      : "Sound: muted. Click to enable.";
+  return `<button class="sound-toggle" data-sound-mode="${escapeHtml(next)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${label}</button>`;
 }
 
 function shouldShowOnboardingModal() {
@@ -2941,16 +3048,21 @@ function promotionDialog() {
   `;
 }
 
-// Animated chip-slide on the settlement screen: shows the pot visually
-// resolving from the center toward the winner. For draws the chip stack
-// splits in half. Pure CSS animation; the markup just sets a mode class
-// that picks the right keyframes.
+// Settlement chip-slide. The mode (win/loss/draw) drives asymmetric weight:
+// wins are brisk and golden, losses are slow and heavy, draws split the
+// stack. See docs/ARENA_NEXT_PASS.md § Phase 4 for the full spec and
+// docs/MILESTONES_NEXT_PASS.md for the composition rules with milestone
+// overlays. The rake chip always splits off to "house" regardless of
+// outcome — that's a fact the prior animation hid.
 //
-// Anti-casino note: this is one quick, decisive slide — no looped sparkle,
-// no coin-shower payout reel. The point is to make settlement feel
-// physical and final, not to imitate a slot machine.
-function renderPotSlide({ mode, viewerInitial, opponentInitial, opponentLabel, potCents }) {
-  const chips = [0, 1, 2].map((i) => `<span class="pot-slide-chip" data-chip="${i}"></span>`).join("");
+// Reduced-motion: chips remain in place (no arc); the textual headline
+// + amount line carry the result.
+const POT_SLIDE_CHIP_COUNT = 5;
+
+function renderPotSlide({ mode, viewerInitial, opponentInitial, opponentLabel, potCents, rakeCents }) {
+  const chips = Array.from({ length: POT_SLIDE_CHIP_COUNT }, (_, i) =>
+    `<span class="pot-slide-chip" data-chip="${i}"></span>`
+  ).join("");
   const youSide = `
     <div class="pot-slide-target pot-slide-you">
       <span class="avatar sm">${escapeHtml(viewerInitial)}</span>
@@ -2966,9 +3078,13 @@ function renderPotSlide({ mode, viewerInitial, opponentInitial, opponentLabel, p
   return `
     <div class="pot-slide pot-slide-${escapeHtml(mode)}" aria-hidden="true">
       ${oppSide}
-      <div class="pot-slide-stack">
-        ${chips}
+      <div class="pot-slide-center">
+        <div class="pot-slide-stack">${chips}</div>
         <span class="pot-slide-pot mono tnum">${money(potCents)}</span>
+        <div class="pot-slide-rake-line">
+          <span class="pot-slide-rake-chip"></span>
+          <span class="pot-slide-rake-label">house · rake ${money(rakeCents)}</span>
+        </div>
       </div>
       ${youSide}
     </div>
@@ -3028,16 +3144,37 @@ function renderSettlement() {
   const oppInitial = (opponentHandle[0] ?? "?").toUpperCase();
   const slideMode = won ? "win" : drew ? "draw" : "loss";
 
+  // Bankroll tween: the metric-grid Balance ticks up on win/draw (escrow
+  // release + winnings), stays on loss (escrow was already forfeit; the
+  // amount line carries the loss narrative). See ARENA_NEXT_PASS Phase 4.
+  const balanceAfterCents = settlement.balanceAfterCents;
+  const balanceBeforeCents = (won || drew)
+    ? balanceAfterCents - (settlement.creditedCents ?? 0)
+    : balanceAfterCents;
+  const amountTweenAttr = won || drew
+    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
+    : "";
+
   return `
     <section class="grid two">
-      <article class="felt settlement">
+      <article class="felt settlement settlement-${escapeHtml(slideMode)}">
         <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
         <h1>${headline}</h1>
-        <div class="${amountClass}">${amountPrefix}${money(amountCents)}</div>
-        ${renderPotSlide({ mode: slideMode, viewerInitial, opponentInitial: oppInitial, opponentLabel: opponentHandle, potCents: settlement.grossPotCents })}
+        <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
+        ${renderPotSlide({
+          mode: slideMode,
+          viewerInitial,
+          opponentInitial: oppInitial,
+          opponentLabel: opponentHandle,
+          potCents: settlement.grossPotCents,
+          rakeCents: settlement.rakeCents
+        })}
         <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
         <div class="metric-grid">
-          <div><small>Balance</small><strong>${money(settlement.balanceAfterCents)}</strong></div>
+          <div>
+            <small>Balance</small>
+            <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
+          </div>
           ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${formatRatingDelta(settlement.ratingDelta)}${settlement.ratingAfter !== null ? ` <span class="muted">→ ${settlement.ratingAfter}</span>` : ""}</strong></div>` : ""}
           <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
         </div>
@@ -3787,6 +3924,101 @@ function render() {
   if (state.focusSquare) {
     document.querySelector(`[data-square="${state.focusSquare}"]`)?.focus({ preventScroll: true });
   }
+  runBankrollTweens();
+  runAmountTweens();
+  maybePlaySettlementAudio();
+  document.querySelectorAll("[data-milestone-dismiss]").forEach((b) => {
+    b.addEventListener("click", () => dismissMilestone(b.dataset.milestoneDismiss));
+  });
+  document.querySelectorAll("[data-sound-mode]").forEach((b) => {
+    b.addEventListener("click", () => {
+      setSoundMode(b.dataset.soundMode);
+      // Click triggers initSound via the document-level capture handler,
+      // so the user immediately hears confirmation if going to full mode.
+      if (b.dataset.soundMode !== "mute") playSound("chip_click");
+      render();
+    });
+  });
+}
+
+// Animated counter tween for money displays on settlement.
+//
+// Two elements are tween-eligible:
+//   [data-bankroll-tween][data-from][data-to] — the metric-grid balance.
+//     Tweens from previous balance to post-settlement balance.
+//   [data-amount-tween][data-amount-prefix]   — the big amount line.
+//     Counts up from 0 to the credited total (win/draw only — losses
+//     stay steady because the loss narrative is the chip slide weight).
+//
+// Both honor prefers-reduced-motion (snap to final). Both are idempotent —
+// adding a `data-tween-done` marker after run so re-renders mid-tween
+// don't restart them.
+function isReducedMotion() {
+  return typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function tweenCents(node, fromCents, toCents, durationMs, formatFn) {
+  if (!node) return;
+  const reduced = isReducedMotion();
+  if (reduced || fromCents === toCents) {
+    node.textContent = formatFn(toCents);
+    node.setAttribute("data-tween-done", "1");
+    return;
+  }
+  const start = performance.now();
+  function frame(now) {
+    const elapsed = now - start;
+    const t = Math.min(1, elapsed / durationMs);
+    const eased = easeOutCubic(t);
+    const value = Math.round(fromCents + (toCents - fromCents) * eased);
+    node.textContent = formatFn(value);
+    if (t < 1) requestAnimationFrame(frame);
+    else node.setAttribute("data-tween-done", "1");
+  }
+  node.textContent = formatFn(fromCents);
+  requestAnimationFrame(frame);
+}
+
+function runBankrollTweens() {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll("[data-bankroll-tween]:not([data-tween-done])").forEach((node) => {
+    const from = Number(node.dataset.from ?? 0);
+    const to = Number(node.dataset.to ?? 0);
+    if (from !== to && !isReducedMotion()) {
+      // Bankroll counter tick — paired sportsbook-style audio.
+      playSound("bankroll_tick", { count: 6, spacingMs: 110 });
+    }
+    tweenCents(node, from, to, 800, money);
+  });
+}
+
+// Track which settlement we've already played audio for so re-renders
+// during the same view don't retrigger the chip-cascade sound.
+let lastSettlementAudioId = null;
+function maybePlaySettlementAudio() {
+  if (typeof document === "undefined") return;
+  if (state.route !== "settlement" && state.route !== "history") return;
+  const settlement = state.activeSettlement;
+  if (!settlement || settlement.state !== "finalized") return;
+  const gameId = state.activeGame?.id ?? state.routeParam;
+  if (!gameId || gameId === lastSettlementAudioId) return;
+  lastSettlementAudioId = gameId;
+  playSettlementSound(settlement.result);
+}
+
+function runAmountTweens() {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll("[data-amount-tween]:not([data-tween-done])").forEach((node) => {
+    const target = Number(node.dataset.amountTween ?? 0);
+    const prefix = node.dataset.amountPrefix ?? "";
+    tweenCents(node, 0, target, 700, (c) => `${prefix}${money(c)}`);
+  });
 }
 
 load().catch((error) => {

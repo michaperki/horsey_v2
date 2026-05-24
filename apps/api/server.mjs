@@ -43,6 +43,7 @@ import {
   stakeCapForTier,
   TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
+import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
 import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
@@ -1150,6 +1151,7 @@ function finalizeGame(game, { result, reason }) {
   const winnerId = result === "white_win" ? white.id : result === "black_win" ? black.id : null;
   const defaultReason = result === "draw" ? "agreement" : "checkmate";
 
+  let unlockedMilestones = [];
   db.transaction(() => {
     const outcome = settleGame({
       gameId: game.id,
@@ -1171,23 +1173,38 @@ function finalizeGame(game, { result, reason }) {
       db.updateUserRating(black.id, ratingChange.blackAfter);
       const endReason = reason || defaultReason;
       const endedAt = new Date().toISOString();
-      db.saveGame({
+      const finalizedGame = {
         ...game,
         state: "finalized",
         winnerId,
         endReason,
         endedAt,
         ratingChange
-      });
+      };
+      db.saveGame(finalizedGame);
       recordGameEvent(game.id, "finalized", {
         result,
         reason: endReason,
         winnerId,
         ratingChange
       });
+      // Milestone detection runs inside the same transaction so a partial
+      // commit can't leak unlocks for an un-finalized game. Persist here;
+      // publish over the broker after the transaction commits.
+      unlockedMilestones = detectMilestonesForGame(db, finalizedGame);
+      for (const m of unlockedMilestones) db.insertUserMilestone(m);
     }
   })();
   clearClockTimeout(game.id);
+  for (const m of unlockedMilestones) publishMilestoneUnlocked(m);
+}
+
+function publishMilestoneUnlocked(milestone) {
+  if (!milestone) return;
+  broker.publish(CHANNELS.user(milestone.userId), {
+    type: "milestone.unlocked",
+    milestone: publicMilestonePayload(milestone)
+  });
 }
 
 function resignGame(viewer, game) {

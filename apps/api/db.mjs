@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -117,6 +117,17 @@ const SCHEMA = `
     UNIQUE(user_id, provider)
   );
   CREATE INDEX IF NOT EXISTS idx_external_accounts_user ON external_accounts(user_id);
+
+  CREATE TABLE IF NOT EXISTS user_milestones (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    event_key TEXT NOT NULL,
+    tier INTEGER NOT NULL DEFAULT 1,
+    game_id TEXT,
+    metadata_json TEXT,
+    occurred_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_milestones_user ON user_milestones(user_id, event_key, occurred_at);
 `;
 
 function rowToPublicUser(row) {
@@ -270,6 +281,8 @@ function migrateSchema(db) {
       db.exec("ALTER TABLE matchmaking_tickets ADD COLUMN tier_pref TEXT NOT NULL DEFAULT 'any'");
     }
   }
+  // v5 → v6: user_milestones table is created by the SCHEMA exec on the next
+  // line. No backfill — milestones detected from this point forward only.
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -396,6 +409,17 @@ function makeApi(db) {
     `),
     listGameEvents: db.prepare(`
       SELECT * FROM game_events WHERE game_id = ? ORDER BY occurred_at ASC, rowid ASC
+    `),
+
+    insertUserMilestone: db.prepare(`
+      INSERT INTO user_milestones (id, user_id, event_key, tier, game_id, metadata_json, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `),
+    countUserMilestoneByKey: db.prepare(`
+      SELECT COUNT(*) AS n FROM user_milestones WHERE user_id = ? AND event_key = ?
+    `),
+    listUserMilestones: db.prepare(`
+      SELECT * FROM user_milestones WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 50
     `),
 
     insertTicket: db.prepare(`
@@ -601,6 +625,32 @@ function makeApi(db) {
         gameId: row.game_id,
         type: row.type,
         payload: JSON.parse(row.payload_json),
+        occurredAt: row.occurred_at
+      }));
+    },
+
+    insertUserMilestone(m) {
+      stmts.insertUserMilestone.run(
+        m.id,
+        m.userId,
+        m.eventKey,
+        m.tier ?? 1,
+        m.gameId ?? null,
+        JSON.stringify(m.metadata ?? {}),
+        m.occurredAt
+      );
+    },
+    countUserMilestoneByKey(userId, eventKey) {
+      return stmts.countUserMilestoneByKey.get(userId, eventKey)?.n ?? 0;
+    },
+    listUserMilestones(userId) {
+      return stmts.listUserMilestones.all(userId).map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        eventKey: row.event_key,
+        tier: row.tier,
+        gameId: row.game_id,
+        metadata: row.metadata_json ? JSON.parse(row.metadata_json) : {},
         occurredAt: row.occurred_at
       }));
     },
