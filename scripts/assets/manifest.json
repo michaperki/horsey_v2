@@ -1,0 +1,227 @@
+[
+  {
+    "id": "asset_1_1",
+    "filename": "horsey_001_asset_1_1.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_1_1",
+      "x1": 0,
+      "y1": 0,
+      "x2": 347,
+      "y2": 208
+    },
+    "width": 347,
+    "height": 208,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_2",
+    "filename": "horsey_002_asset_1_2.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_1_2",
+      "x1": 347,
+      "y1": 0,
+      "x2": 709,
+      "y2": 208
+    },
+    "width": 362,
+    "height": 208,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_3",
+    "filename": "horsey_003_asset_1_3.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_1_3",
+      "x1": 709,
+      "y1": 0,
+      "x2": 1061,
+      "y2": 208
+    },
+    "width": 352,
+    "height": 208,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_4",
+    "filename": "horsey_004_asset_1_4.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_1_4",
+      "x1": 1061,
+      "y1": 0,
+      "x2": 1415,
+      "y2": 208
+    },
+    "width": 354,
+    "height": 208,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_5",
+    "filename": "horsey_005_asset_1_5.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_1_5",
+      "x1": 1415,
+      "y1": 0,
+      "x2": 1774,
+      "y2": 208
+    },
+    "width": 359,
+    "height": 208,
+    "background_removed": false
+  },
+  {
+    "id": "provisional",
+    "filename": "horsey_006_provisional.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "provisional",
+      "x1": 0,
+      "y1": 208,
+      "x2": 347,
+      "y2": 623
+    },
+    "width": 347,
+    "height": 415,
+    "background_removed": false
+  },
+  {
+    "id": "verified",
+    "filename": "horsey_007_verified.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "verified",
+      "x1": 347,
+      "y1": 208,
+      "x2": 709,
+      "y2": 623
+    },
+    "width": 362,
+    "height": 415,
+    "background_removed": false
+  },
+  {
+    "id": "trusted",
+    "filename": "horsey_008_trusted.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "trusted",
+      "x1": 709,
+      "y1": 208,
+      "x2": 1061,
+      "y2": 623
+    },
+    "width": 352,
+    "height": 415,
+    "background_removed": false
+  },
+  {
+    "id": "elite",
+    "filename": "horsey_009_elite.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "elite",
+      "x1": 1061,
+      "y1": 208,
+      "x2": 1415,
+      "y2": 623
+    },
+    "width": 354,
+    "height": 415,
+    "background_removed": false
+  },
+  {
+    "id": "champion",
+    "filename": "horsey_010_champion.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "champion",
+      "x1": 1415,
+      "y1": 208,
+      "x2": 1774,
+      "y2": 623
+    },
+    "width": 359,
+    "height": 415,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_1",
+    "filename": "horsey_011_asset_3_1.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_3_1",
+      "x1": 0,
+      "y1": 623,
+      "x2": 347,
+      "y2": 887
+    },
+    "width": 347,
+    "height": 264,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_2",
+    "filename": "horsey_012_asset_3_2.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_3_2",
+      "x1": 347,
+      "y1": 623,
+      "x2": 709,
+      "y2": 887
+    },
+    "width": 362,
+    "height": 264,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_3",
+    "filename": "horsey_013_asset_3_3.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_3_3",
+      "x1": 709,
+      "y1": 623,
+      "x2": 1061,
+      "y2": 887
+    },
+    "width": 352,
+    "height": 264,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_4",
+    "filename": "horsey_014_asset_3_4.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_3_4",
+      "x1": 1061,
+      "y1": 623,
+      "x2": 1415,
+      "y2": 887
+    },
+    "width": 354,
+    "height": 264,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_5",
+    "filename": "horsey_015_asset_3_5.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/ChatGPT Image May 24, 2026, 07_13_57 PM.png",
+    "box": {
+      "label": "asset_3_5",
+      "x1": 1415,
+      "y1": 623,
+      "x2": 1774,
+      "y2": 887
+    },
+    "width": 359,
+    "height": 264,
+    "background_removed": false
+  }
+]

@@ -1,0 +1,752 @@
+[
+  {
+    "id": "grindset_cosmetics",
+    "filename": "horsey_001_grindset_cosmetics.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_cosmetics",
+      "x1": 3,
+      "y1": 3,
+      "x2": 111,
+      "y2": 202
+    },
+    "width": 108,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_coffee",
+    "filename": "horsey_002_grindset_coffee.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_coffee",
+      "x1": 111,
+      "y1": 3,
+      "x2": 275,
+      "y2": 202
+    },
+    "width": 164,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_headphones",
+    "filename": "horsey_003_grindset_headphones.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_headphones",
+      "x1": 275,
+      "y1": 3,
+      "x2": 434,
+      "y2": 202
+    },
+    "width": 159,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_hoodie",
+    "filename": "horsey_004_grindset_hoodie.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_hoodie",
+      "x1": 434,
+      "y1": 3,
+      "x2": 596,
+      "y2": 202
+    },
+    "width": 162,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_ramen",
+    "filename": "horsey_005_grindset_ramen.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_ramen",
+      "x1": 596,
+      "y1": 3,
+      "x2": 769,
+      "y2": 202
+    },
+    "width": 173,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_tired",
+    "filename": "horsey_006_grindset_tired.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_tired",
+      "x1": 769,
+      "y1": 3,
+      "x2": 928,
+      "y2": 202
+    },
+    "width": 159,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "elo_goals_notebook",
+    "filename": "horsey_007_elo_goals_notebook.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "elo_goals_notebook",
+      "x1": 928,
+      "y1": 3,
+      "x2": 1076,
+      "y2": 202
+    },
+    "width": 148,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "protein_shaker",
+    "filename": "horsey_008_protein_shaker.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "protein_shaker",
+      "x1": 1076,
+      "y1": 3,
+      "x2": 1214,
+      "y2": 202
+    },
+    "width": 138,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "opening_book",
+    "filename": "horsey_009_opening_book.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "opening_book",
+      "x1": 1214,
+      "y1": 3,
+      "x2": 1368,
+      "y2": 202
+    },
+    "width": 154,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "grindset_sweatband",
+    "filename": "horsey_010_grindset_sweatband.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "grindset_sweatband",
+      "x1": 1368,
+      "y1": 3,
+      "x2": 1533,
+      "y2": 202
+    },
+    "width": 165,
+    "height": 199,
+    "background_removed": false
+  },
+  {
+    "id": "high_roller_casino",
+    "filename": "horsey_011_high_roller_casino.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "high_roller_casino",
+      "x1": 3,
+      "y1": 202,
+      "x2": 111,
+      "y2": 388
+    },
+    "width": 108,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "highroller_vrvisor",
+    "filename": "horsey_012_highroller_vrvisor.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "highroller_vrvisor",
+      "x1": 111,
+      "y1": 202,
+      "x2": 275,
+      "y2": 388
+    },
+    "width": 164,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "highroller_goldchain",
+    "filename": "horsey_013_highroller_goldchain.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "highroller_goldchain",
+      "x1": 275,
+      "y1": 202,
+      "x2": 434,
+      "y2": 388
+    },
+    "width": 159,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "highroller_sunglasses",
+    "filename": "horsey_014_highroller_sunglasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "highroller_sunglasses",
+      "x1": 434,
+      "y1": 202,
+      "x2": 596,
+      "y2": 388
+    },
+    "width": 162,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "highroller_flamecrown",
+    "filename": "horsey_015_highroller_flamecrown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "highroller_flamecrown",
+      "x1": 596,
+      "y1": 202,
+      "x2": 769,
+      "y2": 388
+    },
+    "width": 173,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "slot_machine",
+    "filename": "horsey_016_slot_machine.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "slot_machine",
+      "x1": 769,
+      "y1": 202,
+      "x2": 928,
+      "y2": 388
+    },
+    "width": 159,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "casino_chips",
+    "filename": "horsey_017_casino_chips.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "casino_chips",
+      "x1": 928,
+      "y1": 202,
+      "x2": 1076,
+      "y2": 388
+    },
+    "width": 148,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "diamond_token",
+    "filename": "horsey_018_diamond_token.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "diamond_token",
+      "x1": 1076,
+      "y1": 202,
+      "x2": 1214,
+      "y2": 388
+    },
+    "width": 138,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "chip_stack",
+    "filename": "horsey_019_chip_stack.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "chip_stack",
+      "x1": 1214,
+      "y1": 202,
+      "x2": 1368,
+      "y2": 388
+    },
+    "width": 154,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "highroller_furcoat",
+    "filename": "horsey_020_highroller_furcoat.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "highroller_furcoat",
+      "x1": 1368,
+      "y1": 202,
+      "x2": 1533,
+      "y2": 388
+    },
+    "width": 165,
+    "height": 186,
+    "background_removed": false
+  },
+  {
+    "id": "fair_play_trust",
+    "filename": "horsey_021_fair_play_trust.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "fair_play_trust",
+      "x1": 3,
+      "y1": 388,
+      "x2": 111,
+      "y2": 570
+    },
+    "width": 108,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "fairplay_halo",
+    "filename": "horsey_022_fairplay_halo.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "fairplay_halo",
+      "x1": 111,
+      "y1": 388,
+      "x2": 275,
+      "y2": 570
+    },
+    "width": 164,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "fairplay_verifiedbadge",
+    "filename": "horsey_023_fairplay_verifiedbadge.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "fairplay_verifiedbadge",
+      "x1": 275,
+      "y1": 388,
+      "x2": 434,
+      "y2": 570
+    },
+    "width": 159,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "fairplay_shield",
+    "filename": "horsey_024_fairplay_shield.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "fairplay_shield",
+      "x1": 434,
+      "y1": 388,
+      "x2": 596,
+      "y2": 570
+    },
+    "width": 162,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "fairplay_reviewshield",
+    "filename": "horsey_025_fairplay_reviewshield.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "fairplay_reviewshield",
+      "x1": 596,
+      "y1": 388,
+      "x2": 769,
+      "y2": 570
+    },
+    "width": 173,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "honorable_emote",
+    "filename": "horsey_026_honorable_emote.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "honorable_emote",
+      "x1": 769,
+      "y1": 388,
+      "x2": 928,
+      "y2": 570
+    },
+    "width": 159,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "trust_handshake",
+    "filename": "horsey_027_trust_handshake.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "trust_handshake",
+      "x1": 928,
+      "y1": 388,
+      "x2": 1076,
+      "y2": 570
+    },
+    "width": 148,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "trust_laurel",
+    "filename": "horsey_028_trust_laurel.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "trust_laurel",
+      "x1": 1076,
+      "y1": 388,
+      "x2": 1214,
+      "y2": 570
+    },
+    "width": 138,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "veteran_badge",
+    "filename": "horsey_029_veteran_badge.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "veteran_badge",
+      "x1": 1214,
+      "y1": 388,
+      "x2": 1368,
+      "y2": 570
+    },
+    "width": 154,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "stable_banner_blue",
+    "filename": "horsey_030_stable_banner_blue.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_banner_blue",
+      "x1": 1368,
+      "y1": 388,
+      "x2": 1533,
+      "y2": 570
+    },
+    "width": 165,
+    "height": 182,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_toxic_fun_only",
+    "filename": "horsey_031_tilt_toxic_fun_only.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_toxic_fun_only",
+      "x1": 3,
+      "y1": 570,
+      "x2": 111,
+      "y2": 753
+    },
+    "width": 108,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_brokencrown",
+    "filename": "horsey_032_tilt_brokencrown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_brokencrown",
+      "x1": 111,
+      "y1": 570,
+      "x2": 275,
+      "y2": 753
+    },
+    "width": 164,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_rageflame",
+    "filename": "horsey_033_tilt_rageflame.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_rageflame",
+      "x1": 275,
+      "y1": 570,
+      "x2": 434,
+      "y2": 753
+    },
+    "width": 159,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_crackedsunglasses",
+    "filename": "horsey_034_tilt_crackedsunglasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_crackedsunglasses",
+      "x1": 434,
+      "y1": 570,
+      "x2": 596,
+      "y2": 753
+    },
+    "width": 162,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_salt",
+    "filename": "horsey_035_tilt_salt.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_salt",
+      "x1": 596,
+      "y1": 570,
+      "x2": 769,
+      "y2": 753
+    },
+    "width": 173,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_ragechat",
+    "filename": "horsey_036_tilt_ragechat.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_ragechat",
+      "x1": 769,
+      "y1": 570,
+      "x2": 928,
+      "y2": 753
+    },
+    "width": 159,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_tableflip",
+    "filename": "horsey_037_tilt_tableflip.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_tableflip",
+      "x1": 928,
+      "y1": 570,
+      "x2": 1076,
+      "y2": 753
+    },
+    "width": 148,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_stormcloud",
+    "filename": "horsey_038_tilt_stormcloud.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_stormcloud",
+      "x1": 1076,
+      "y1": 570,
+      "x2": 1214,
+      "y2": 753
+    },
+    "width": 138,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_meltdown",
+    "filename": "horsey_039_tilt_meltdown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_meltdown",
+      "x1": 1214,
+      "y1": 570,
+      "x2": 1368,
+      "y2": 753
+    },
+    "width": 154,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_ggez",
+    "filename": "horsey_040_tilt_ggez.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "tilt_ggez",
+      "x1": 1368,
+      "y1": 570,
+      "x2": 1533,
+      "y2": 753
+    },
+    "width": 165,
+    "height": 183,
+    "background_removed": false
+  },
+  {
+    "id": "stable_faction_identity",
+    "filename": "horsey_041_stable_faction_identity.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_faction_identity",
+      "x1": 3,
+      "y1": 753,
+      "x2": 111,
+      "y2": 1021
+    },
+    "width": 108,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_banner_purple",
+    "filename": "horsey_042_stable_banner_purple.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_banner_purple",
+      "x1": 111,
+      "y1": 753,
+      "x2": 275,
+      "y2": 1021
+    },
+    "width": 164,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_banner_green",
+    "filename": "horsey_043_stable_banner_green.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_banner_green",
+      "x1": 275,
+      "y1": 753,
+      "x2": 434,
+      "y2": 1021
+    },
+    "width": 159,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_banner_red",
+    "filename": "horsey_044_stable_banner_red.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_banner_red",
+      "x1": 434,
+      "y1": 753,
+      "x2": 596,
+      "y2": 1021
+    },
+    "width": 162,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_coin_purple",
+    "filename": "horsey_045_stable_coin_purple.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_coin_purple",
+      "x1": 596,
+      "y1": 753,
+      "x2": 769,
+      "y2": 1021
+    },
+    "width": 173,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_crest_gold",
+    "filename": "horsey_046_stable_crest_gold.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_crest_gold",
+      "x1": 769,
+      "y1": 753,
+      "x2": 928,
+      "y2": 1021
+    },
+    "width": 159,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_knight",
+    "filename": "horsey_047_stable_knight.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_knight",
+      "x1": 928,
+      "y1": 753,
+      "x2": 1076,
+      "y2": 1021
+    },
+    "width": 148,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_knight_sunglasses",
+    "filename": "horsey_048_stable_knight_sunglasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_knight_sunglasses",
+      "x1": 1076,
+      "y1": 753,
+      "x2": 1214,
+      "y2": 1021
+    },
+    "width": 138,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "stable_team_three",
+    "filename": "horsey_049_stable_team_three.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "stable_team_three",
+      "x1": 1214,
+      "y1": 753,
+      "x2": 1368,
+      "y2": 1021
+    },
+    "width": 154,
+    "height": 268,
+    "background_removed": false
+  },
+  {
+    "id": "rank_borders",
+    "filename": "horsey_050_rank_borders.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/big_pack_1.png",
+    "box": {
+      "label": "rank_borders",
+      "x1": 1368,
+      "y1": 753,
+      "x2": 1533,
+      "y2": 1021
+    },
+    "width": 165,
+    "height": 268,
+    "background_removed": false
+  }
+]

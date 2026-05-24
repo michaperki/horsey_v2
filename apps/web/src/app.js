@@ -6,6 +6,12 @@ import {
   playSound,
   setSoundMode
 } from "./sound.mjs";
+import { initCosmetics, renderAvatar } from "./cosmetics.mjs";
+import { bindCosmeticsEditor, renderCosmeticsEditor } from "./cosmetics-editor.mjs";
+
+// Fire-and-forget; the renderer falls back to the initial-letter avatar
+// until the manifest finishes loading, then repaints the current route.
+initCosmetics().then(() => render());
 
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
 
@@ -601,7 +607,12 @@ function recentOpponentsForPlay(limit = 4) {
       stakeCents: entry.stakeCents,
       timeControl: entry.timeControl,
       result: entry.result,
-      deltaCents
+      deltaCents,
+      // Pass through avatar + trustTier so the rematch strip renders cosmetics
+      // via renderAvatar instead of a flat initial-letter circle.
+      id: opp.id,
+      trustTier: opp.trustTier,
+      avatar: opp.avatar
     });
     if (out.length >= limit) break;
   }
@@ -1764,7 +1775,6 @@ function renderScoutPopover() {
   if (!user) return "";
   const stats = user.stats ?? {};
   const h2h = user.h2hVsViewer;
-  const initial = (user.handle?.[0] ?? "?").toUpperCase();
   const h2hText = h2h
     ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""} (${h2h.games})`
     : "No shared games";
@@ -1774,7 +1784,7 @@ function renderScoutPopover() {
     <section class="scout-popover" style="${style}" role="dialog" aria-modal="false" aria-label="Scout card">
       <button type="button" class="scout-close" data-close-scout aria-label="Close scout card">×</button>
       <header class="scout-head">
-        <div class="avatar">${escapeHtml(initial)}</div>
+        ${renderAvatar(user, { surface: "scout" })}
         <div class="scout-identity">
           <strong>${escapeHtml(user.handle)}</strong>
           <small class="mono tnum">${escapeHtml(String(user.rating))}</small>
@@ -1785,6 +1795,7 @@ function renderScoutPopover() {
         <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
         <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
       </div>
+      ${renderAvatarMeaning(user, { compact: true })}
       <div class="scout-stat-grid">
         <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
         <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
@@ -1815,7 +1826,6 @@ function renderLiveTableModule(game) {
   const displayClock = sideMs == null ? "--:--" : formatClock(sideMs);
   const lowClock = sideMs != null && sideMs < 30000;
   const criticalClock = sideMs != null && sideMs < 10000;
-  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
   const eyebrowText = yourTurn
     ? "● LIVE · your move"
     : opponent
@@ -1830,7 +1840,7 @@ function renderLiveTableModule(game) {
   metaParts.push(moveLabel);
   const resignBusy = actionInFlight("resign", game.id);
   const opponentIdentity = `
-    <div class="avatar">${escapeHtml(initial)}</div>
+    ${renderAvatar(opponent, { surface: "live_table_module" })}
     <div class="live-table-id">
       <span class="live-table-handle">${escapeHtml(opponent?.handle || "opponent")}</span>
       ${opponent?.rating ? `<span class="live-table-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
@@ -1949,7 +1959,6 @@ function renderHeroIdle(lobby) {
   const quickBusy = actionInFlight("quick-match");
   const hostBusy = actionInFlight("host-invite");
   const viewer = state.bootstrap.viewer;
-  const viewerInitial = (viewer.handle?.[0] ?? "?").toUpperCase();
   const potCents = previewNetPotCents(pick.stakeCents ?? 0);
   const opponents = recentOpponentsForPlay(4);
   const rematchStrip = opponents.length === 0 ? "" : `
@@ -1957,14 +1966,13 @@ function renderHeroIdle(lobby) {
       <span class="picker-label">Pick up where you left off</span>
       <div class="hero-rematch-row">
         ${opponents.map((o) => {
-          const handleInitial = (o.handle?.[0] ?? "?").toUpperCase();
           // Per project_no_loss_advertising: show positive wins as gold deltas, but
           // never surface a negative number. Loss/draw rows just show time control.
           const secondary = o.deltaCents > 0
             ? `<span class="hero-rematch-delta delta-up mono tnum">+${escapeHtml(money(o.deltaCents))}</span>`
             : `<span class="hero-rematch-delta mono tnum">${escapeHtml(o.timeControl)}</span>`;
           const identity = `
-            <div class="avatar sm">${escapeHtml(handleInitial)}</div>
+            ${renderAvatar(o, { surface: "dense_row" })}
             <div class="hero-rematch-id">
               <span class="hero-rematch-handle">↺ ${escapeHtml(o.handle ?? "opponent")}</span>
               ${secondary}
@@ -1997,7 +2005,7 @@ function renderHeroIdle(lobby) {
       <div class="hero-identity-badge">
         <span class="picker-label">You're playing as</span>
         <div class="hero-identity-row">
-          <div class="avatar">${escapeHtml(viewerInitial)}</div>
+          ${renderAvatar(viewer, { surface: "topnav" })}
           <strong>${escapeHtml(viewer.handle)}</strong>
           ${viewer.rating ? `<span class="hero-identity-rating mono tnum">${escapeHtml(String(viewer.rating))}</span>` : ""}
           ${renderTrustTierChip(viewer)}
@@ -2110,9 +2118,8 @@ function renderLiveGameRow(game) {
   const b = players[1];
   const identity = (p) => {
     if (!p) return "";
-    const initial = (p.handle?.[0] ?? "?").toUpperCase();
     const inner = `
-      <span class="avatar sm">${escapeHtml(initial)}</span>
+      ${renderAvatar(p, { surface: "dense_row" })}
       <span class="live-feed-handle">${escapeHtml(p.handle ?? "player")}</span>
       ${renderTierPip(p)}
       ${p.rating ? `<span class="live-feed-rating mono tnum">${escapeHtml(String(p.rating))}</span>` : ""}
@@ -2225,12 +2232,11 @@ function updateHeartbeatDom() {
 
 function renderOpenTableRow(challenge) {
   const opponent = challenge.opponent;
-  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
   const kind = timeControlKind(challenge.timeControl);
   const termsParts = [money(challenge.stakeCents), challenge.timeControl];
   if (kind) termsParts.push(kind);
   const identity = `
-    <span class="avatar sm">${escapeHtml(initial)}</span>
+    ${renderAvatar(opponent, { surface: "dense_row" })}
     <span class="open-row-handle">${escapeHtml(opponent?.handle ?? "open seat")}</span>
     ${opponent ? renderTierPip(opponent) : ""}
     ${opponent?.rating ? `<span class="open-row-rating mono tnum">${escapeHtml(String(opponent.rating))}</span>` : ""}
@@ -2299,7 +2305,7 @@ function challengeRow(challenge) {
       : "expired";
   const identity = opponent?.id ? `
     <span class="table-row-id">
-      <span class="avatar sm">${escapeHtml((opponent.handle?.[0] ?? "?").toUpperCase())}</span>
+      ${renderAvatar(opponent, { surface: "dense_row" })}
       <strong>${escapeHtml(label)}</strong>
     </span>
   ` : `<strong>${escapeHtml(label)}</strong>`;
@@ -2318,10 +2324,9 @@ function challengeRow(challenge) {
 }
 
 function renderWagerDossier(opponent, dossier) {
-  const initial = (opponent?.handle?.[0] ?? "?").toUpperCase();
   const identityBlock = `
     <div class="dossier-identity">
-      <div class="avatar huge">${escapeHtml(initial)}</div>
+      ${renderAvatar(opponent, { surface: "wager" })}
       <div>
         <h2>${escapeHtml(opponent.handle)}</h2>
         ${opponent.rating ? `<p class="muted mono tnum">${escapeHtml(String(opponent.rating))}</p>` : ""}
@@ -2729,7 +2734,7 @@ function playerStrip(game, player, active = false) {
     : "";
   const dotClass = showPresence ? (presence.online ? "online" : "offline") : "";
   const identity = `
-    <span class="avatar">${escapeHtml(player.handle[0] || "?")}</span>
+    ${renderAvatar(player, { surface: "game_strip" })}
     <span class="player-main">
       <span>
         <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}${renderTierPip(player)}</strong>
@@ -3252,7 +3257,7 @@ function renderSettlement() {
         <h2>Queue another</h2>
         ${settlementOpponent ? scoutTrigger(
           settlementOpponent,
-          `<span class="settlement-scout-id"><span class="avatar sm">${escapeHtml((opponentHandle[0] ?? "?").toUpperCase())}</span><span>${escapeHtml(opponentHandle)}</span></span>`,
+          `<span class="settlement-scout-id">${renderAvatar(settlementOpponent, { surface: "dense_row" })}<span>${escapeHtml(opponentHandle)}</span></span>`,
           "settlement-scout"
         ) : ""}
         ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
@@ -3310,7 +3315,6 @@ function historyResultStats(items) {
 
 function historyRow(entry) {
   const opponentHandle = entry.opponent?.handle ?? "—";
-  const opponentInitial = (opponentHandle[0] ?? "?").toUpperCase();
   const resultLabel = entry.result === "win" ? "Win" : entry.result === "loss" ? "Loss" : entry.result === "draw" ? "Draw" : entry.result;
   const resultClass = entry.result === "win" ? "money-win" : entry.result === "loss" ? "money-loss" : "money-draw";
   const sign = entry.result === "win" ? "+" : entry.result === "loss" ? "−" : "";
@@ -3319,7 +3323,7 @@ function historyRow(entry) {
   const endReason = endReasonLabel(entry.endReason);
   const identity = `
     <div class="history-vs">
-      <span class="avatar sm">${escapeHtml(opponentInitial)}</span>
+      ${renderAvatar(entry.opponent, { surface: "history_row" })}
       <span>
         <strong>vs ${escapeHtml(opponentHandle)}</strong>
         <small>${escapeHtml(entry.timeControl || "—")} · ${escapeHtml(endReason)}</small>
@@ -3443,19 +3447,42 @@ function renderProfile() {
   const emailBusy = actionInFlight("account-email");
   const passwordBusy = actionInFlight("account-password");
   const logoutBusy = actionInFlight("logout-others");
+  const stats = viewer.stats ?? {};
   const calibratingChip = viewer.calibrating
-    ? `<span class="trust-chip muted" title="Rating still calibrating from your first Horsey games at this tier">calibrating · ${escapeHtml(viewer.finishedGames ?? 0)}/${escapeHtml(viewer.calibratingThreshold ?? 10)}</span>`
+    ? `<span class="trust-chip muted" title="Rating identity is still calibrating from your first Horsey games">calibrating · ${escapeHtml(viewer.finishedGames ?? 0)}/${escapeHtml(viewer.calibratingThreshold ?? 10)}</span>`
     : "";
   return `
     <section class="profile">
       <article class="card profile-header">
-        <div class="avatar huge">${escapeHtml(viewer.handle[0]?.toUpperCase() || "?")}</div>
+        ${renderAvatar(viewer, { surface: "user_profile" })}
         <div>
           <h1>${escapeHtml(viewer.handle)}</h1>
           <p class="muted">${escapeHtml(viewer.email)}</p>
-          <div class="tag-row"><span>rating ${escapeHtml(viewer.rating)}</span>${renderTrustTierChip(viewer)}${calibratingChip}</div>
+          <div class="tag-row"><span>${escapeHtml(viewer.avatar?.identity?.base_piece_label || "Knight class")}</span><span>rating ${escapeHtml(viewer.rating)}</span>${calibratingChip}</div>
         </div>
       </article>
+      <article class="card avatar-meaning-card">
+        <header>
+          <span class="eyebrow">Avatar identity</span>
+          <h2>What your avatar is saying</h2>
+        </header>
+        ${renderAvatarMeaning(viewer)}
+      </article>
+      <article class="card profile-quick-card">
+        <header>
+          <span class="eyebrow">At a glance</span>
+          <h2>Account state</h2>
+        </header>
+        <div class="metric-grid profile-quick-grid">
+          <div><small>Rating</small><strong>${escapeHtml(viewer.rating)}</strong></div>
+          <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
+          <div><small>Wallet</small><strong>${money(viewer.balanceCents)}</strong></div>
+          <div><small>Escrow</small><strong>${money(viewer.escrowCents)}</strong></div>
+          <div><small>Games</small><strong>${escapeHtml(stats.finishedGames ?? 0)}</strong></div>
+          <div><small>Verification</small><strong>${escapeHtml(profileVerificationLabel(viewer))}</strong></div>
+        </div>
+      </article>
+      ${renderAchievementsPanel(viewer)}
       <section class="grid two">
         <article class="felt settlement">
           <div class="eyebrow">Fake-money wallet</div>
@@ -3581,6 +3608,129 @@ function renderProfileLinkedChips(accounts) {
   return `<div class="profile-linked-chips">${chips}</div>`;
 }
 
+function profileVerificationLabel(user) {
+  const accounts = user?.externalAccounts || [];
+  if (accounts.some((account) => account.status === "verified")) return "Verified";
+  if (accounts.length) return "Linked";
+  return "Unlinked";
+}
+
+function ratingSourceLabel(identity) {
+  if (!identity) return "starting rating";
+  if (identity.rating_source === "linked_account") {
+    const imported = identity.imported_rating;
+    const provider = imported?.provider ? formatProvider(imported.provider) : "linked account";
+    const timeClass = imported?.timeClass ? ` ${imported.timeClass}` : "";
+    return `${provider}${timeClass}`;
+  }
+  if (identity.rating_source === "horsey_rating") return "Horsey rating";
+  return "starting rating";
+}
+
+function trustFrameLabel(identity, user) {
+  const tier = identity?.trust_tier || user?.trustTier || "provisional";
+  const label = tier === "established" ? "elite frame" : `${tier} frame`;
+  return label.replace("_", " ");
+}
+
+function adornmentLabel(identity) {
+  const adornments = identity?.adornments || {};
+  const labels = [];
+  if (adornments.win_streak >= 3) labels.push(`${adornments.win_streak}-win flame`);
+  else if (adornments.first_win_laurel) labels.push("first-win laurel");
+  return labels.join(", ") || "none yet";
+}
+
+function avatarIdentitySentence(identity) {
+  if (!identity) return "";
+  const classLabel = identity.base_piece_label || "Knight class";
+  const source = ratingSourceLabel(identity);
+  const rating = identity.rating_basis != null ? ` ${identity.rating_basis}` : "";
+  const calibration = identity.calibrated ? "calibrated rating" : "current placement";
+  return `Your ${source}${rating} ${calibration} places you in the ${classLabel}.`;
+}
+
+function renderAvatarMeaning(user, { compact = false } = {}) {
+  const identity = user?.avatar?.identity;
+  if (!identity) return "";
+  const summary = [
+    identity.base_piece_label || "Knight class",
+    trustFrameLabel(identity, user),
+    adornmentLabel(identity)
+  ];
+  return `
+    <div class="avatar-meaning${compact ? " compact" : ""}">
+      <strong>${summary.map(escapeHtml).join(" · ")}</strong>
+      <span>${escapeHtml(avatarIdentitySentence(identity))}</span>
+    </div>
+  `;
+}
+
+const MILESTONE_TRACKS = [
+  {
+    key: "first_win",
+    label: "First-win laurel",
+    detail: "win one Horsey game",
+    cosmetic: "milestone__headwear__laurel"
+  },
+  {
+    key: "win_streak_3",
+    label: "Flame crown",
+    detail: "reach a 3-win streak",
+    cosmetic: "milestone__headwear__flame_crown"
+  },
+  {
+    key: "win_streak_5",
+    label: "Hot streak mark",
+    detail: "reach a 5-win streak",
+    cosmetic: null
+  }
+];
+
+function milestoneSet(user) {
+  return new Set((user?.milestones || []).map((m) => m.eventKey));
+}
+
+function renderAchievementTrack(user) {
+  const earned = milestoneSet(user);
+  const streak = user?.avatar?.live_state_flags?.win_streak ?? user?.avatar?.identity?.adornments?.win_streak ?? 0;
+  return `
+    <div class="achievement-track">
+      <div class="unlock-list">
+        ${MILESTONE_TRACKS.map((track) => {
+          const unlocked = earned.has(track.key);
+          const progress = track.key.startsWith("win_streak_")
+            ? Math.min(streak, Number(track.key.split("_").at(-1)))
+            : unlocked ? 1 : 0;
+          const target = track.key.startsWith("win_streak_") ? Number(track.key.split("_").at(-1)) : 1;
+          return `
+            <div class="unlock-row ${unlocked ? "unlocked" : ""}">
+              <span>${unlocked ? "Unlocked" : `${escapeHtml(String(progress))}/${escapeHtml(String(target))}`}</span>
+              <div>
+                <strong>${escapeHtml(track.label)}</strong>
+                <small>${escapeHtml(track.detail)}${track.cosmetic ? ` · ${escapeHtml(track.cosmetic)}` : ""}</small>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderAchievementsPanel(user) {
+  const earned = milestoneSet(user);
+  return `
+    <article class="card achievements-card">
+      <header>
+        <span class="eyebrow">Achievements</span>
+        <h2>${escapeHtml(String(earned.size))} unlock${earned.size === 1 ? "" : "s"} earned</h2>
+      </header>
+      ${renderAchievementTrack(user)}
+    </article>
+  `;
+}
+
 function renderUserProfile() {
   if (state.actionError) {
     return `<p class="muted">${escapeHtml(state.actionError)} <a href="#play">Back to lobby.</a></p>`;
@@ -3589,7 +3739,6 @@ function renderUserProfile() {
   if (!user) return `<p class="muted">Loading player...</p>`;
   const stats = user.stats ?? {};
   const recent = state.userRecentGames ?? [];
-  const initial = (user.handle?.[0] ?? "?").toUpperCase();
   const h2h = user.h2hVsViewer;
   const h2hScore = h2h
     ? `${h2h.viewerWins}-${h2h.viewerLosses}${h2h.draws ? `-${h2h.draws}` : ""}`
@@ -3601,7 +3750,7 @@ function renderUserProfile() {
   return `
     <section class="user-profile">
       <aside class="card user-profile-rail">
-        <div class="avatar huge">${escapeHtml(initial)}</div>
+        ${renderAvatar(user, { surface: "user_profile" })}
         <div>
           <h1>${escapeHtml(user.handle)}</h1>
           <p class="muted">rating ${escapeHtml(user.rating)} · joined ${escapeHtml(accountAgeLabel(user.createdAt))} ago</p>
@@ -3617,6 +3766,7 @@ function renderUserProfile() {
           ${user.calibrating ? `<span class="trust-chip muted">calibrating</span>` : ""}
         </div>
         ${renderProfileLinkedChips(user.externalAccounts)}
+        ${renderAvatarMeaning(user, { compact: true })}
         <div class="profile-h2h">
           <small>H2H vs you</small>
           <strong>${escapeHtml(h2hScore)} ${h2hMoney}</strong>
@@ -3697,10 +3847,12 @@ function render() {
     settlement: renderSettlement,
     history: state.routeParam ? renderSettlement : renderHistoryList,
     profile: renderProfile,
-    user: renderUserProfile
+    user: renderUserProfile,
+    "dev-cosmetics": renderCosmeticsEditor
   };
   const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
+  if (state.route === "dev-cosmetics") bindCosmeticsEditor(render);
   manageChallengeCountdown();
   manageClockTick();
   const moveList = document.querySelector("[data-move-list]");
@@ -4029,7 +4181,7 @@ function isReducedMotion() {
 }
 
 function easeOutCubic(t) {
-  return 1 - Math.pow(1 - t, 3);
+  return 1 - (1 - t) ** 3;
 }
 
 function tweenCents(node, fromCents, toCents, durationMs, formatFn) {

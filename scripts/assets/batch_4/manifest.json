@@ -1,0 +1,1052 @@
+[
+  {
+    "id": "grindset_queen_cosmetics",
+    "filename": "horsey_001_grindset_queen_cosmetics.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "grindset_queen_cosmetics",
+      "x1": 3,
+      "y1": 3,
+      "x2": 151,
+      "y2": 171
+    },
+    "width": 148,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_grindset_coffee",
+    "filename": "horsey_002_queen_grindset_coffee.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_grindset_coffee",
+      "x1": 151,
+      "y1": 3,
+      "x2": 300,
+      "y2": 171
+    },
+    "width": 149,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_headphones",
+    "filename": "horsey_003_queen_headphones.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_headphones",
+      "x1": 300,
+      "y1": 3,
+      "x2": 454,
+      "y2": 171
+    },
+    "width": 154,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_hoodie",
+    "filename": "horsey_004_queen_hoodie.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_hoodie",
+      "x1": 454,
+      "y1": 3,
+      "x2": 601,
+      "y2": 171
+    },
+    "width": 147,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_ramen",
+    "filename": "horsey_005_queen_ramen.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_ramen",
+      "x1": 601,
+      "y1": 3,
+      "x2": 755,
+      "y2": 171
+    },
+    "width": 154,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_tired_eyes",
+    "filename": "horsey_006_queen_tired_eyes.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_tired_eyes",
+      "x1": 755,
+      "y1": 3,
+      "x2": 906,
+      "y2": 171
+    },
+    "width": 151,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_elo_goals",
+    "filename": "horsey_007_queen_elo_goals.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_elo_goals",
+      "x1": 906,
+      "y1": 3,
+      "x2": 1058,
+      "y2": 171
+    },
+    "width": 152,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_protein_shaker",
+    "filename": "horsey_008_queen_protein_shaker.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_protein_shaker",
+      "x1": 1058,
+      "y1": 3,
+      "x2": 1189,
+      "y2": 171
+    },
+    "width": 131,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_opening_book",
+    "filename": "horsey_009_queen_opening_book.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_opening_book",
+      "x1": 1189,
+      "y1": 3,
+      "x2": 1346,
+      "y2": 171
+    },
+    "width": 157,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "queen_sweatband",
+    "filename": "horsey_010_queen_sweatband.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_sweatband",
+      "x1": 1346,
+      "y1": 3,
+      "x2": 1533,
+      "y2": 171
+    },
+    "width": 187,
+    "height": 168,
+    "background_removed": false
+  },
+  {
+    "id": "high_roller_casino",
+    "filename": "horsey_011_high_roller_casino.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "high_roller_casino",
+      "x1": 3,
+      "y1": 171,
+      "x2": 151,
+      "y2": 328
+    },
+    "width": 148,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_vr_visor",
+    "filename": "horsey_012_queen_vr_visor.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_vr_visor",
+      "x1": 151,
+      "y1": 171,
+      "x2": 300,
+      "y2": 328
+    },
+    "width": 149,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_gold_chain",
+    "filename": "horsey_013_queen_gold_chain.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_gold_chain",
+      "x1": 300,
+      "y1": 171,
+      "x2": 454,
+      "y2": 328
+    },
+    "width": 154,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_sunglasses",
+    "filename": "horsey_014_queen_sunglasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_sunglasses",
+      "x1": 454,
+      "y1": 171,
+      "x2": 601,
+      "y2": 328
+    },
+    "width": 147,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_flame_crown",
+    "filename": "horsey_015_queen_flame_crown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_flame_crown",
+      "x1": 601,
+      "y1": 171,
+      "x2": 755,
+      "y2": 328
+    },
+    "width": 154,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_slot_machine",
+    "filename": "horsey_016_queen_slot_machine.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_slot_machine",
+      "x1": 755,
+      "y1": 171,
+      "x2": 906,
+      "y2": 328
+    },
+    "width": 151,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_chip_explosion",
+    "filename": "horsey_017_queen_chip_explosion.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_chip_explosion",
+      "x1": 906,
+      "y1": 171,
+      "x2": 1058,
+      "y2": 328
+    },
+    "width": 152,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_diamond",
+    "filename": "horsey_018_queen_diamond.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_diamond",
+      "x1": 1058,
+      "y1": 171,
+      "x2": 1189,
+      "y2": 328
+    },
+    "width": 131,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_chip_stack",
+    "filename": "horsey_019_queen_chip_stack.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_chip_stack",
+      "x1": 1189,
+      "y1": 171,
+      "x2": 1346,
+      "y2": 328
+    },
+    "width": 157,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "queen_fur_coat",
+    "filename": "horsey_020_queen_fur_coat.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_fur_coat",
+      "x1": 1346,
+      "y1": 171,
+      "x2": 1533,
+      "y2": 328
+    },
+    "width": 187,
+    "height": 157,
+    "background_removed": false
+  },
+  {
+    "id": "fair_play_trust",
+    "filename": "horsey_021_fair_play_trust.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "fair_play_trust",
+      "x1": 3,
+      "y1": 328,
+      "x2": 151,
+      "y2": 488
+    },
+    "width": 148,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_verified_halo",
+    "filename": "horsey_022_queen_verified_halo.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_verified_halo",
+      "x1": 151,
+      "y1": 328,
+      "x2": 300,
+      "y2": 488
+    },
+    "width": 149,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_verified_badge",
+    "filename": "horsey_023_queen_verified_badge.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_verified_badge",
+      "x1": 300,
+      "y1": 328,
+      "x2": 454,
+      "y2": 488
+    },
+    "width": 154,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_fairplay_shield",
+    "filename": "horsey_024_queen_fairplay_shield.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_fairplay_shield",
+      "x1": 454,
+      "y1": 328,
+      "x2": 601,
+      "y2": 488
+    },
+    "width": 147,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_clean_account",
+    "filename": "horsey_025_queen_clean_account.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_clean_account",
+      "x1": 601,
+      "y1": 328,
+      "x2": 755,
+      "y2": 488
+    },
+    "width": 154,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_honorable",
+    "filename": "horsey_026_queen_honorable.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_honorable",
+      "x1": 755,
+      "y1": 328,
+      "x2": 906,
+      "y2": 488
+    },
+    "width": 151,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_trust_handshake",
+    "filename": "horsey_027_queen_trust_handshake.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_trust_handshake",
+      "x1": 906,
+      "y1": 328,
+      "x2": 1058,
+      "y2": 488
+    },
+    "width": 152,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_laurel",
+    "filename": "horsey_028_queen_laurel.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_laurel",
+      "x1": 1058,
+      "y1": 328,
+      "x2": 1189,
+      "y2": 488
+    },
+    "width": 131,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_veteran_badge",
+    "filename": "horsey_029_queen_veteran_badge.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_veteran_badge",
+      "x1": 1189,
+      "y1": 328,
+      "x2": 1346,
+      "y2": 488
+    },
+    "width": 157,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "queen_stable_banner_blue",
+    "filename": "horsey_030_queen_stable_banner_blue.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_stable_banner_blue",
+      "x1": 1346,
+      "y1": 328,
+      "x2": 1533,
+      "y2": 488
+    },
+    "width": 187,
+    "height": 160,
+    "background_removed": false
+  },
+  {
+    "id": "tilt_toxic_fun_only",
+    "filename": "horsey_031_tilt_toxic_fun_only.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "tilt_toxic_fun_only",
+      "x1": 3,
+      "y1": 488,
+      "x2": 151,
+      "y2": 651
+    },
+    "width": 148,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_broken_crown",
+    "filename": "horsey_032_queen_broken_crown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_broken_crown",
+      "x1": 151,
+      "y1": 488,
+      "x2": 300,
+      "y2": 651
+    },
+    "width": 149,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_rage_flames",
+    "filename": "horsey_033_queen_rage_flames.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_rage_flames",
+      "x1": 300,
+      "y1": 488,
+      "x2": 454,
+      "y2": 651
+    },
+    "width": 154,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_cracked_glasses",
+    "filename": "horsey_034_queen_cracked_glasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_cracked_glasses",
+      "x1": 454,
+      "y1": 488,
+      "x2": 601,
+      "y2": 651
+    },
+    "width": 147,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_salt_emote",
+    "filename": "horsey_035_queen_salt_emote.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_salt_emote",
+      "x1": 601,
+      "y1": 488,
+      "x2": 755,
+      "y2": 651
+    },
+    "width": 154,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_rage_chat",
+    "filename": "horsey_036_queen_rage_chat.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_rage_chat",
+      "x1": 755,
+      "y1": 488,
+      "x2": 906,
+      "y2": 651
+    },
+    "width": 151,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_table_flip",
+    "filename": "horsey_037_queen_table_flip.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_table_flip",
+      "x1": 906,
+      "y1": 488,
+      "x2": 1058,
+      "y2": 651
+    },
+    "width": 152,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_stormcloud",
+    "filename": "horsey_038_queen_stormcloud.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_stormcloud",
+      "x1": 1058,
+      "y1": 488,
+      "x2": 1189,
+      "y2": 651
+    },
+    "width": 131,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_meltdown",
+    "filename": "horsey_039_queen_meltdown.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_meltdown",
+      "x1": 1189,
+      "y1": 488,
+      "x2": 1346,
+      "y2": 651
+    },
+    "width": 157,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "queen_ggez_emote",
+    "filename": "horsey_040_queen_ggez_emote.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_ggez_emote",
+      "x1": 1346,
+      "y1": 488,
+      "x2": 1533,
+      "y2": 651
+    },
+    "width": 187,
+    "height": 163,
+    "background_removed": false
+  },
+  {
+    "id": "stable_faction_identity",
+    "filename": "horsey_041_stable_faction_identity.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "stable_faction_identity",
+      "x1": 3,
+      "y1": 651,
+      "x2": 151,
+      "y2": 795
+    },
+    "width": 148,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_banner_purple",
+    "filename": "horsey_042_queen_banner_purple.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_banner_purple",
+      "x1": 151,
+      "y1": 651,
+      "x2": 300,
+      "y2": 795
+    },
+    "width": 149,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_banner_green",
+    "filename": "horsey_043_queen_banner_green.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_banner_green",
+      "x1": 300,
+      "y1": 651,
+      "x2": 454,
+      "y2": 795
+    },
+    "width": 154,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_banner_red",
+    "filename": "horsey_044_queen_banner_red.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_banner_red",
+      "x1": 454,
+      "y1": 651,
+      "x2": 601,
+      "y2": 795
+    },
+    "width": 147,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_coin_purple",
+    "filename": "horsey_045_queen_coin_purple.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_coin_purple",
+      "x1": 601,
+      "y1": 651,
+      "x2": 755,
+      "y2": 795
+    },
+    "width": 154,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_crest_gold",
+    "filename": "horsey_046_queen_crest_gold.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_crest_gold",
+      "x1": 755,
+      "y1": 651,
+      "x2": 906,
+      "y2": 795
+    },
+    "width": 151,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_knight_mascot",
+    "filename": "horsey_047_queen_knight_mascot.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_knight_mascot",
+      "x1": 906,
+      "y1": 651,
+      "x2": 1058,
+      "y2": 795
+    },
+    "width": 152,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_knight_sunglasses",
+    "filename": "horsey_048_queen_knight_sunglasses.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_knight_sunglasses",
+      "x1": 1058,
+      "y1": 651,
+      "x2": 1189,
+      "y2": 795
+    },
+    "width": 131,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_team_three",
+    "filename": "horsey_049_queen_team_three.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_team_three",
+      "x1": 1189,
+      "y1": 651,
+      "x2": 1346,
+      "y2": 795
+    },
+    "width": 157,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "queen_stable_elite",
+    "filename": "horsey_050_queen_stable_elite.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_stable_elite",
+      "x1": 1346,
+      "y1": 651,
+      "x2": 1533,
+      "y2": 795
+    },
+    "width": 187,
+    "height": 144,
+    "background_removed": false
+  },
+  {
+    "id": "rank_borders",
+    "filename": "horsey_051_rank_borders.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "rank_borders",
+      "x1": 3,
+      "y1": 795,
+      "x2": 151,
+      "y2": 906
+    },
+    "width": 148,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_provisional",
+    "filename": "horsey_052_border_provisional.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_provisional",
+      "x1": 151,
+      "y1": 795,
+      "x2": 300,
+      "y2": 906
+    },
+    "width": 149,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_verified",
+    "filename": "horsey_053_border_verified.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_verified",
+      "x1": 300,
+      "y1": 795,
+      "x2": 454,
+      "y2": 906
+    },
+    "width": 154,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_trusted",
+    "filename": "horsey_054_border_trusted.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_trusted",
+      "x1": 454,
+      "y1": 795,
+      "x2": 601,
+      "y2": 906
+    },
+    "width": 147,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_elite",
+    "filename": "horsey_055_border_elite.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_elite",
+      "x1": 601,
+      "y1": 795,
+      "x2": 755,
+      "y2": 906
+    },
+    "width": 154,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_champion",
+    "filename": "horsey_056_border_champion.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_champion",
+      "x1": 755,
+      "y1": 795,
+      "x2": 906,
+      "y2": 906
+    },
+    "width": 151,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_mythic",
+    "filename": "horsey_057_border_mythic.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_mythic",
+      "x1": 906,
+      "y1": 795,
+      "x2": 1058,
+      "y2": 906
+    },
+    "width": 152,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_silver",
+    "filename": "horsey_058_border_silver.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_silver",
+      "x1": 1058,
+      "y1": 795,
+      "x2": 1189,
+      "y2": 906
+    },
+    "width": 131,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_gold",
+    "filename": "horsey_059_border_gold.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_gold",
+      "x1": 1189,
+      "y1": 795,
+      "x2": 1346,
+      "y2": 906
+    },
+    "width": 157,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_diamond",
+    "filename": "horsey_060_border_diamond.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_diamond",
+      "x1": 1346,
+      "y1": 795,
+      "x2": 1533,
+      "y2": 906
+    },
+    "width": 187,
+    "height": 111,
+    "background_removed": false
+  },
+  {
+    "id": "border_arcane",
+    "filename": "horsey_061_border_arcane.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_arcane",
+      "x1": 3,
+      "y1": 906,
+      "x2": 151,
+      "y2": 1021
+    },
+    "width": 148,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "usage_example",
+    "filename": "horsey_062_usage_example.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "usage_example",
+      "x1": 151,
+      "y1": 906,
+      "x2": 300,
+      "y2": 1021
+    },
+    "width": 149,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_base",
+    "filename": "horsey_063_queen_base.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_base",
+      "x1": 300,
+      "y1": 906,
+      "x2": 454,
+      "y2": 1021
+    },
+    "width": 154,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_gold_chain_equipped",
+    "filename": "horsey_064_queen_gold_chain_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_gold_chain_equipped",
+      "x1": 454,
+      "y1": 906,
+      "x2": 601,
+      "y2": 1021
+    },
+    "width": 147,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_flame_crown_equipped",
+    "filename": "horsey_065_queen_flame_crown_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_flame_crown_equipped",
+      "x1": 601,
+      "y1": 906,
+      "x2": 755,
+      "y2": 1021
+    },
+    "width": 154,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_sunglasses_equipped",
+    "filename": "horsey_066_queen_sunglasses_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_sunglasses_equipped",
+      "x1": 755,
+      "y1": 906,
+      "x2": 906,
+      "y2": 1021
+    },
+    "width": 151,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_chip_explosion_equipped",
+    "filename": "horsey_067_queen_chip_explosion_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_chip_explosion_equipped",
+      "x1": 906,
+      "y1": 906,
+      "x2": 1058,
+      "y2": 1021
+    },
+    "width": 152,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "border_champion_equipped",
+    "filename": "horsey_068_border_champion_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "border_champion_equipped",
+      "x1": 1058,
+      "y1": 906,
+      "x2": 1189,
+      "y2": 1021
+    },
+    "width": 131,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "queen_banner_purple_equipped",
+    "filename": "horsey_069_queen_banner_purple_equipped.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "queen_banner_purple_equipped",
+      "x1": 1189,
+      "y1": 906,
+      "x2": 1346,
+      "y2": 1021
+    },
+    "width": 157,
+    "height": 115,
+    "background_removed": false
+  },
+  {
+    "id": "high_roller_queen",
+    "filename": "horsey_070_high_roller_queen.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/queen.png",
+    "box": {
+      "label": "high_roller_queen",
+      "x1": 1346,
+      "y1": 906,
+      "x2": 1533,
+      "y2": 1021
+    },
+    "width": 187,
+    "height": 115,
+    "background_removed": false
+  }
+]

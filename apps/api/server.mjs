@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +44,7 @@ import {
   TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
 import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
+import { resolveAvatarForUser } from "./cosmetics.mjs";
 import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
@@ -69,6 +70,8 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 const webDir = path.join(rootDir, "apps/web");
+const cosmeticsAssetsDir = path.join(webDir, "assets/cosmetics");
+const cosmeticsManifestPath = path.join(webDir, "assets/cosmetics/manifest.json");
 const port = Number.parseInt(process.env.PORT || "8787", 10);
 const host = process.env.HOST || "127.0.0.1";
 const dbPath = process.env.HORSEY_DB_PATH || path.join(rootDir, "data/horsey.db");
@@ -92,7 +95,11 @@ const contentTypes = {
   ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml"
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg"
 };
 
 function json(res, status, payload) {
@@ -129,6 +136,37 @@ function checkRateLimit(req, bucket) {
     e.retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
     throw e;
   }
+}
+
+function requireLocalDevRequest(req) {
+  const remote = req.socket?.remoteAddress || "";
+  if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") return;
+  const e = new RangeError("dev cosmetics tools are only available from localhost");
+  e.code = "dev_tool_forbidden";
+  throw e;
+}
+
+function validateCosmeticsManifest(manifest) {
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    const e = new RangeError("manifest must be a JSON object");
+    e.code = "invalid_cosmetics_manifest";
+    throw e;
+  }
+  if (manifest.$schema !== "horsey-cosmetics/v1" || !manifest.items || typeof manifest.items !== "object") {
+    const e = new RangeError("manifest is not a horsey-cosmetics/v1 catalog");
+    e.code = "invalid_cosmetics_manifest";
+    throw e;
+  }
+}
+
+async function listCosmeticsAssetFiles() {
+  const entries = await readdir(cosmeticsAssetsDir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((name) => /\.(png|webp|jpe?g)$/i.test(name))
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => `/assets/cosmetics/${name}`);
 }
 
 async function readJson(req) {
@@ -211,7 +249,8 @@ function enrichGame(game) {
   const playersWithPresence = (game.players || []).map((player) => ({
     ...player,
     presence: presence.snapshot(player.id),
-    trustTier: trustTierForUser(player.id)
+    trustTier: trustTierForUser(player.id),
+    avatar: resolveAvatarForUser(db, player.id)
   }));
   return {
     ...summary,
@@ -342,7 +381,8 @@ function lobbyLiveGameProjection(game) {
       id: p.id,
       handle: p.handle,
       rating: p.rating,
-      trustTier: trustTierForUser(p.id)
+      trustTier: trustTierForUser(p.id),
+      avatar: resolveAvatarForUser(db, p.id)
     })),
     stakeCents: game.pot?.stakeCents ?? 0,
     timeControl: game.timeControl,
@@ -400,10 +440,15 @@ function publishMatchmakingMatched(game) {
 
 function viewerPayload(viewerId) {
   const user = db.getUser(viewerId);
+  const games = db.listFinalizedGamesForUser(viewerId, 50);
+  const milestones = db.listUserMilestones(viewerId).map(publicMilestonePayload);
   return {
     ...user,
     ...walletSummary(db.listLedger(), viewerId),
-    ...trustChipsForUser(viewerId)
+    ...trustChipsForUser(viewerId),
+    stats: aggregateUserStats(viewerId, games),
+    avatar: resolveAvatarForUser(db, viewerId),
+    milestones
   };
 }
 
@@ -610,7 +655,8 @@ function withOpponentDecor(user) {
     id: user.id,
     handle: user.handle,
     rating: user.rating,
-    trustTier: trustTierForUser(user.id)
+    trustTier: trustTierForUser(user.id),
+    avatar: resolveAvatarForUser(db, user.id)
   };
 }
 
@@ -751,7 +797,9 @@ function handleDomainError(error, res) {
     external_account_already_verified: 409,
     claim_token_missing: 409,
     claim_token_expired: 410,
-    claim_token_not_found_in_profile: 422
+    claim_token_not_found_in_profile: 422,
+    dev_tool_forbidden: 403,
+    invalid_cosmetics_manifest: 400
   };
   const headers = {};
   if (error.code === "rate_limited" && error.retryAfterSeconds) {
@@ -995,7 +1043,8 @@ function userProfilePayload(targetId, viewerId) {
     calibratingThreshold: calibratingThresholdForTier(trustTier),
     externalAccounts,
     trustTier,
-    stakeCapCents: stakeCapForTier(trustTier)
+    stakeCapCents: stakeCapForTier(trustTier),
+    avatar: resolveAvatarForUser(db, targetId)
   };
 }
 
@@ -1596,6 +1645,32 @@ async function routeApi(req, res) {
 
   if (req.method === "GET" && pathname === "/api/auth/me") {
     return json(res, 200, { viewer: viewerPayload(viewer.id) });
+  }
+
+  if (req.method === "GET" && pathname === "/api/dev/cosmetics-manifest") {
+    try {
+      requireLocalDevRequest(req);
+      const manifest = JSON.parse(await readFile(cosmeticsManifestPath, "utf8"));
+      return json(res, 200, { manifest });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/dev/cosmetics-assets") {
+    try {
+      requireLocalDevRequest(req);
+      return json(res, 200, { assets: await listCosmeticsAssetFiles() });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/dev/cosmetics-manifest") {
+    try {
+      requireLocalDevRequest(req);
+      const body = await readJson(req);
+      validateCosmeticsManifest(body.manifest);
+      body.manifest.updated_at = new Date().toISOString();
+      await writeFile(cosmeticsManifestPath, `${JSON.stringify(body.manifest, null, 2)}\n`);
+      return json(res, 200, { ok: true, manifest: body.manifest });
+    } catch (error) { return handleDomainError(error, res); }
   }
 
   if (req.method === "PATCH" && pathname === "/api/auth/account/email") {

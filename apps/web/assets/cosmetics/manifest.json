@@ -1,0 +1,515 @@
+{
+  "$schema": "horsey-cosmetics/v1",
+  "version": 1,
+  "generated_at": "2026-05-24",
+  "_notes": [
+    "First-iteration manifest for the v1 launch set. Positions are seed values for visual review; expect tuning per https/docs/COSMETICS_FORMALIZATION.md anchor system.",
+    "Several items carry placeholder=true; see _placeholder_notes below for what needs designer follow-up.",
+    "Borders render with fill_canvas=true so they frame the whole avatar wrapper regardless of natural pixel size.",
+    "The queen verified-halo asset is byte-identical to the queen base — flagged placeholder until redrawn."
+  ],
+  "canvas": {
+    "width": 256,
+    "height": 256,
+    "anchors": {
+      "back_aura": {
+        "x": 128,
+        "y": 128
+      },
+      "piece_base": {
+        "x": 128,
+        "y": 244
+      },
+      "piece_center": {
+        "x": 128,
+        "y": 160
+      },
+      "chest": {
+        "x": 128,
+        "y": 165
+      },
+      "eye_line": {
+        "x": 128,
+        "y": 110
+      },
+      "head_top": {
+        "x": 128,
+        "y": 56
+      },
+      "canvas_outer": {
+        "x": 128,
+        "y": 128
+      },
+      "below_avatar": {
+        "x": 128,
+        "y": 252
+      }
+    }
+  },
+  "z_order": [
+    {
+      "z": -10,
+      "name": "back_aura"
+    },
+    {
+      "z": 0,
+      "name": "base"
+    },
+    {
+      "z": 10,
+      "name": "border"
+    },
+    {
+      "z": 20,
+      "name": "outerwear"
+    },
+    {
+      "z": 30,
+      "name": "accent"
+    },
+    {
+      "z": 40,
+      "name": "facewear"
+    },
+    {
+      "z": 50,
+      "name": "headwear"
+    },
+    {
+      "z": 60,
+      "name": "front_aura"
+    },
+    {
+      "z": 70,
+      "name": "attached_badge"
+    }
+  ],
+  "density_modes": {
+    "minimal": {
+      "size_px": 40,
+      "allowed_z": [
+        0,
+        10
+      ],
+      "animation": false
+    },
+    "compact": {
+      "size_px": 72,
+      "allowed_z": [
+        0,
+        10,
+        50
+      ],
+      "animation": false
+    },
+    "standard": {
+      "size_px": 144,
+      "allowed_z": [
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70
+      ],
+      "animation": "reduced"
+    },
+    "broadcast": {
+      "size_px": 224,
+      "allowed_z": [
+        -10,
+        0,
+        10,
+        20,
+        30,
+        40,
+        50,
+        60,
+        70
+      ],
+      "animation": "full"
+    }
+  },
+  "surface_density": {
+    "topnav": "minimal",
+    "dense_row": "minimal",
+    "live_table_module": "compact",
+    "scout": "compact",
+    "wager": "standard",
+    "game_strip": "standard",
+    "settlement": "broadcast",
+    "profile_own": "broadcast",
+    "user_profile": "standard",
+    "spectator_hud": "standard",
+    "history_row": "minimal"
+  },
+  "items": {
+    "base__piece__knight": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "base",
+      "z": 10,
+      "coupling": "generic",
+      "piece": "knight",
+      "persona": "base",
+      "function": "identity",
+      "rarity": "common",
+      "acquisition": {
+        "mode": "default"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/base__piece__knight.png",
+        "natural_size": {
+          "w": 181,
+          "h": 231
+        },
+        "anchor": "piece_base",
+        "offset": {
+          "dx": -1,
+          "dy": -118
+        },
+        "opacity": 1,
+        "scale": 0.5
+      },
+      "rendering": {
+        "density_min": "minimal"
+      }
+    },
+    "base__piece__queen": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "base",
+      "z": 10,
+      "coupling": "generic",
+      "piece": "queen",
+      "persona": "base",
+      "function": "identity",
+      "rarity": "persona_kit",
+      "acquisition": {
+        "mode": "persona_kit_completion",
+        "kit": "highroller"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/base__piece__queen.png",
+        "natural_size": {
+          "w": 96,
+          "h": 131
+        },
+        "anchor": "piece_base",
+        "offset": {
+          "dx": 0,
+          "dy": -130
+        },
+        "scale": 1
+      },
+      "rendering": {
+        "density_min": "minimal"
+      }
+    },
+    "base__piece__pawn": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "base",
+      "z": 10,
+      "coupling": "generic",
+      "piece": "pawn",
+      "persona": "base",
+      "function": "identity",
+      "rarity": "common",
+      "acquisition": {
+        "mode": "default"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/base__piece__pawn.png",
+        "natural_size": {
+          "w": 149,
+          "h": 206
+        },
+        "anchor": "piece_base",
+        "offset": {
+          "dx": 0,
+          "dy": -113
+        },
+        "scale": 0.57
+      },
+      "rendering": {
+        "density_min": "minimal"
+      }
+    },
+    "base__piece__bishop": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "base",
+      "z": 10,
+      "coupling": "generic",
+      "piece": "bishop",
+      "persona": "base",
+      "function": "identity",
+      "rarity": "common",
+      "acquisition": {
+        "mode": "default"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/base__piece__bishop.png",
+        "natural_size": {
+          "w": 140,
+          "h": 228
+        },
+        "anchor": "piece_base",
+        "offset": {
+          "dx": 0,
+          "dy": -118
+        },
+        "scale": 0.53
+      },
+      "rendering": {
+        "density_min": "minimal"
+      }
+    },
+    "base__piece__rook": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "base",
+      "z": 10,
+      "coupling": "generic",
+      "piece": "rook",
+      "persona": "base",
+      "function": "identity",
+      "rarity": "common",
+      "acquisition": {
+        "mode": "default"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/base__piece__rook.png",
+        "natural_size": {
+          "w": 149,
+          "h": 207
+        },
+        "anchor": "piece_base",
+        "offset": {
+          "dx": 0,
+          "dy": -109
+        },
+        "scale": 0.54
+      },
+      "rendering": {
+        "density_min": "minimal"
+      }
+    },
+    "trust__border__provisional": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "border",
+      "z": 0,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "provisional"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/trusted__border__provisional.png",
+        "natural_size": {
+          "w": 299,
+          "h": 392
+        },
+        "anchor": "canvas_outer",
+        "offset": {
+          "dx": 0,
+          "dy": -12
+        },
+        "scale": 1.12,
+        "opacity": 1,
+        "fill_canvas": true
+      },
+      "rendering": {
+        "density_min": "minimal"
+      },
+      "trust_exclusivity": true
+    },
+    "trust__border__verified": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "border",
+      "z": 0,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "verified"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/trusted__border__verified.png",
+        "natural_size": {
+          "w": 356,
+          "h": 391
+        },
+        "anchor": "canvas_outer",
+        "offset": {
+          "dx": 0,
+          "dy": -1
+        },
+        "scale": 1.15,
+        "opacity": 1,
+        "fill_canvas": true
+      },
+      "rendering": {
+        "density_min": "minimal"
+      },
+      "trust_exclusivity": true
+    },
+    "trust__badge__veteran": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "attached_badge",
+      "z": 70,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "established"
+      },
+      "trust_exclusivity": true,
+      "asset": {
+        "src": "/assets/cosmetics/trust__badge__veteran.png",
+        "natural_size": {
+          "w": 134,
+          "h": 154
+        },
+        "anchor": "below_avatar",
+        "offset": {
+          "dx": 0,
+          "dy": -10
+        }
+      },
+      "rendering": {
+        "density_min": "standard"
+      }
+    },
+    "trust__border__trusted": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "border",
+      "z": 0,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "trusted"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/trusted__border__trusted.png",
+        "natural_size": {
+          "w": 339,
+          "h": 399
+        },
+        "anchor": "canvas_outer",
+        "offset": {
+          "dx": 0,
+          "dy": 0
+        },
+        "scale": 1.2,
+        "opacity": 1,
+        "fill_canvas": true
+      },
+      "rendering": {
+        "density_min": "minimal"
+      },
+      "trust_exclusivity": true
+    },
+    "trust__border__elite": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "border",
+      "z": 0,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "elite"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/trusted__border__elite.png",
+        "natural_size": {
+          "w": 362,
+          "h": 399
+        },
+        "anchor": "canvas_outer",
+        "offset": {
+          "dx": 0,
+          "dy": -6
+        },
+        "scale": 1.08,
+        "opacity": 1,
+        "fill_canvas": true
+      },
+      "rendering": {
+        "density_min": "minimal"
+      },
+      "trust_exclusivity": true
+    },
+    "trust__border__champion": {
+      "kind": [
+        "atom"
+      ],
+      "slot": "border",
+      "z": 0,
+      "coupling": "generic",
+      "persona": "trust",
+      "function": "trust_signal",
+      "rarity": "tier_locked",
+      "acquisition": {
+        "mode": "auto_tier_grant",
+        "trust_tier": "champion"
+      },
+      "asset": {
+        "src": "/assets/cosmetics/trusted__border__champion.png",
+        "natural_size": {
+          "w": 345,
+          "h": 391
+        },
+        "anchor": "canvas_outer",
+        "offset": {
+          "dx": 0,
+          "dy": -10
+        },
+        "scale": 0.77,
+        "opacity": 1
+      },
+      "rendering": {
+        "density_min": "minimal"
+      },
+      "trust_exclusivity": true
+    }
+  },
+  "_placeholder_notes": {
+    "trust__aura__verified_halo__knight": "Asset includes the knight silhouette. Renders a duplicate of the knight on top of L0. Visible feedback that the asset needs to be redrawn as a halo-only overlay.",
+    "trust__aura__verified_halo__queen": "Byte-identical to base__piece__queen; renders invisibly. Confirmed via md5sum. Asset must be redrawn.",
+    "milestone__reveal__chip_explosion": "Not yet exposed in this manifest; will land alongside the PB-pot milestone detector.",
+    "manual__emote__bow_and_salute": "Not authored. Manual emote palette launches with wave + gg only.",
+    "event__emote__crowd_cheer": "Not authored. Spectator reaction system blocks on it."
+  },
+  "updated_at": "2026-05-24T17:10:04.130Z"
+}

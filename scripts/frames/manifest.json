@@ -1,0 +1,76 @@
+{
+  "assets_root": "/home/michaperki/dev/horsey_v2/scripts/frames",
+  "output_root": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized",
+  "records": [
+    {
+      "path": "/home/michaperki/dev/horsey_v2/scripts/frames/horsey_006_provisional.png",
+      "batch": ".",
+      "status": "done",
+      "output": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized/horsey_006_provisional.png",
+      "crop": [
+        10,
+        10,
+        309,
+        402
+      ],
+      "background_removed": true,
+      "error": ""
+    },
+    {
+      "path": "/home/michaperki/dev/horsey_v2/scripts/frames/horsey_007_verified.png",
+      "batch": ".",
+      "status": "done",
+      "output": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized/horsey_007_verified.png",
+      "crop": [
+        8,
+        16,
+        364,
+        407
+      ],
+      "background_removed": true,
+      "error": ""
+    },
+    {
+      "path": "/home/michaperki/dev/horsey_v2/scripts/frames/horsey_008_trusted.png",
+      "batch": ".",
+      "status": "done",
+      "output": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized/horsey_008_trusted.png",
+      "crop": [
+        3,
+        8,
+        342,
+        407
+      ],
+      "background_removed": true,
+      "error": ""
+    },
+    {
+      "path": "/home/michaperki/dev/horsey_v2/scripts/frames/horsey_009_elite.png",
+      "batch": ".",
+      "status": "done",
+      "output": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized/horsey_009_elite.png",
+      "crop": [
+        9,
+        12,
+        371,
+        411
+      ],
+      "background_removed": true,
+      "error": ""
+    },
+    {
+      "path": "/home/michaperki/dev/horsey_v2/scripts/frames/horsey_010_champion.png",
+      "batch": ".",
+      "status": "done",
+      "output": "/home/michaperki/dev/horsey_v2/scripts/frames/finalized/horsey_010_champion.png",
+      "crop": [
+        7,
+        12,
+        352,
+        403
+      ],
+      "background_removed": true,
+      "error": ""
+    }
+  ]
+}

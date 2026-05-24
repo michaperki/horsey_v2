@@ -1,0 +1,227 @@
+[
+  {
+    "id": "asset_1_1",
+    "filename": "horsey_001_asset_1_1.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_1_1",
+      "x1": 0,
+      "y1": 0,
+      "x2": 313,
+      "y2": 227
+    },
+    "width": 313,
+    "height": 227,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_2",
+    "filename": "horsey_002_asset_1_2.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_1_2",
+      "x1": 313,
+      "y1": 0,
+      "x2": 680,
+      "y2": 227
+    },
+    "width": 367,
+    "height": 227,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_3",
+    "filename": "horsey_003_asset_1_3.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_1_3",
+      "x1": 680,
+      "y1": 0,
+      "x2": 1032,
+      "y2": 227
+    },
+    "width": 352,
+    "height": 227,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_4",
+    "filename": "horsey_004_asset_1_4.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_1_4",
+      "x1": 1032,
+      "y1": 0,
+      "x2": 1405,
+      "y2": 227
+    },
+    "width": 373,
+    "height": 227,
+    "background_removed": false
+  },
+  {
+    "id": "asset_1_5",
+    "filename": "horsey_005_asset_1_5.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_1_5",
+      "x1": 1405,
+      "y1": 0,
+      "x2": 1774,
+      "y2": 227
+    },
+    "width": 369,
+    "height": 227,
+    "background_removed": false
+  },
+  {
+    "id": "provisional",
+    "filename": "horsey_006_provisional.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "provisional",
+      "x1": 0,
+      "y1": 227,
+      "x2": 313,
+      "y2": 651
+    },
+    "width": 313,
+    "height": 424,
+    "background_removed": false
+  },
+  {
+    "id": "verified",
+    "filename": "horsey_007_verified.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "verified",
+      "x1": 313,
+      "y1": 227,
+      "x2": 680,
+      "y2": 651
+    },
+    "width": 367,
+    "height": 424,
+    "background_removed": false
+  },
+  {
+    "id": "trusted",
+    "filename": "horsey_008_trusted.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "trusted",
+      "x1": 680,
+      "y1": 227,
+      "x2": 1032,
+      "y2": 651
+    },
+    "width": 352,
+    "height": 424,
+    "background_removed": false
+  },
+  {
+    "id": "elite",
+    "filename": "horsey_009_elite.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "elite",
+      "x1": 1032,
+      "y1": 227,
+      "x2": 1405,
+      "y2": 651
+    },
+    "width": 373,
+    "height": 424,
+    "background_removed": false
+  },
+  {
+    "id": "champion",
+    "filename": "horsey_010_champion.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "champion",
+      "x1": 1405,
+      "y1": 227,
+      "x2": 1774,
+      "y2": 651
+    },
+    "width": 369,
+    "height": 424,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_1",
+    "filename": "horsey_011_asset_3_1.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_3_1",
+      "x1": 0,
+      "y1": 651,
+      "x2": 313,
+      "y2": 887
+    },
+    "width": 313,
+    "height": 236,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_2",
+    "filename": "horsey_012_asset_3_2.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_3_2",
+      "x1": 313,
+      "y1": 651,
+      "x2": 680,
+      "y2": 887
+    },
+    "width": 367,
+    "height": 236,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_3",
+    "filename": "horsey_013_asset_3_3.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_3_3",
+      "x1": 680,
+      "y1": 651,
+      "x2": 1032,
+      "y2": 887
+    },
+    "width": 352,
+    "height": 236,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_4",
+    "filename": "horsey_014_asset_3_4.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_3_4",
+      "x1": 1032,
+      "y1": 651,
+      "x2": 1405,
+      "y2": 887
+    },
+    "width": 373,
+    "height": 236,
+    "background_removed": false
+  },
+  {
+    "id": "asset_3_5",
+    "filename": "horsey_015_asset_3_5.png",
+    "source": "/home/michaperki/dev/horsey_v2/scripts/assets/frmaes.png",
+    "box": {
+      "label": "asset_3_5",
+      "x1": 1405,
+      "y1": 651,
+      "x2": 1774,
+      "y2": 887
+    },
+    "width": 369,
+    "height": 236,
+    "background_removed": false
+  }
+]
