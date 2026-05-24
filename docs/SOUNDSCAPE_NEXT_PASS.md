@@ -127,9 +127,9 @@ A master volume slider always exists. Per-tier sliders ship later (advanced sett
 
 ## Sequencing
 
-1. **Foundation.** `sound.mjs` module, WebAudio context init on first gesture, sample preload, master mute toggle, reduced-sensory setting in user preferences. Ship with one demo sample wired to settlement so the harness is exercised.
-2. **Tier 1 chess interaction.** Piece drop (3 variants), capture, check, mate. Wire to existing game events. This is the "the table sounds real" baseline.
-3. **Tier 2 economic.** Settlement chip-rake (win + loss + draw variants), bankroll tick, stake-locked. Wire to the settlement physicality pass (see [`ARENA_NEXT_PASS.md`](ARENA_NEXT_PASS.md) § Phase 4).
+1. **Foundation.** `sound.mjs` module, WebAudio context init on first gesture, master mute toggle, and full/essentials/mute modes are shipped with synthesized placeholders. Real sample preload/decode remains polish.
+2. **Tier 1 chess interaction.** Piece drop, capture, and check cues are wired to live game updates for both local moves and WS-delivered opponent moves. Mate remains folded into the immediate settlement cue until a separate cue can land without stepping on game-end audio.
+3. **Tier 2 economic.** Settlement chip-rake, bankroll tick, and strong game-start / game-end hooks are wired. Game finalization now stays on the board and transitions into in-place settlement + replay, so game-end audio pairs with the pot award instead of a route jump.
 4. **Tier 3 lobby/social.** Incoming challenge, open table appears, watcher join. Wire to existing WS events.
 5. **Polish.** Variant samples for high-frequency events, clock tension pulses, milestone integration ([`MILESTONES_NEXT_PASS.md`](MILESTONES_NEXT_PASS.md) tier pairing).
 6. **Per-tier volume controls.** Advanced settings UI. Pair with mute presets.

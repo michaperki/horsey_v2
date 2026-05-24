@@ -79,6 +79,8 @@ const STAKE_TIER_DEFAULT_CENTS = 2500;
 const TIME_DEFAULT = "3+0";
 
 const CHIP_DENOMS_DOLLARS = [500, 100, 25, 5, 1];
+let lastGameStartAudioId = null;
+let lastGameEndAudioId = null;
 
 function stakeChipStack(amountCents) {
   let remaining = Math.round(amountCents / 100);
@@ -145,10 +147,22 @@ function setActiveGame(game) {
   const newMoves = game?.moves?.length ?? 0;
   state.activeGame = game;
   captureClockAnchor(game?.clock ?? null);
+  if (game?.state === "live" && game.id !== lastGameStartAudioId && (!sameGame || prior?.state !== "live")) {
+    lastGameStartAudioId = game.id;
+    playSound("game_start");
+  }
   if (sameGame && priorMoves != null && newMoves > priorMoves) {
     const last = game.moves[newMoves - 1];
     playMoveSound(last, game);
   }
+}
+
+function maybePlayGameEndAudio(gameId, settlement) {
+  if (!gameId || !settlement || settlement.state !== "finalized") return;
+  if (gameId === lastGameEndAudioId) return;
+  lastGameEndAudioId = gameId;
+  const result = settlement.result === "draw" ? "draw" : settlement.result === "loss" ? "loss" : "win";
+  playSound(`game_end_${result}`);
 }
 
 // Fire the right chess-interaction sound for a just-played move. Order
@@ -276,6 +290,21 @@ async function loadReplay(gameId) {
     console.warn("failed to load replay", error);
     state.replay = null;
   }
+}
+
+async function loadFinalizedGame(gameId, { game = null, settlement = null } = {}) {
+  const [gameResp, settlementResp, wallet] = await Promise.all([
+    game ? Promise.resolve({ game }) : getJson(`/api/games/${gameId}`),
+    settlement ? Promise.resolve({ settlement }) : getJson(`/api/games/${gameId}/settlement`),
+    getJson("/api/wallet")
+  ]);
+  setActiveGame(gameResp.game);
+  if (state.liveGame?.id === gameId) state.liveGame = null;
+  state.activeSettlement = settlementResp.settlement;
+  state.bootstrap.viewer = wallet.viewer;
+  if (wallet.ledger) state.walletLedger = wallet.ledger;
+  await loadReplay(gameId);
+  maybePlayGameEndAudio(gameId, state.activeSettlement);
 }
 
 async function watchLiveGame(gameId) {
@@ -866,22 +895,8 @@ async function handleRealtimeMessage(msg) {
         return;
       }
       try {
-        const [gameResp, settlementResp, wallet] = await Promise.all([
-          getJson(`/api/games/${id}`),
-          getJson(`/api/games/${id}/settlement`),
-          getJson("/api/wallet")
-        ]);
-        setActiveGame(gameResp.game);
-        if (state.liveGame?.id === id) state.liveGame = null;
-        state.activeSettlement = settlementResp.settlement;
-        state.bootstrap.viewer = wallet.viewer;
-        state.walletLedger = wallet.ledger;
-        await loadReplay(id);
-        if (state.route === "game") {
-          navigate("settlement");
-        } else {
-          render();
-        }
+        await loadFinalizedGame(id);
+        render();
       } catch (error) {
         console.warn("failed to load settlement after finalize", error);
       }
@@ -945,13 +960,11 @@ async function submitMove(from, to, promotion = "q") {
   state.selectedSquare = null;
   state.pendingPromotion = null;
   if (payload.settlement && payload.settlement.state === "finalized") {
-    state.activeSettlement = payload.settlement;
-    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
-    const wallet = await getJson("/api/wallet");
-    state.bootstrap.viewer = wallet.viewer;
-    state.walletLedger = wallet.ledger;
-    await loadReplay(state.activeGame.id);
-    navigate("settlement");
+    await loadFinalizedGame(state.activeGame.id, {
+      game: payload.game,
+      settlement: payload.settlement
+    });
+    render();
     return;
   }
   render();
@@ -965,15 +978,11 @@ async function resignGame() {
   render();
   try {
     const payload = await postJson(`/api/games/${gameId}/resign`, {});
-    setActiveGame(payload.game);
     state.resignConfirmOpen = false;
-    state.activeSettlement = payload.settlement;
-    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
-    const wallet = await getJson("/api/wallet");
-    state.bootstrap.viewer = wallet.viewer;
-    state.walletLedger = wallet.ledger;
-    await loadReplay(state.activeGame.id);
-    navigate("settlement");
+    await loadFinalizedGame(gameId, {
+      game: payload.game,
+      settlement: payload.settlement
+    });
   } catch (error) {
     if (authGuard(error)) return;
     state.gameError = error.message;
@@ -994,13 +1003,10 @@ async function submitDrawAction(action) {
     const payload = await postJson(`/api/games/${gameId}/${action}`, {});
     setActiveGame(payload.game);
     if (action === "draw-accept") {
-      state.activeSettlement = payload.settlement;
-      if (payload.viewer) state.bootstrap.viewer = payload.viewer;
-      const wallet = await getJson("/api/wallet");
-      state.bootstrap.viewer = wallet.viewer;
-      state.walletLedger = wallet.ledger;
-      await loadReplay(state.activeGame.id);
-      navigate("settlement");
+      await loadFinalizedGame(gameId, {
+        game: payload.game,
+        settlement: payload.settlement
+      });
     } else {
       render();
     }
@@ -2478,6 +2484,81 @@ function renderCounterPicker(challenge) {
   `;
 }
 
+function finalizedGameSettlementPanel(game) {
+  const settlement = state.activeSettlement;
+  if (!settlement || settlement.state !== "finalized") {
+    return `
+      <article class="card game-panel live-status">
+        <div class="between">
+          <h2>Table settled</h2>
+          ${connectionPill()}
+        </div>
+        <p class="muted small">Loading pot settlement...</p>
+      </article>
+    `;
+  }
+
+  const opponentHandle = settlement.rematchChallenge?.opponent || "your opponent";
+  const won = settlement.result === "win";
+  const drew = settlement.result === "draw";
+  const slideMode = won ? "win" : drew ? "draw" : "loss";
+  let eyebrowClass = "danger";
+  let eyebrowText = "Settlement · stake taken";
+  let headline = `${escapeHtml(opponentHandle)} took the pot.`;
+  let amountClass = "money-loss";
+  let amountPrefix = "-";
+  let amountCents = game?.pot?.stakeCents || 0;
+
+  if (won) {
+    eyebrowClass = "success";
+    eyebrowText = "Settlement · auto-credited";
+    headline = `You took ${escapeHtml(opponentHandle)}.`;
+    amountClass = "money-win";
+    amountPrefix = "+";
+    amountCents = settlement.creditedCents;
+  } else if (drew) {
+    eyebrowClass = "muted";
+    eyebrowText = `Settlement · drawn (${settlement.reason || "agreement"})`;
+    headline = "Split the pot.";
+    amountClass = "money-draw";
+    amountPrefix = "";
+    amountCents = settlement.creditedCents;
+  }
+
+  const balanceAfterCents = settlement.balanceAfterCents;
+  const balanceBeforeCents = (won || drew)
+    ? balanceAfterCents - (settlement.creditedCents ?? 0)
+    : balanceAfterCents;
+  const amountTweenAttr = won || drew
+    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
+    : "";
+
+  return `
+    <article class="felt settlement settlement-${escapeHtml(slideMode)} game-panel">
+      <div class="between">
+        <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
+        ${connectionPill()}
+      </div>
+      <h2>${headline}</h2>
+      <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
+      <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
+      <div class="metric-grid">
+        <div>
+          <small>Balance</small>
+          <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
+        </div>
+        ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${formatRatingDelta(settlement.ratingDelta)}</strong></div>` : ""}
+        <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
+      </div>
+      <div class="settlement-actions">
+        ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
+        <button data-nav="play">Find new opponent</button>
+      </div>
+      ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
+    </article>
+  `;
+}
+
 function renderGame() {
   const game = state.activeGame;
   if (!game) return `<p class="muted">No active game. <a href="#play">Back to lobby.</a></p>`;
@@ -2546,23 +2627,26 @@ function renderGame() {
             <div><small>${escapeHtml(blackStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
           </div>
         </article>
-        <article class="card game-panel live-status">
-          <div class="between">
-            <h2>Table status</h2>
-            ${connectionPill()}
-          </div>
-          <div class="status-grid">
-            <div><small>Side</small><strong>${viewer ? viewer.color : "spectator"}</strong></div>
-            <div><small>Last move</small><strong>${game.lastMove ? escapeHtml(game.lastMove.san) : "—"}</strong></div>
-            <div><small>Material</small><strong>${viewer ? formatMaterialDelta(materialDelta(game, viewer.color)) : "—"}</strong></div>
-            <div><small>Watching</small><strong data-watcher-count>${game.watcherCount ?? 0}</strong></div>
-          </div>
-          ${viewerIsPlayer ? "" : `<p class="muted small">Spectator mode is read-only for live games.</p>`}
-        </article>
-        ${drawSection}
-        ${canResign ? `<button class="danger resign-button" data-open-resign ${actionInFlight("resign", game.id) ? "disabled" : ""}>${actionInFlight("resign", game.id) ? "Resigning..." : `Resign · concede ${money(game.pot.stakeCents)}`}</button>` : ""}
+        ${game.state === "finalized" ? finalizedGameSettlementPanel(game) : `
+          <article class="card game-panel live-status">
+            <div class="between">
+              <h2>Table status</h2>
+              ${connectionPill()}
+            </div>
+            <div class="status-grid">
+              <div><small>Side</small><strong>${viewer ? viewer.color : "spectator"}</strong></div>
+              <div><small>Last move</small><strong>${game.lastMove ? escapeHtml(game.lastMove.san) : "—"}</strong></div>
+              <div><small>Material</small><strong>${viewer ? formatMaterialDelta(materialDelta(game, viewer.color)) : "—"}</strong></div>
+              <div><small>Watching</small><strong data-watcher-count>${game.watcherCount ?? 0}</strong></div>
+            </div>
+            ${viewerIsPlayer ? "" : `<p class="muted small">Spectator mode is read-only for live games.</p>`}
+          </article>
+          ${drawSection}
+          ${canResign ? `<button class="danger resign-button" data-open-resign ${actionInFlight("resign", game.id) ? "disabled" : ""}>${actionInFlight("resign", game.id) ? "Resigning..." : `Resign · concede ${money(game.pot.stakeCents)}`}</button>` : ""}
+        `}
       </aside>
     </section>
+    ${game.state === "finalized" ? replayPanel() : ""}
   `;
 }
 

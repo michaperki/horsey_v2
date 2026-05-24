@@ -137,7 +137,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 |---|---|---|
 | Past finalized games list | ✅ | `GET /api/games/history`; sorted by ended_at desc, capped at 50 |
 | Per-game settlement detail | ✅ | Reuses the existing settlement screen via `#history/:gameId` |
-| Per-game replay / move scrubber | 🚫 | Phase 5 |
+| Per-game replay / move scrubber | ✅ | `GET /api/games/:id/replay`; rendered on history detail and in-place after live game finalization |
 | Head-to-head against specific opponent | 🚫 | Phase 5 |
 
 ### Auth (not a destination — gate)
@@ -163,4 +163,4 @@ All five steps below shipped in the initial pass. The proposal stays live as the
 - **Wallet placement** → folded into Profile (decision at acceptance).
 - **"History" vs "Games"** → History (decision at acceptance).
 - **Landing page** → deferred; auth gate is the entry point.
-- **Settlement URL** → `#settlement` is kept as a synonym for `#history/:gameId`; auto-redirect on finalize still works.
+- **Settlement URL** → `#settlement` is kept as a synonym for `#history/:gameId`; live finalization stays on `#game` and renders settlement/replay in place.

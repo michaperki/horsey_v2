@@ -27,7 +27,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 ## Realtime / connection
 
 - [x] **"Reconnecting" pill is only rendered on the game page.** The shell now shows the realtime live/reconnecting/offline pill across Play / History / Profile.
-- [x] **`game.finalized` auto-navigates to settlement from any route** (`handleRealtimeMessage`). Realtime settlement still refreshes state, but only auto-navigates when the viewer is on the game page.
+- [x] **`game.finalized` auto-navigates to settlement from any route** (`handleRealtimeMessage`). Realtime settlement now refreshes game, wallet, settlement, and replay state in place; the game page stays on the board and swaps the right rail to settlement.
 
 ## Settlement / History
 

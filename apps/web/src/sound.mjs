@@ -30,6 +30,10 @@
 const STORAGE_KEY = "horsey.soundMode";
 const MODES = ["full", "essentials", "mute"];
 const ESSENTIAL_EVENTS = new Set([
+  "game_start",
+  "game_end_win",
+  "game_end_loss",
+  "game_end_draw",
   "chip_cascade",
   "milestone_unlock_t1",
   "milestone_unlock_t2",
@@ -302,6 +306,113 @@ function playMateChime() {
   });
 }
 
+// Game-start hook: a low-warm power chord (root + fifth + octave) that
+// resolves into a chip-rack thud. ~700ms total. Reads as "the rack just
+// landed on the table; the round is on." This is the bookend with the
+// game-end sound — both should feel substantial, not chimey.
+function playGameStart() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  // Triangle-wave power chord — warmer than sine, less buzzy than saw.
+  [
+    { freq: 130, dur: 0.55 },  // C3 root
+    { freq: 196, dur: 0.55 },  // G3 fifth
+    { freq: 262, dur: 0.5  }   // C4 octave
+  ].forEach(({ freq, dur }, idx) => {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now);
+    // Stagger the entries slightly so the chord opens up rather than blocks.
+    const attackAt = now + idx * 0.04;
+    g.gain.setValueAtTime(0, attackAt);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.action * (idx === 0 ? 0.9 : 0.55), attackAt + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, attackAt + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(attackAt);
+    osc.stop(attackAt + dur);
+  });
+  // Chip-rack thud lands after the chord opens.
+  setTimeout(() => playChipClick("critical"), 320);
+  setTimeout(() => playChipClick("critical"), 380);
+}
+
+// Game-end hook on a win: short rising chord lands hard, then a chip
+// cascade pours toward you. Triumphant but contained — no shower, no
+// fanfare, just the moment of the rack being pushed your way.
+function playGameEndWin() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  // Ascending pair: lower octave punch, then higher octave settle.
+  [
+    { freq: 165, start: 0,    dur: 0.5 },  // E3
+    { freq: 247, start: 0.08, dur: 0.55 }, // B3
+    { freq: 330, start: 0.16, dur: 0.6 }   // E4
+  ].forEach(({ freq, start, dur }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now + start);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.action * 0.75, now + start + 0.025);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(now + start);
+    osc.stop(now + start + dur);
+  });
+  // Chip cascade overlay — the rake itself.
+  setTimeout(() => playChipCascade({ count: 6, spacingMs: 55, tier: "action" }), 250);
+}
+
+// Game-end on a loss: descending low tone with weight. No celebration.
+// Heavy chip drag toward the opponent. Honest about the outcome.
+function playGameEndLoss() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  // Descending two-note: the result lands and settles.
+  [
+    { freq: 175, start: 0,    dur: 0.6 },  // F3
+    { freq: 110, start: 0.22, dur: 0.85 }  // A2
+  ].forEach(({ freq, start, dur }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now + start);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.action * 0.7, now + start + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(now + start);
+    osc.stop(now + start + dur);
+  });
+  // Slower, heavier chip drag.
+  setTimeout(() => playChipCascade({ count: 5, spacingMs: 130, tier: "ambient" }), 300);
+}
+
+// Game-end on a draw: balanced two-note that doesn't resolve up or down.
+// Neutral, no fanfare.
+function playGameEndDraw() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [
+    { freq: 220, start: 0,    dur: 0.55 },  // A3
+    { freq: 220, start: 0.18, dur: 0.55 }   // same tone, restated
+  ].forEach(({ freq, start, dur }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now + start);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.action * 0.55, now + start + 0.025);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(now + start);
+    osc.stop(now + start + dur);
+  });
+  setTimeout(() => playChipCascade({ count: 4, spacingMs: 95, tier: "ambient" }), 240);
+}
+
 // Two-stage chord + chip-cascade overlay — tier-3 milestone burst.
 function playMilestoneBurst() {
   if (!ctx) return;
@@ -350,6 +461,14 @@ export function playSound(eventKey, opts = {}) {
       return playCheckChime();
     case "mate_chime":
       return playMateChime();
+    case "game_start":
+      return playGameStart();
+    case "game_end_win":
+      return playGameEndWin();
+    case "game_end_loss":
+      return playGameEndLoss();
+    case "game_end_draw":
+      return playGameEndDraw();
     default:
       // Unknown event keys are silent — they'll surface as events that
       // need to be added to the registry, not as runtime errors.
