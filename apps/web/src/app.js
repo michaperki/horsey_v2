@@ -1749,6 +1749,69 @@ function scoutNarrative(stats, h2h) {
   return { tenure, frame: `${sampleLine}${sharedClause}` };
 }
 
+// Reliability label per SCOUTING § 5. Bands are coarse so the published
+// signal is "low / moderate / high" not a misleading precise percentage.
+function reliabilityLabelForTimeout(rate) {
+  if (rate === null || rate === undefined) return null;
+  if (rate <= 5) return "low";
+  if (rate <= 15) return "moderate";
+  return "high";
+}
+
+function formatStakeBand(evidence) {
+  if (!evidence?.stakeBand) return null;
+  const verb = (evidence.stakeBandShare ?? 0) >= 50 ? "mostly" : "often";
+  return `${verb} ${evidence.stakeBand} tables`;
+}
+
+function formatTimeoutNote(evidence) {
+  const label = reliabilityLabelForTimeout(evidence?.timeoutRate);
+  return label ? `${label} timeout rate` : null;
+}
+
+// One-line evidence summary for the Scout Card's "risk notes" slot. Returns
+// null when nothing surfaces, so the slot stays empty rather than misleads.
+function scoutEvidenceLine(evidence) {
+  if (!evidence) return null;
+  const parts = [formatTimeoutNote(evidence), formatStakeBand(evidence)].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
+}
+
+// Full-profile "Wager profile" block. Skips the whole section when no signal
+// has crossed the sample-size threshold — missing block beats a fake one
+// (SCOUTING § 3).
+function renderProfileWagerEvidence(evidence) {
+  const bandLine = formatStakeBand(evidence);
+  const biggest = evidence?.biggestPotCents;
+  if (!bandLine && !biggest) return "";
+  return `
+    <div class="profile-section profile-evidence">
+      <h3>Wager profile</h3>
+      <div class="evidence-grid">
+        ${bandLine ? `<div><small>Stake comfort</small><strong>${escapeHtml(bandLine)}</strong></div>` : ""}
+        ${biggest ? `<div><small>Biggest pot won</small><strong>${money(biggest)}</strong></div>` : ""}
+      </div>
+    </div>
+  `;
+}
+
+// Full-profile "Reliability" block. Disconnect rate intentionally omitted
+// per IMPLEMENTATION_PLAN § Trust — disconnect-rate ships only after the
+// event-policy slice lands.
+function renderProfileReliability(evidence) {
+  const label = reliabilityLabelForTimeout(evidence?.timeoutRate);
+  if (!label) return "";
+  const rate = evidence.timeoutRate;
+  return `
+    <div class="profile-section profile-evidence">
+      <h3>Reliability</h3>
+      <div class="evidence-grid">
+        <div><small>Timeout rate</small><strong>${escapeHtml(label)} <span class="muted">(${escapeHtml(String(rate))}%)</span></strong></div>
+      </div>
+    </div>
+  `;
+}
+
 function renderScoutPopover() {
   const scout = state.scout;
   if (!scout.userId || !scout.anchor) return "";
@@ -1795,6 +1858,10 @@ function renderScoutPopover() {
         <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
         <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
       </div>
+      ${(() => {
+        const line = scoutEvidenceLine(user.evidence);
+        return line ? `<p class="scout-evidence muted small">${escapeHtml(line)}</p>` : "";
+      })()}
       ${renderAvatarMeaning(user, { compact: true })}
       <div class="scout-stat-grid">
         <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
@@ -2356,6 +2423,10 @@ function renderWagerDossier(opponent, dossier) {
         <strong class="scout-label">${escapeHtml(narrative.tenure)}</strong>
         <span class="scout-frame">${escapeHtml(narrative.frame)}</span>
       </div>
+      ${(() => {
+        const line = scoutEvidenceLine(dossier.evidence);
+        return line ? `<p class="dossier-evidence muted small">${escapeHtml(line)}</p>` : "";
+      })()}
       <div class="dossier-stats">
         <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
         <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
@@ -3812,6 +3883,8 @@ function renderUserProfile() {
             ${(stats.ratingTimeline ?? []).map((p) => `<span title="${escapeHtml(p.after)}" style="height:${Math.max(16, Math.min(64, 32 + p.delta))}px"></span>`).join("") || `<em class="muted small">No rating snapshots yet.</em>`}
           </div>
         </div>
+        ${renderProfileWagerEvidence(user.evidence)}
+        ${renderProfileReliability(user.evidence)}
       </article>
       <aside class="card user-profile-recent">
         <h2>Recent games</h2>

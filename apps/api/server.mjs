@@ -986,6 +986,76 @@ function aggregateUserStats(userId, games) {
   };
 }
 
+// Bucket a stake into a public-facing band. Buckets are intentionally coarse
+// so the published value is "where they play" not "exactly what they bet."
+function stakeBandLabel(stakeCents) {
+  if (!stakeCents || stakeCents <= 0) return null;
+  if (stakeCents < 500) return "$1–$5";
+  if (stakeCents < 2500) return "$5–$25";
+  if (stakeCents < 10000) return "$25–$100";
+  return "$100+";
+}
+
+// Aggregate the per-user "evidence" block: stake comfort, reliability, and
+// stakes-experience signals. Per project_no_loss_advertising, every value
+// here is either positive (biggest pot won) or neutral (band, reliability
+// rate). Net-loss totals are never surfaced.
+//
+// Sample-size guards: blocks return null when the user hasn't generated
+// enough evidence yet. "Missing block is better than a fake one" (SCOUTING
+// § 3) is the rule.
+const EVIDENCE_MIN_GAMES = 5;
+
+function evidenceForUser(userId, games) {
+  if (!games || games.length === 0) {
+    return {
+      sampleSize: 0,
+      stakeBand: null,
+      stakeBandShare: null,
+      timeoutRate: null,
+      biggestPotCents: null
+    };
+  }
+  const bands = new Map();
+  let timeoutLosses = 0;
+  let finishedWithReason = 0;
+  let biggestPotCents = 0;
+  for (const game of games) {
+    const band = stakeBandLabel(game.pot?.stakeCents ?? 0);
+    if (band) bands.set(band, (bands.get(band) ?? 0) + 1);
+    if (game.endReason) finishedWithReason += 1;
+    if (game.endReason === "timeout" && game.winnerId && game.winnerId !== userId) {
+      timeoutLosses += 1;
+    }
+    if (game.winnerId === userId) {
+      const stake = game.pot?.stakeCents ?? 0;
+      if (stake > 0) {
+        const pot = calculatePot({ stakeCents: stake });
+        if (pot.netPotCents > biggestPotCents) biggestPotCents = pot.netPotCents;
+      }
+    }
+  }
+  let dominantBand = null;
+  let dominantCount = 0;
+  for (const [band, count] of bands) {
+    if (count > dominantCount) { dominantBand = band; dominantCount = count; }
+  }
+  const sampleSize = games.length;
+  const enoughForBand = sampleSize >= EVIDENCE_MIN_GAMES;
+  const enoughForTimeout = finishedWithReason >= EVIDENCE_MIN_GAMES;
+  return {
+    sampleSize,
+    stakeBand: enoughForBand ? dominantBand : null,
+    stakeBandShare: enoughForBand && dominantCount > 0
+      ? Math.round((dominantCount / sampleSize) * 100)
+      : null,
+    timeoutRate: enoughForTimeout
+      ? Math.round((timeoutLosses / finishedWithReason) * 100)
+      : null,
+    biggestPotCents: biggestPotCents > 0 ? biggestPotCents : null
+  };
+}
+
 function userH2hVsViewer(targetId, viewerId) {
   if (!viewerId || viewerId === targetId) return null;
   const games = db.listFinalizedGamesBetween(viewerId, targetId, 50);
@@ -1043,6 +1113,7 @@ function userProfilePayload(targetId, viewerId) {
     rating: user.rating,
     createdAt: user.createdAt,
     stats: aggregateUserStats(targetId, games),
+    evidence: evidenceForUser(targetId, games),
     presence: presence.snapshot(targetId),
     liveGame: liveGame
       ? {

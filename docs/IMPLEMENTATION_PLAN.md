@@ -273,7 +273,7 @@ Deliverables:
 - Pot/rake calculation as a centralized domain rule. Status: **done** — `calculatePot` and `settleGame` in `packages/shared/domain.mjs`; rake recorded under the `house` pseudo-account.
 - Idempotent game finalization that releases both escrow holds, credits the winner net pot, records the rake. Status: **done** via `POST /api/games/:id/finalize`, including draw settlements that split the net pot and route any 1-cent rounding remainder to the house. The move endpoint also auto-finalizes when chess.js reports a terminal result. Resign reuses the same path via `POST /api/games/:id/resign`.
 - Lobby open tables, live floor, rivals, recent rematch data backed by API models. Status: **done** — lobby surfaces real incoming, sent, and open challenges; rivals list still seed-driven.
-- Wager/scouting page backed by player stats, trust summary, head-to-head data. Status: **partial** — basic player info from `users` table; tells / trust summary / h2h still seed/decorative.
+- Wager/scouting page backed by player stats, trust summary, head-to-head data. Status: **partial** — basic player info from `users` table is real; tells / trust summary still pending; h2h is real (`userH2hVsViewer`); per-user evidence (stake band, biggest pot won, timeout rate) is real via `evidenceForUser` and surfaced on Scout Card, wager dossier, and profile.
 
 Exit criteria:
 - A player can select a stake/time, accept or create a wager, and enter a game with fake funds escrowed. **Met.**

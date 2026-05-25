@@ -3360,6 +3360,35 @@ p {
   color: var(--muted);
 }
 
+.profile-evidence .evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.profile-evidence .evidence-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.profile-evidence .evidence-grid small {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.profile-evidence .evidence-grid strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.scout-evidence,
+.dossier-evidence {
+  margin: -2px 0 0;
+}
+
 .rating-spark {
   display: flex;
   align-items: end;

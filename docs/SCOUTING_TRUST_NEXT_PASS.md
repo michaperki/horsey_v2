@@ -343,7 +343,13 @@ Final shape (`renderOpenTableRow` + `.open-table-row`):
 - [x] Rail now carries the same narrative reveal as the Scout Card via `scoutNarrative()` and `accountAgeLabel()` — `established regular` / `new account` label plus the sample-size + relationship frame line. Consistent voice between popover and full profile.
 - [x] Rail subtitle dropped the verbose `joined Mar 2026` form in favor of the compact `joined 8mo ago` to match the Scout Card's `Joined` tile.
 - [x] Center column's Record block is now explicitly separated from a labelled `Recent form` block (Last 10 + rating timeline) via a real `<h3>`. The umbrella `Record` header no longer subsumes the form rail; each block reads as its own evidence type.
-- [x] `Wager profile` and `Reliability` sections intentionally NOT rendered. Per the doc rule, a missing trust block is better than a fake one. These slots come back once stake-band aggregation and timeout/disconnect policy land server-side.
+- [x] **Wager profile + Reliability sections shipped** (2026-05-25). Server-side `evidenceForUser(userId, games)` aggregates per-user evidence: dominant stake band (bucketed `$1–$5` / `$5–$25` / `$25–$100` / `$100+`), biggest pot won (positive-only, per `project_no_loss_advertising`), and timeout-loss rate (only after the 5-game sample threshold). Surfaced as:
+  - Profile `Wager profile` block: stake comfort + biggest pot won.
+  - Profile `Reliability` block: timeout rate as low/moderate/high band + raw %.
+  - Scout Card "risk notes" line: one-liner `low timeout rate · mostly $5–$25 tables`.
+  - Wager dossier: same one-liner at decision time.
+  - All blocks skip rendering entirely when no signal crosses the threshold — missing block beats a fake one.
+- Disconnect-rate remains pending the event-policy slice (Trust roadmap).
 
 ### Wave T1 - Trust foundation
 
