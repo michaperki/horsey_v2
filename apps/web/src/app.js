@@ -7,7 +7,9 @@ import {
   setSoundMode
 } from "./sound.mjs";
 
-render();
+// Defer the first paint past module evaluation so the `let state = ...`
+// declaration further down is initialized before render reads it.
+Promise.resolve().then(() => render());
 
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
 
