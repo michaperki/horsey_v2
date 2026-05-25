@@ -1,4 +1,5 @@
 import { getManifest, setManifest } from "./cosmetics.mjs";
+import { hasSvgBorder, getSvgBorder, SVG_BORDER_IDS } from "./cosmetics-svg-borders.mjs";
 
 const CANVAS_SIZE = 256;
 const DISPLAY_SIZE = 512;
@@ -40,6 +41,7 @@ const state = {
   catalogDraft: null,
   density: "standard",
   layerFilter: { slot: "all", query: "", coreOnly: false },
+  borderRender: "png",  // "png" | "svg" — spike toggle, see cosmetics-svg-borders.mjs
   notice: "",
   error: ""
 };
@@ -314,6 +316,17 @@ function renderLayer(id, displaySize, { density = state.density, interactive = f
   const selected = id === state.selectedId ? " selected" : "";
   const placeholder = item.placeholder ? " placeholder" : "";
   const attrs = interactive ? ` data-editor-layer="${escapeHtml(id)}"` : "";
+
+  // Spike branch: when the toggle is on SVG and the layer is a trust border
+  // with an authored SVG version, emit the SVG markup instead of the PNG.
+  // The wrapper geometry (left/top/width/height) matches PNG fill_canvas
+  // so the comparison is apples-to-apples.
+  if (item.slot === "border" && state.borderRender === "svg" && hasSvgBorder(id)) {
+    const svgMarkup = getSvgBorder(id);
+    const sizingStyle = `position:absolute;left:${m.left.toFixed(2)}px;top:${m.top.toFixed(2)}px;width:${m.width.toFixed(2)}px;height:${m.height.toFixed(2)}px;z-index:${Number(item.z ?? 0) + 50};opacity:${Number(opacity)};pointer-events:none`;
+    return `<span class="cos-editor-layer cos-editor-svg-layer${selected}"${attrs} style="${sizingStyle}">${svgMarkup}</span>`;
+  }
+
   return `<img class="cos-editor-layer${selected}${placeholder}"${attrs} src="${escapeHtml(item.asset.src)}" alt="" style="left:${m.left.toFixed(2)}px;top:${m.top.toFixed(2)}px;width:${m.width.toFixed(2)}px;height:${m.height.toFixed(2)}px;z-index:${Number(item.z ?? 0) + 50};opacity:${Number(opacity)}" />`;
 }
 
@@ -401,6 +414,19 @@ function renderLayerControls(manifest) {
       }).join("")}
     </div>
   `).join("");
+}
+
+function renderBorderRenderToggle() {
+  const svgAvailable = SVG_BORDER_IDS.join(", ");
+  return `
+    <div class="cos-editor-border-toggle" title="SVG covers: ${escapeHtml(svgAvailable)}">
+      <span class="picker-label">Border render</span>
+      <div class="cos-editor-border-toggle-row">
+        <button type="button" class="${state.borderRender === "png" ? "active" : ""}" data-cos-border-render="png">PNG</button>
+        <button type="button" class="${state.borderRender === "svg" ? "active" : ""}" data-cos-border-render="svg">SVG (spike)</button>
+      </div>
+    </div>
+  `;
 }
 
 function renderBasePieceSwitcher(manifest) {
@@ -558,6 +584,7 @@ export function renderCosmeticsEditor() {
         </aside>
         <section class="card cos-editor-stage">
           ${renderBasePieceSwitcher(manifest)}
+          ${renderBorderRenderToggle()}
           <div class="cos-editor-density-tabs">
             ${DENSITIES.map((d) => `<button type="button" class="${state.density === d ? "active" : ""}" data-cos-density="${d}">${d}</button>`).join("")}
           </div>
@@ -714,6 +741,12 @@ export function bindCosmeticsEditor(rerender) {
   document.querySelectorAll("[data-cos-density]").forEach((button) => {
     button.addEventListener("click", () => {
       state.density = button.dataset.cosDensity;
+      rerender();
+    });
+  });
+  document.querySelectorAll("[data-cos-border-render]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.borderRender = button.dataset.cosBorderRender;
       rerender();
     });
   });
