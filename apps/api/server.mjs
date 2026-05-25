@@ -44,7 +44,7 @@ import {
   TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
 import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
-import { grantCosmeticsForMilestone, resolveAvatarForUser } from "./cosmetics.mjs";
+import { grantCosmeticsForMilestone, resolveAvatarForUser, syncTrustBorderForUser } from "./cosmetics.mjs";
 import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
@@ -525,6 +525,7 @@ async function linkExternalAccount(viewer, body) {
   };
 
   let seededTo = null;
+  let borderGrant = null;
   db.transaction(() => {
     db.insertExternalAccount(account);
     // Apply claimed-tier seed only when the user has no Horsey games yet.
@@ -540,7 +541,11 @@ async function linkExternalAccount(viewer, body) {
     }
     // A successful link counts as completing onboarding (idempotent).
     db.markOnboardingCompleted(viewer.id);
+    // Claimed tier shares the provisional border (§ 5.1.1); this is a no-op
+    // when the equip is already correct, but keeps ownership state authoritative.
+    borderGrant = syncTrustBorderForUser(db, viewer.id, "claimed", { idFactory: newId });
   })();
+  if (borderGrant) publishCosmeticGranted(borderGrant);
   return { account: db.getExternalAccount(account.id), seededTo };
 }
 
@@ -614,6 +619,7 @@ async function checkVerification(viewer, accountId) {
   }
 
   let seededTo = null;
+  let borderGrant = null;
   db.transaction(() => {
     db.markExternalAccountVerified(account.id);
     // Drop other Horsey users' claims for the same external handle. Once
@@ -632,7 +638,14 @@ async function checkVerification(viewer, accountId) {
         seededTo = seed;
       }
     }
+    // Recompute the user's tier (could be verified or established now) and
+    // sync the border slot in the same transaction.
+    const accountsAfter = db.listExternalAccountsForUser(viewer.id);
+    const finishedAfter = db.listFinalizedGamesForUser(viewer.id, 50).length;
+    const newTier = computeTrustTier({ externalAccounts: accountsAfter, finishedGames: finishedAfter });
+    borderGrant = syncTrustBorderForUser(db, viewer.id, newTier, { idFactory: newId });
   })();
+  if (borderGrant) publishCosmeticGranted(borderGrant);
   return { account: db.getExternalAccount(account.id), seededTo };
 }
 
@@ -1279,6 +1292,16 @@ function finalizeGame(game, { result, reason }) {
         db.insertUserMilestone(m);
         cosmeticGrants.push(...grantCosmeticsForMilestone(db, m, { idFactory: newId }));
       }
+      // Tier may have changed for either side (the `established` threshold
+      // crossing is finished-game-count-driven). Sync border ownership for
+      // both players in the same transaction.
+      for (const player of [white, black]) {
+        const accounts = db.listExternalAccountsForUser(player.id);
+        const finished = db.listFinalizedGamesForUser(player.id, 50).length;
+        const tier = computeTrustTier({ externalAccounts: accounts, finishedGames: finished });
+        const borderGrant = syncTrustBorderForUser(db, player.id, tier, { idFactory: newId });
+        if (borderGrant) cosmeticGrants.push(borderGrant);
+      }
     }
   })();
   clearClockTimeout(game.id);
@@ -1451,6 +1474,7 @@ async function signupAccount({ email, handle, password }) {
   const now = new Date().toISOString();
   const userId = newId("usr");
   let session;
+  let initialBorderGrant = null;
   db.transaction(() => {
     db.insertUser({
       id: userId,
@@ -1471,8 +1495,10 @@ async function signupAccount({ email, handle, password }) {
       note: "Welcome fake-money grant",
       createdAt: now
     }]);
+    initialBorderGrant = syncTrustBorderForUser(db, userId, "provisional", { idFactory: newId, now });
     session = startSession(userId, now);
   })();
+  if (initialBorderGrant) publishCosmeticGranted(initialBorderGrant);
   return { user: db.getUser(userId), session };
 }
 

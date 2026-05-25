@@ -554,6 +554,16 @@ function makeApi(db) {
       WHERE user_id = ?
       ORDER BY slot ASC
     `),
+    retireUserCosmeticByCosmeticId: db.prepare(`
+      UPDATE user_cosmetics
+      SET retired_at = ?
+      WHERE user_id = ? AND cosmetic_id = ? AND retired_at IS NULL
+    `),
+    reinstateUserCosmeticBySource: db.prepare(`
+      UPDATE user_cosmetics
+      SET retired_at = NULL
+      WHERE user_id = ? AND cosmetic_id = ? AND source = ?
+    `),
 
     insertTicket: db.prepare(`
       INSERT INTO matchmaking_tickets (user_id, stake_cents, time_control, tier_pref, created_at)
@@ -838,6 +848,14 @@ function makeApi(db) {
     listUserCosmeticEquipForUser(userId) {
       const rows = stmts.listUserCosmeticEquip.all(userId);
       return Object.fromEntries(rows.map((row) => [row.slot, row.cosmetic_id]));
+    },
+    retireUserCosmeticByCosmeticId({ userId, cosmeticId, retiredAt = new Date().toISOString() }) {
+      const result = stmts.retireUserCosmeticByCosmeticId.run(retiredAt, userId, cosmeticId);
+      return result.changes;
+    },
+    reinstateUserCosmeticBySource({ userId, cosmeticId, source }) {
+      const result = stmts.reinstateUserCosmeticBySource.run(userId, cosmeticId, source);
+      return result.changes;
     },
 
     upsertTicket(ticket) {

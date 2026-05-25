@@ -609,16 +609,34 @@ Opinionated. Smaller than the audit's "launch-safe subset" (~22) because we're t
 | `base__piece__bishop` | base (0) | `horsey_003_bishop_strategist.png` | rating-class base |
 | `base__piece__rook` | base (0) | `horsey_004_rook_guardian.png` | rating-class base |
 | `base__piece__queen` | base (0) | `horsey_005_queen_elite.png` | rating-class base |
-| `trust__border__provisional` | border (10) | `horsey_052_border_provisional.png` (B4) | auto on signup |
-| `trust__border__claimed` | border (10) | **author** | auto on external account link |
-| `trust__border__verified` | border (10) | `horsey_053_border_verified.png` (B4) | auto on verified tier |
-| `trust__border__gold` | border (10) | `horsey_059_border_gold.png` (B4) | auto on trusted tier (proposed name shift; see § 7) |
+| `trust__border__provisional` | border (10) | `trusted__border__provisional.png` | auto on signup *and* on claimed (intentional parity, see § 5.1.1) |
+| `trust__border__verified` | border (10) | `trusted__border__verified.png` | auto on verified tier |
+| `trust__border__trusted` | border (10) | `trusted__border__trusted.png` | auto on established tier |
 | `milestone__headwear__laurel` | headwear (50) | `horsey_028_trust_laurel.png` | first-win milestone |
 | `milestone__headwear__flame_crown` | headwear (50) | `horsey_015_highroller_flamecrown.png` | live-state, win-streak ≥3 |
 | `milestone__headwear__broken_crown` | headwear (50) | `horsey_032_tilt_brokencrown.png` | event-fired on upset (200+ rating gap) |
 | `trust__aura__verified_halo` | front_aura (60) | piece-specific (`horsey_022_queen_verified_halo` + `horsey_020_knight_verified_halo`) | auto on verified tier |
 | `trust__badge__veteran` | attached_badge (70) | `horsey_029_veteran_badge.png` | auto on established tier |
 | `milestone__reveal__chip_explosion` | event/reveal | `horsey_017_queen_chip_explosion.png` (queen-only at v1) | personal-best pot |
+
+### 5.1.1 Trust-border ladder lock — May 25, 2026
+
+The asset library ships five border rungs (`provisional`, `verified`, `trusted`, `elite`, `champion`) and the product trust ladder has four tiers (`provisional`, `claimed`, `verified`, `established`). The locked mapping uses the bottom three asset rungs and reserves the top two:
+
+| Product tier | Border ID | Visual register |
+|---|---|---|
+| `provisional` | `trust__border__provisional` | muted ring |
+| `claimed` | `trust__border__provisional` | **same as provisional — intentional** |
+| `verified` | `trust__border__verified` | gold check treatment |
+| `established` | `trust__border__trusted` | premium tenure treatment |
+| *(reserved)* | `trust__border__elite` | future `placed` tier / sweeps gate |
+| *(reserved)* | `trust__border__champion` | future tournament champion / hall-of-fame |
+
+Rationale for claimed and provisional sharing the muted ring: the claimed tier means the user pasted an external handle but the binding to their Horsey account is unproven. The honest read is "still provisional from the platform's perspective." The visible distinction between claimed and provisional already lives in the tier-pip text chip on identity surfaces (live feed, open tables, scout card); duplicating it in the border slot would over-promote an unverified state.
+
+Authoritative location: `borderForTier()` and `TIER_BORDER_IDS` in `apps/api/cosmetics.mjs`. Renaming asset PNGs to match product tier names (e.g. `trust__border__established` instead of `trust__border__trusted`) is a later-pass cosmetic-only refactor; the mapping above is what code references today.
+
+The earlier proposal in this doc that called for a hand-authored `trust__border__claimed` is superseded: the claim distinction does not earn a border rung at v1.
 
 **Category B — Emote pool (6 items):**
 
@@ -659,7 +677,7 @@ These remain in the manifest. The DB seeds them with `enabled=false`. Phase B/C/
 
 Hard prerequisites for the v1 launch:
 
-1. **`trust__border__claimed`** — author from scratch. B4 chip-style design language. Muted treatment with a "?" connotation (per `SCOUTING_TRUST_NEXT_PASS.md` claimed-tier UX).
+1. ~~**`trust__border__claimed`** — author from scratch.~~ Superseded by § 5.1.1: claimed shares the provisional border at v1, so no claimed-specific border art is required.
 2. **Transparent atom versions** of `border_silver`, `border_mythic`, `border_arcane` — currently only exist as non-transparent queen-on-felt previews. Redraw as standalone 256×256 overlays.
 3. **Generic `chip_explosion`** + **knight variant** — currently only queen variant exists.
 4. **`stormcloud_cleared`** — comeback emblem; named in the system, asset missing entirely.
@@ -1123,7 +1141,7 @@ Profile hierarchy rule:
 
 ### 8.2 High-leverage implementation ladder
 
-1. **Lock trust-border semantics.** Decide and document the canonical visual ladder. Current asset direction is `provisional`, `verified`, `trusted`, `elite`, `champion`; product trust tiers are still `provisional`, `claimed`, `verified`, `established`. The app needs one explicit mapping before more public surfaces rely on it.
+1. **Locked: trust-border semantics.** See § 5.1.1 for the canonical mapping. `provisional` and `claimed` share the muted ring; `verified` gets the gold check rung; `established` gets the premium tenure rung; `elite` and `champion` are reserved for future product tiers.
 2. **Implemented: base-piece resolver.** Map chess strength to `pawn` / `knight` / `bishop` / `rook` / `queen` using `users.rating`, imported external ratings, and calibration state. Start conservative; thresholds can tune later. This is the highest-leverage move because it makes base avatars meaningful across the whole UI.
 3. **Implemented: Profile avatar explanation + progression surfaces.** Show the user their avatar large with simple labels: base piece = rating class, border = trust status, adornments = earned history. Profile also needs the non-XP progression surface described above.
 4. **Implemented: the three persistence tables** from § 6.2: `cosmetics`, `user_cosmetics`, and `user_cosmetic_equip`. Runtime composition now has a real ownership/equip backing store, though only the first earned adornment path is wired.
