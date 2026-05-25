@@ -169,7 +169,7 @@
         "anchor": "piece_base",
         "offset": {
           "dx": -1,
-          "dy": -118
+          "dy": -120
         },
         "opacity": 1,
         "scale": 0.5
@@ -511,5 +511,5 @@
     "manual__emote__bow_and_salute": "Not authored. Manual emote palette launches with wave + gg only.",
     "event__emote__crowd_cheer": "Not authored. Spectator reaction system blocks on it."
   },
-  "updated_at": "2026-05-24T17:10:04.130Z"
+  "updated_at": "2026-05-25T18:16:09.252Z"
 }

@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,6 @@ import {
   TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
 import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
-import { grantCosmeticsForMilestone, resolveAvatarForUser, syncTrustBorderForUser } from "./cosmetics.mjs";
 import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
@@ -70,8 +69,6 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 const webDir = path.join(rootDir, "apps/web");
-const cosmeticsAssetsDir = path.join(webDir, "assets/cosmetics");
-const cosmeticsManifestPath = path.join(webDir, "assets/cosmetics/manifest.json");
 const port = Number.parseInt(process.env.PORT || "8787", 10);
 const host = process.env.HOST || "127.0.0.1";
 const dbPath = process.env.HORSEY_DB_PATH || path.join(rootDir, "data/horsey.db");
@@ -136,37 +133,6 @@ function checkRateLimit(req, bucket) {
     e.retryAfterSeconds = Math.ceil((current.resetAt - now) / 1000);
     throw e;
   }
-}
-
-function requireLocalDevRequest(req) {
-  const remote = req.socket?.remoteAddress || "";
-  if (remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1") return;
-  const e = new RangeError("dev cosmetics tools are only available from localhost");
-  e.code = "dev_tool_forbidden";
-  throw e;
-}
-
-function validateCosmeticsManifest(manifest) {
-  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
-    const e = new RangeError("manifest must be a JSON object");
-    e.code = "invalid_cosmetics_manifest";
-    throw e;
-  }
-  if (manifest.$schema !== "horsey-cosmetics/v1" || !manifest.items || typeof manifest.items !== "object") {
-    const e = new RangeError("manifest is not a horsey-cosmetics/v1 catalog");
-    e.code = "invalid_cosmetics_manifest";
-    throw e;
-  }
-}
-
-async function listCosmeticsAssetFiles() {
-  const entries = await readdir(cosmeticsAssetsDir, { withFileTypes: true });
-  return entries
-    .filter((entry) => entry.isFile())
-    .map((entry) => entry.name)
-    .filter((name) => /\.(png|webp|jpe?g)$/i.test(name))
-    .sort((a, b) => a.localeCompare(b))
-    .map((name) => `/assets/cosmetics/${name}`);
 }
 
 async function readJson(req) {
@@ -249,8 +215,7 @@ function enrichGame(game) {
   const playersWithPresence = (game.players || []).map((player) => ({
     ...player,
     presence: presence.snapshot(player.id),
-    trustTier: trustTierForUser(player.id),
-    avatar: resolveAvatarForUser(db, player.id)
+    trustTier: trustTierForUser(player.id)
   }));
   return {
     ...summary,
@@ -381,8 +346,7 @@ function lobbyLiveGameProjection(game) {
       id: p.id,
       handle: p.handle,
       rating: p.rating,
-      trustTier: trustTierForUser(p.id),
-      avatar: resolveAvatarForUser(db, p.id)
+      trustTier: trustTierForUser(p.id)
     })),
     stakeCents: game.pot?.stakeCents ?? 0,
     timeControl: game.timeControl,
@@ -447,7 +411,6 @@ function viewerPayload(viewerId) {
     ...walletSummary(db.listLedger(), viewerId),
     ...trustChipsForUser(viewerId),
     stats: aggregateUserStats(viewerId, games),
-    avatar: resolveAvatarForUser(db, viewerId),
     milestones
   };
 }
@@ -525,7 +488,6 @@ async function linkExternalAccount(viewer, body) {
   };
 
   let seededTo = null;
-  let borderGrant = null;
   db.transaction(() => {
     db.insertExternalAccount(account);
     // Apply claimed-tier seed only when the user has no Horsey games yet.
@@ -541,11 +503,7 @@ async function linkExternalAccount(viewer, body) {
     }
     // A successful link counts as completing onboarding (idempotent).
     db.markOnboardingCompleted(viewer.id);
-    // Claimed tier shares the provisional border (§ 5.1.1); this is a no-op
-    // when the equip is already correct, but keeps ownership state authoritative.
-    borderGrant = syncTrustBorderForUser(db, viewer.id, "claimed", { idFactory: newId });
   })();
-  if (borderGrant) publishCosmeticGranted(borderGrant);
   return { account: db.getExternalAccount(account.id), seededTo };
 }
 
@@ -619,7 +577,6 @@ async function checkVerification(viewer, accountId) {
   }
 
   let seededTo = null;
-  let borderGrant = null;
   db.transaction(() => {
     db.markExternalAccountVerified(account.id);
     // Drop other Horsey users' claims for the same external handle. Once
@@ -638,14 +595,7 @@ async function checkVerification(viewer, accountId) {
         seededTo = seed;
       }
     }
-    // Recompute the user's tier (could be verified or established now) and
-    // sync the border slot in the same transaction.
-    const accountsAfter = db.listExternalAccountsForUser(viewer.id);
-    const finishedAfter = db.listFinalizedGamesForUser(viewer.id, 50).length;
-    const newTier = computeTrustTier({ externalAccounts: accountsAfter, finishedGames: finishedAfter });
-    borderGrant = syncTrustBorderForUser(db, viewer.id, newTier, { idFactory: newId });
   })();
-  if (borderGrant) publishCosmeticGranted(borderGrant);
   return { account: db.getExternalAccount(account.id), seededTo };
 }
 
@@ -668,8 +618,7 @@ function withOpponentDecor(user) {
     id: user.id,
     handle: user.handle,
     rating: user.rating,
-    trustTier: trustTierForUser(user.id),
-    avatar: resolveAvatarForUser(db, user.id)
+    trustTier: trustTierForUser(user.id)
   };
 }
 
@@ -810,9 +759,7 @@ function handleDomainError(error, res) {
     external_account_already_verified: 409,
     claim_token_missing: 409,
     claim_token_expired: 410,
-    claim_token_not_found_in_profile: 422,
-    dev_tool_forbidden: 403,
-    invalid_cosmetics_manifest: 400
+    claim_token_not_found_in_profile: 422
   };
   const headers = {};
   if (error.code === "rate_limited" && error.retryAfterSeconds) {
@@ -1127,8 +1074,7 @@ function userProfilePayload(targetId, viewerId) {
     calibratingThreshold: calibratingThresholdForTier(trustTier),
     externalAccounts,
     trustTier,
-    stakeCapCents: stakeCapForTier(trustTier),
-    avatar: resolveAvatarForUser(db, targetId)
+    stakeCapCents: stakeCapForTier(trustTier)
   };
 }
 
@@ -1318,7 +1264,6 @@ function finalizeGame(game, { result, reason }) {
   const defaultReason = result === "draw" ? "agreement" : "checkmate";
 
   let unlockedMilestones = [];
-  const cosmeticGrants = [];
   db.transaction(() => {
     const outcome = settleGame({
       gameId: game.id,
@@ -1361,23 +1306,11 @@ function finalizeGame(game, { result, reason }) {
       unlockedMilestones = detectMilestonesForGame(db, finalizedGame);
       for (const m of unlockedMilestones) {
         db.insertUserMilestone(m);
-        cosmeticGrants.push(...grantCosmeticsForMilestone(db, m, { idFactory: newId }));
-      }
-      // Tier may have changed for either side (the `established` threshold
-      // crossing is finished-game-count-driven). Sync border ownership for
-      // both players in the same transaction.
-      for (const player of [white, black]) {
-        const accounts = db.listExternalAccountsForUser(player.id);
-        const finished = db.listFinalizedGamesForUser(player.id, 50).length;
-        const tier = computeTrustTier({ externalAccounts: accounts, finishedGames: finished });
-        const borderGrant = syncTrustBorderForUser(db, player.id, tier, { idFactory: newId });
-        if (borderGrant) cosmeticGrants.push(borderGrant);
       }
     }
   })();
   clearClockTimeout(game.id);
   for (const m of unlockedMilestones) publishMilestoneUnlocked(m);
-  for (const grant of cosmeticGrants) publishCosmeticGranted(grant);
 }
 
 function publishMilestoneUnlocked(milestone) {
@@ -1385,20 +1318,6 @@ function publishMilestoneUnlocked(milestone) {
   broker.publish(CHANNELS.user(milestone.userId), {
     type: "milestone.unlocked",
     milestone: publicMilestonePayload(milestone)
-  });
-}
-
-function publishCosmeticGranted(grant) {
-  if (!grant) return;
-  broker.publish(CHANNELS.user(grant.userId), {
-    type: "cosmetic.granted",
-    cosmetic: {
-      id: grant.id,
-      cosmeticId: grant.cosmeticId,
-      slot: grant.slot,
-      source: grant.source,
-      grantedAt: grant.grantedAt
-    }
   });
 }
 
@@ -1545,7 +1464,6 @@ async function signupAccount({ email, handle, password }) {
   const now = new Date().toISOString();
   const userId = newId("usr");
   let session;
-  let initialBorderGrant = null;
   db.transaction(() => {
     db.insertUser({
       id: userId,
@@ -1566,10 +1484,8 @@ async function signupAccount({ email, handle, password }) {
       note: "Welcome fake-money grant",
       createdAt: now
     }]);
-    initialBorderGrant = syncTrustBorderForUser(db, userId, "provisional", { idFactory: newId, now });
     session = startSession(userId, now);
   })();
-  if (initialBorderGrant) publishCosmeticGranted(initialBorderGrant);
   return { user: db.getUser(userId), session };
 }
 
@@ -1761,32 +1677,6 @@ async function routeApi(req, res) {
 
   if (req.method === "GET" && pathname === "/api/auth/me") {
     return json(res, 200, { viewer: viewerPayload(viewer.id) });
-  }
-
-  if (req.method === "GET" && pathname === "/api/dev/cosmetics-manifest") {
-    try {
-      requireLocalDevRequest(req);
-      const manifest = JSON.parse(await readFile(cosmeticsManifestPath, "utf8"));
-      return json(res, 200, { manifest });
-    } catch (error) { return handleDomainError(error, res); }
-  }
-
-  if (req.method === "GET" && pathname === "/api/dev/cosmetics-assets") {
-    try {
-      requireLocalDevRequest(req);
-      return json(res, 200, { assets: await listCosmeticsAssetFiles() });
-    } catch (error) { return handleDomainError(error, res); }
-  }
-
-  if (req.method === "POST" && pathname === "/api/dev/cosmetics-manifest") {
-    try {
-      requireLocalDevRequest(req);
-      const body = await readJson(req);
-      validateCosmeticsManifest(body.manifest);
-      body.manifest.updated_at = new Date().toISOString();
-      await writeFile(cosmeticsManifestPath, `${JSON.stringify(body.manifest, null, 2)}\n`);
-      return json(res, 200, { ok: true, manifest: body.manifest });
-    } catch (error) { return handleDomainError(error, res); }
   }
 
   if (req.method === "PATCH" && pathname === "/api/auth/account/email") {

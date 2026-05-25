@@ -6,14 +6,18 @@ import {
   playSound,
   setSoundMode
 } from "./sound.mjs";
-import { initCosmetics, renderAvatar } from "./cosmetics.mjs";
-import { bindCosmeticsEditor, renderCosmeticsEditor } from "./cosmetics-editor.mjs";
 
-// Fire-and-forget; the renderer falls back to the initial-letter avatar
-// until the manifest finishes loading, then repaints the current route.
-initCosmetics().then(() => render());
+render();
 
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
+
+// Minimal initial-letter avatar. The previous PNG-layer cosmetic system was
+// ripped 2026-05-25; the new cosmetic system will introduce its own renderer.
+// Until then every renderAvatar call site just gets this baseline span.
+function renderAvatar(user, _opts = {}) {
+  const initial = escapeHtml((user?.handle?.[0] || "?").toUpperCase());
+  return `<span class="avatar" aria-hidden="true">${initial}</span>`;
+}
 
 function parseHash() {
   const raw = (window.location.hash || "").replace(/^#/, "");
@@ -608,11 +612,8 @@ function recentOpponentsForPlay(limit = 4) {
       timeControl: entry.timeControl,
       result: entry.result,
       deltaCents,
-      // Pass through avatar + trustTier so the rematch strip renders cosmetics
-      // via renderAvatar instead of a flat initial-letter circle.
       id: opp.id,
-      trustTier: opp.trustTier,
-      avatar: opp.avatar
+      trustTier: opp.trustTier
     });
     if (out.length >= limit) break;
   }
@@ -1862,7 +1863,6 @@ function renderScoutPopover() {
         const line = scoutEvidenceLine(user.evidence);
         return line ? `<p class="scout-evidence muted small">${escapeHtml(line)}</p>` : "";
       })()}
-      ${renderAvatarMeaning(user, { compact: true })}
       <div class="scout-stat-grid">
         <div><small>Win rate</small><strong>${escapeHtml(scoutWinRate(stats))}</strong></div>
         <div><small>Streak</small><strong>${escapeHtml(scoutStreakLabel(stats.currentStreak))}</strong></div>
@@ -3540,15 +3540,8 @@ function renderProfile() {
         <div>
           <h1>${escapeHtml(viewer.handle)}</h1>
           <p class="muted">${escapeHtml(viewer.email)}</p>
-          <div class="tag-row"><span>${escapeHtml(viewer.avatar?.identity?.base_piece_label || "Knight class")}</span><span>rating ${escapeHtml(viewer.rating)}</span>${calibratingChip}</div>
+          <div class="tag-row"><span>rating ${escapeHtml(viewer.rating)}</span>${calibratingChip}</div>
         </div>
-      </article>
-      <article class="card avatar-meaning-card">
-        <header>
-          <span class="eyebrow">Avatar identity</span>
-          <h2>What your avatar is saying</h2>
-        </header>
-        ${renderAvatarMeaning(viewer)}
       </article>
       <article class="card profile-quick-card">
         <header>
@@ -3697,76 +3690,10 @@ function profileVerificationLabel(user) {
   return "Unlinked";
 }
 
-function ratingSourceLabel(identity) {
-  if (!identity) return "starting rating";
-  if (identity.rating_source === "linked_account") {
-    const imported = identity.imported_rating;
-    const provider = imported?.provider ? formatProvider(imported.provider) : "linked account";
-    const timeClass = imported?.timeClass ? ` ${imported.timeClass}` : "";
-    return `${provider}${timeClass}`;
-  }
-  if (identity.rating_source === "horsey_rating") return "Horsey rating";
-  return "starting rating";
-}
-
-function trustFrameLabel(identity, user) {
-  const tier = identity?.trust_tier || user?.trustTier || "provisional";
-  const label = tier === "established" ? "elite frame" : `${tier} frame`;
-  return label.replace("_", " ");
-}
-
-function adornmentLabel(identity) {
-  const adornments = identity?.adornments || {};
-  const labels = [];
-  if (adornments.win_streak >= 3) labels.push(`${adornments.win_streak}-win flame`);
-  else if (adornments.first_win_laurel) labels.push("first-win laurel");
-  return labels.join(", ") || "none yet";
-}
-
-function avatarIdentitySentence(identity) {
-  if (!identity) return "";
-  const classLabel = identity.base_piece_label || "Knight class";
-  const source = ratingSourceLabel(identity);
-  const rating = identity.rating_basis != null ? ` ${identity.rating_basis}` : "";
-  const calibration = identity.calibrated ? "calibrated rating" : "current placement";
-  return `Your ${source}${rating} ${calibration} places you in the ${classLabel}.`;
-}
-
-function renderAvatarMeaning(user, { compact = false } = {}) {
-  const identity = user?.avatar?.identity;
-  if (!identity) return "";
-  const summary = [
-    identity.base_piece_label || "Knight class",
-    trustFrameLabel(identity, user),
-    adornmentLabel(identity)
-  ];
-  return `
-    <div class="avatar-meaning${compact ? " compact" : ""}">
-      <strong>${summary.map(escapeHtml).join(" · ")}</strong>
-      <span>${escapeHtml(avatarIdentitySentence(identity))}</span>
-    </div>
-  `;
-}
-
 const MILESTONE_TRACKS = [
-  {
-    key: "first_win",
-    label: "First-win laurel",
-    detail: "win one Horsey game",
-    cosmetic: "milestone__headwear__laurel"
-  },
-  {
-    key: "win_streak_3",
-    label: "Flame crown",
-    detail: "reach a 3-win streak",
-    cosmetic: "milestone__headwear__flame_crown"
-  },
-  {
-    key: "win_streak_5",
-    label: "Hot streak mark",
-    detail: "reach a 5-win streak",
-    cosmetic: null
-  }
+  { key: "first_win", label: "First win", detail: "win one Horsey game" },
+  { key: "win_streak_3", label: "3-win streak", detail: "reach a 3-win streak" },
+  { key: "win_streak_5", label: "5-win streak", detail: "reach a 5-win streak" }
 ];
 
 function milestoneSet(user) {
@@ -3775,7 +3702,8 @@ function milestoneSet(user) {
 
 function renderAchievementTrack(user) {
   const earned = milestoneSet(user);
-  const streak = user?.avatar?.live_state_flags?.win_streak ?? user?.avatar?.identity?.adornments?.win_streak ?? 0;
+  const currentStreak = user?.stats?.currentStreak;
+  const streak = currentStreak?.kind === "W" ? Number(currentStreak.length || 0) : 0;
   return `
     <div class="achievement-track">
       <div class="unlock-list">
@@ -3790,7 +3718,7 @@ function renderAchievementTrack(user) {
               <span>${unlocked ? "Unlocked" : `${escapeHtml(String(progress))}/${escapeHtml(String(target))}`}</span>
               <div>
                 <strong>${escapeHtml(track.label)}</strong>
-                <small>${escapeHtml(track.detail)}${track.cosmetic ? ` · ${escapeHtml(track.cosmetic)}` : ""}</small>
+                <small>${escapeHtml(track.detail)}</small>
               </div>
             </div>
           `;
@@ -3848,7 +3776,6 @@ function renderUserProfile() {
           ${user.calibrating ? `<span class="trust-chip muted">calibrating</span>` : ""}
         </div>
         ${renderProfileLinkedChips(user.externalAccounts)}
-        ${renderAvatarMeaning(user, { compact: true })}
         <div class="profile-h2h">
           <small>H2H vs you</small>
           <strong>${escapeHtml(h2hScore)} ${h2hMoney}</strong>
@@ -3931,12 +3858,10 @@ function render() {
     settlement: renderSettlement,
     history: state.routeParam ? renderSettlement : renderHistoryList,
     profile: renderProfile,
-    user: renderUserProfile,
-    "dev-cosmetics": renderCosmeticsEditor
+    user: renderUserProfile
   };
   const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
-  if (state.route === "dev-cosmetics") bindCosmeticsEditor(render);
   manageChallengeCountdown();
   manageClockTick();
   const moveList = document.querySelector("[data-move-list]");
