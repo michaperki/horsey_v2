@@ -2531,12 +2531,16 @@ function finalizedGameSettlementPanel(game) {
   }
 
   const balanceAfterCents = settlement.balanceAfterCents;
+  const stakeCents = game?.pot?.stakeCents ?? 0;
   const balanceBeforeCents = (won || drew)
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
-    : balanceAfterCents;
+    : balanceAfterCents + stakeCents;
   const amountTweenAttr = won || drew
     ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
     : "";
+  const firstReveal = isFirstSettlementRenderFor(game?.id);
+  const gateClass = firstReveal ? " settlement-rematch-gate" : "";
+  const ratingRevealAttr = firstReveal ? " data-rating-reveal" : "";
 
   return `
     <article class="felt settlement settlement-${escapeHtml(slideMode)} game-panel">
@@ -2552,12 +2556,12 @@ function finalizedGameSettlementPanel(game) {
           <small>Balance</small>
           <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
         </div>
-        ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${formatRatingDelta(settlement.ratingDelta)}</strong></div>` : ""}
+        ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong${ratingRevealAttr}>${formatRatingDelta(settlement.ratingDelta)}</strong></div>` : ""}
         <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
       </div>
       <div class="settlement-actions">
-        ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
-        <button data-nav="play">Find new opponent</button>
+        ${settlement.rematchChallenge ? `<button class="primary${gateClass}" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
+        <button class="${gateClass.trim()}" data-nav="play">Find new opponent</button>
       </div>
       ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
     </article>
@@ -3227,15 +3231,22 @@ function renderSettlement() {
   const slideMode = won ? "win" : drew ? "draw" : "loss";
 
   // Bankroll tween: the metric-grid Balance ticks up on win/draw (escrow
-  // release + winnings), stays on loss (escrow was already forfeit; the
-  // amount line carries the loss narrative). See ARENA_NEXT_PASS Phase 4.
+  // release + winnings). On loss the escrow already left the available
+  // balance at game start, but the user sees no movement at settlement
+  // unless we span the dip ourselves — so for losses the tween runs from
+  // "balance before staking" → "balance after settle," which mirrors the
+  // money leaving on screen. See ARENA_NEXT_PASS § Phase 4.
   const balanceAfterCents = settlement.balanceAfterCents;
+  const stakeCents = game?.pot?.stakeCents ?? 0;
   const balanceBeforeCents = (won || drew)
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
-    : balanceAfterCents;
+    : balanceAfterCents + stakeCents;
   const amountTweenAttr = won || drew
     ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
     : "";
+  const firstReveal = isFirstSettlementRenderFor(settlement.gameId);
+  const gateClass = firstReveal ? " settlement-rematch-gate" : "";
+  const ratingRevealAttr = firstReveal ? " data-rating-reveal" : "";
 
   return `
     <section class="grid two">
@@ -3249,7 +3260,7 @@ function renderSettlement() {
             <small>Balance</small>
             <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
           </div>
-          ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong>${formatRatingDelta(settlement.ratingDelta)}${settlement.ratingAfter !== null ? ` <span class="muted">→ ${settlement.ratingAfter}</span>` : ""}</strong></div>` : ""}
+          ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong${ratingRevealAttr}>${formatRatingDelta(settlement.ratingDelta)}${settlement.ratingAfter !== null ? ` <span class="muted">→ ${settlement.ratingAfter}</span>` : ""}</strong></div>` : ""}
           <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
         </div>
       </article>
@@ -3260,8 +3271,8 @@ function renderSettlement() {
           `<span class="settlement-scout-id">${renderAvatar(settlementOpponent, { surface: "dense_row" })}<span>${escapeHtml(opponentHandle)}</span></span>`,
           "settlement-scout"
         ) : ""}
-        ${settlement.rematchChallenge ? `<button class="primary" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
-        <button data-nav="play">Find new opponent</button>
+        ${settlement.rematchChallenge ? `<button class="primary${gateClass}" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
+        <button class="${gateClass.trim()}" data-nav="play">Find new opponent</button>
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
@@ -4212,8 +4223,11 @@ function runBankrollTweens() {
     const from = Number(node.dataset.from ?? 0);
     const to = Number(node.dataset.to ?? 0);
     if (from !== to && !isReducedMotion()) {
-      // Bankroll counter tick — paired sportsbook-style audio.
-      playSound("bankroll_tick", { count: 6, spacingMs: 110 });
+      // Bankroll counter tick — paired sportsbook-style audio. The tick
+      // descends in pitch on a downward balance change so the audio is
+      // honest about direction (SOUNDSCAPE § Economic layer).
+      const direction = to >= from ? "up" : "down";
+      playSound("bankroll_tick", { count: 6, spacingMs: 110, direction });
     }
     tweenCents(node, from, to, 800, money);
   });
@@ -4231,6 +4245,18 @@ function maybePlaySettlementAudio() {
   if (!gameId || gameId === lastSettlementAudioId) return;
   lastSettlementAudioId = gameId;
   playSettlementSound(settlement.result);
+}
+
+// Track which settlement we've already shown the rematch-CTA gate animation
+// for so realtime-triggered re-renders during the same view don't replay it.
+// Returns true exactly once per gameId; the renderer omits the gate class on
+// subsequent renders.
+const settlementRenderedFor = new Set();
+function isFirstSettlementRenderFor(gameId) {
+  if (!gameId) return false;
+  if (settlementRenderedFor.has(gameId)) return false;
+  settlementRenderedFor.add(gameId);
+  return true;
 }
 
 function runAmountTweens() {

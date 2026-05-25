@@ -141,13 +141,18 @@ function playChipCascade({ count = 5, spacingMs = 70, tier = "critical" } = {}) 
 
 // Sub-second ticker — sportsbook-style counter sound. Square wave bursts
 // suggest a digital sportsbook display rather than a slot machine.
-function playBankrollTick({ count = 6, spacingMs = 110 } = {}) {
+function playBankrollTick({ count = 6, spacingMs = 110, direction = "up" } = {}) {
   if (!ctx) return;
+  // Up-ticks sweep brighter; down-ticks (losses) start lower and descend so
+  // the same "sportsbook counter" register reads as honest about direction.
+  // See docs/SOUNDSCAPE_NEXT_PASS.md § Economic layer.
+  const base = direction === "down" ? 720 : 1100;
+  const step = direction === "down" ? -18 : 20;
   for (let i = 0; i < count; i += 1) {
     setTimeout(() => {
       const osc = ctx.createOscillator();
       osc.type = "square";
-      osc.frequency.value = 1100 + i * 20;
+      osc.frequency.value = base + i * step;
       const g = ctx.createGain();
       const now = ctx.currentTime;
       g.gain.setValueAtTime(0, now);
