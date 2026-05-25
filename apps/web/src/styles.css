@@ -1397,12 +1397,118 @@ p {
   margin-top: 0;
 }
 
+.cos-editor-filter-bar {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(27, 24, 21, 0.08);
+}
+
+.cos-editor-filter-search {
+  display: grid;
+  gap: 4px;
+}
+
+.cos-editor-filter-search input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(27, 24, 21, 0.18);
+  background: var(--paper);
+  font: inherit;
+}
+
+.cos-editor-filter-slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cos-editor-filter-slots button {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(27, 24, 21, 0.16);
+  background: rgba(27, 24, 21, 0.03);
+  color: inherit;
+  font-size: 11px;
+  text-transform: lowercase;
+  cursor: pointer;
+}
+
+.cos-editor-filter-slots button.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+
+.cos-editor-filter-core {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
 .cos-editor-layer-list {
   display: grid;
-  gap: 6px;
+  gap: 10px;
   max-height: 560px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.cos-editor-layer-group h3 {
+  margin: 0 0 4px 0;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.cos-editor-layer-group h3 small {
+  font-size: 10px;
+  opacity: 0.7;
+  font-weight: 600;
+}
+
+.cos-editor-layer-group {
+  display: grid;
+  gap: 4px;
+}
+
+.cos-editor-base-switcher {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.cos-editor-base-switcher-row {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.cos-editor-base-switcher-row button {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(27, 24, 21, 0.16);
+  background: rgba(27, 24, 21, 0.03);
+  color: inherit;
+  font-size: 12px;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.cos-editor-base-switcher-row button.active {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
 }
 
 .cos-editor-layer-row {

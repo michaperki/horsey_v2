@@ -39,9 +39,18 @@ const state = {
   selectedId: "base__piece__knight",
   catalogDraft: null,
   density: "standard",
+  layerFilter: { slot: "all", query: "", coreOnly: false },
   notice: "",
   error: ""
 };
+
+const BASE_PIECE_IDS = [
+  "base__piece__pawn",
+  "base__piece__knight",
+  "base__piece__bishop",
+  "base__piece__rook",
+  "base__piece__queen"
+];
 
 function escapeHtml(str) {
   return String(str ?? "")
@@ -230,6 +239,31 @@ function sortedItemIds(manifest) {
   });
 }
 
+function filteredLayerIds(manifest) {
+  const { slot, query, coreOnly } = state.layerFilter;
+  const needle = (query || "").trim().toLowerCase();
+  return sortedItemIds(manifest).filter((id) => {
+    const item = manifest.items[id];
+    if (!item) return false;
+    if (coreOnly && !CORE_IDS.includes(id)) return false;
+    if (slot && slot !== "all" && item.slot !== slot) return false;
+    if (needle) {
+      const haystack = `${id} ${itemLabel(id, item)} ${item.persona || ""} ${item.slot || ""}`.toLowerCase();
+      if (!haystack.includes(needle)) return false;
+    }
+    return true;
+  });
+}
+
+function availableSlots(manifest) {
+  const slots = new Set();
+  for (const id of Object.keys(manifest.items || {})) {
+    const item = manifest.items[id];
+    if (item?.slot && itemAssetExists(item)) slots.add(item.slot);
+  }
+  return ["all", ...SLOT_OPTIONS.filter((slot) => slots.has(slot))];
+}
+
 function activeLayerIds() {
   return [state.baseId, ...state.enabled]
     .filter(Boolean)
@@ -312,21 +346,78 @@ function manifestPatch() {
   return { items: changed };
 }
 
-function renderLayerControls(manifest) {
-  return sortedItemIds(manifest).map((id) => {
-    const item = manifest.items[id];
-    const isBase = item.slot === "base";
-    const checked = isBase ? state.baseId === id : state.enabled.has(id);
-    const core = CORE_IDS.includes(id) ? " core" : "";
-    return `
-      <label class="cos-editor-layer-row${core}${state.selectedId === id ? " active" : ""}">
-        <input type="${isBase ? "radio" : "checkbox"}" name="${isBase ? "cos-base" : `cos-${escapeHtml(item.slot)}`}"
-          data-cos-layer-toggle="${escapeHtml(id)}" ${checked ? "checked" : ""}>
-        <button type="button" data-cos-select-layer="${escapeHtml(id)}">${escapeHtml(itemLabel(id, item))}</button>
-        <small>${escapeHtml(item.slot)} · z ${escapeHtml(item.z)}</small>
+function renderLayerFilterBar(manifest) {
+  const { slot, query, coreOnly } = state.layerFilter;
+  const slots = availableSlots(manifest);
+  return `
+    <div class="cos-editor-filter-bar">
+      <label class="cos-editor-filter-search">
+        <span class="picker-label">Search</span>
+        <input type="search" placeholder="name, persona, slot..." value="${escapeHtml(query)}"
+          data-cos-layer-search>
       </label>
-    `;
-  }).join("");
+      <div class="cos-editor-filter-slots">
+        ${slots.map((s) => `
+          <button type="button" class="${s === slot ? "active" : ""}" data-cos-layer-slot="${escapeHtml(s)}">${escapeHtml(s)}</button>
+        `).join("")}
+      </div>
+      <label class="cos-editor-filter-core">
+        <input type="checkbox" ${coreOnly ? "checked" : ""} data-cos-layer-core-only>
+        Core only
+      </label>
+    </div>
+  `;
+}
+
+function renderLayerControls(manifest) {
+  const ids = filteredLayerIds(manifest);
+  if (ids.length === 0) {
+    return `<p class="muted small">No layers match the current filter.</p>`;
+  }
+  // Group by slot once the catalog gets dense; preserves core-first within each group.
+  const groups = new Map();
+  for (const id of ids) {
+    const item = manifest.items[id];
+    const slot = item.slot || "other";
+    if (!groups.has(slot)) groups.set(slot, []);
+    groups.get(slot).push(id);
+  }
+  return [...groups.entries()].map(([slot, slotIds]) => `
+    <div class="cos-editor-layer-group">
+      <h3>${escapeHtml(slot)}<small>${slotIds.length}</small></h3>
+      ${slotIds.map((id) => {
+        const item = manifest.items[id];
+        const isBase = item.slot === "base";
+        const checked = isBase ? state.baseId === id : state.enabled.has(id);
+        const core = CORE_IDS.includes(id) ? " core" : "";
+        return `
+          <label class="cos-editor-layer-row${core}${state.selectedId === id ? " active" : ""}">
+            <input type="${isBase ? "radio" : "checkbox"}" name="${isBase ? "cos-base" : `cos-${escapeHtml(item.slot)}`}"
+              data-cos-layer-toggle="${escapeHtml(id)}" ${checked ? "checked" : ""}>
+            <button type="button" data-cos-select-layer="${escapeHtml(id)}">${escapeHtml(itemLabel(id, item))}</button>
+            <small>z ${escapeHtml(item.z)}</small>
+          </label>
+        `;
+      }).join("")}
+    </div>
+  `).join("");
+}
+
+function renderBasePieceSwitcher(manifest) {
+  const present = BASE_PIECE_IDS.filter((id) => itemAssetExists(manifest.items[id]));
+  if (present.length === 0) return "";
+  return `
+    <div class="cos-editor-base-switcher">
+      <span class="picker-label">Base piece</span>
+      <div class="cos-editor-base-switcher-row">
+        ${present.map((id) => {
+          const piece = (id.split("__").pop() || "").trim();
+          const active = state.baseId === id ? " active" : "";
+          return `<button type="button" class="${active.trim()}" data-cos-base-piece="${escapeHtml(id)}">${escapeHtml(piece)}</button>`;
+        }).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function renderCatalogDraft() {
@@ -462,9 +553,11 @@ export function renderCosmeticsEditor() {
       <div class="dev-cosmetics-grid">
         <aside class="card cos-editor-panel">
           <h2>Layers</h2>
+          ${renderLayerFilterBar(manifest)}
           <div class="cos-editor-layer-list">${renderLayerControls(manifest)}</div>
         </aside>
         <section class="card cos-editor-stage">
+          ${renderBasePieceSwitcher(manifest)}
           <div class="cos-editor-density-tabs">
             ${DENSITIES.map((d) => `<button type="button" class="${state.density === d ? "active" : ""}" data-cos-density="${d}">${d}</button>`).join("")}
           </div>
@@ -623,6 +716,36 @@ export function bindCosmeticsEditor(rerender) {
       state.density = button.dataset.cosDensity;
       rerender();
     });
+  });
+  document.querySelectorAll("[data-cos-base-piece]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.cosBasePiece;
+      if (!state.manifest?.items?.[id]) return;
+      state.baseId = id;
+      state.selectedId = id;
+      rerender();
+    });
+  });
+  document.querySelectorAll("[data-cos-layer-slot]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.layerFilter.slot = button.dataset.cosLayerSlot;
+      rerender();
+    });
+  });
+  const searchInput = document.querySelector("[data-cos-layer-search]");
+  if (searchInput) {
+    // Preserve cursor/focus across rerenders: only re-render after the user
+    // stops typing for 80ms. Otherwise every keystroke loses focus.
+    let timer = null;
+    searchInput.addEventListener("input", () => {
+      state.layerFilter.query = searchInput.value;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(rerender, 80);
+    });
+  }
+  document.querySelector("[data-cos-layer-core-only]")?.addEventListener("change", (event) => {
+    state.layerFilter.coreOnly = event.target.checked;
+    rerender();
   });
   document.querySelectorAll("[data-cos-field]").forEach((input) => {
     input.addEventListener("input", () => {
