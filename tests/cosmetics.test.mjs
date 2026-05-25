@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveAvatarForUser, resolveBasePieceForUser } from "../apps/api/cosmetics.mjs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import {
+  grantCosmeticsForMilestone,
+  resolveAvatarForUser,
+  resolveBasePieceForUser
+} from "../apps/api/cosmetics.mjs";
+import { openDatabase } from "../apps/api/db.mjs";
 
 function account(rating, status = "claimed") {
   return {
@@ -54,4 +62,56 @@ test("avatar resolver exposes identity metadata and live-state headwear priority
   assert.equal(avatar.identity.base_piece, "rook");
   assert.equal(avatar.identity.adornments.first_win_laurel, true);
   assert.equal(avatar.identity.adornments.win_streak, 3);
+});
+
+test("first-win milestone grants and equips the laurel cosmetic", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "horsey-cosmetics-"));
+  const db = openDatabase(path.join(dir, "test.db"));
+  try {
+    db.insertUser({
+      id: "usr_a",
+      email: "a@example.test",
+      handle: "Alpha",
+      passwordHash: "hash",
+      passwordSalt: "salt",
+      rating: 1200,
+      createdAt: "2026-05-24T00:00:00.000Z"
+    });
+    const milestone = {
+      id: "mst_first",
+      userId: "usr_a",
+      eventKey: "first_win",
+      tier: 3,
+      gameId: "game_1",
+      metadata: {},
+      occurredAt: "2026-05-24T00:01:00.000Z"
+    };
+
+    const grants = grantCosmeticsForMilestone(db, milestone, { idFactory: () => "ucm_first" });
+
+    assert.equal(grants.length, 1);
+    assert.equal(grants[0].cosmeticId, "milestone__headwear__laurel");
+    assert.equal(db.listUserCosmetics("usr_a").length, 1);
+    assert.deepEqual(db.listUserCosmeticEquipForUser("usr_a"), {
+      headwear: "milestone__headwear__laurel"
+    });
+    assert.equal(db.getCosmeticCatalogItem("milestone__headwear__laurel").slot, "headwear");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("equipped laurel renders from ownership even before milestone fallback", () => {
+  const db = {
+    getUser: () => ({ id: "usr_a", rating: 1400 }),
+    listFinalizedGamesForUser: () => [],
+    listExternalAccountsForUser: () => [],
+    countUserMilestoneByKey: () => 0,
+    listUserCosmeticEquipForUser: () => ({ headwear: "milestone__headwear__laurel" })
+  };
+
+  const avatar = resolveAvatarForUser(db, "usr_a");
+
+  assert.equal(avatar.headwear, "milestone__headwear__laurel");
 });

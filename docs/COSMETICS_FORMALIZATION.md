@@ -1124,16 +1124,28 @@ Profile hierarchy rule:
 ### 8.2 High-leverage implementation ladder
 
 1. **Lock trust-border semantics.** Decide and document the canonical visual ladder. Current asset direction is `provisional`, `verified`, `trusted`, `elite`, `champion`; product trust tiers are still `provisional`, `claimed`, `verified`, `established`. The app needs one explicit mapping before more public surfaces rely on it.
-2. **Implement base-piece resolver.** Map chess strength to `pawn` / `knight` / `bishop` / `rook` / `queen` using `users.rating`, imported external ratings, and calibration state. Start conservative; thresholds can tune later. This is the highest-leverage move because it makes base avatars meaningful across the whole UI.
-3. **Add Profile avatar explanation + progression surfaces.** Show the user their avatar large with simple labels: base piece = rating class, border = trust status, adornments = earned history. Profile also needs the non-XP progression surface described above.
-4. **Add the three persistence tables** from § 6.2: `cosmetics`, `user_cosmetics`, and `user_cosmetic_equip`. Runtime composition is live, but ownership is still too implicit.
-5. **Wire the first-win cosmetic grant.** When the `first_win` milestone fires, grant/equip `milestone__headwear__laurel`. This proves event → grant → owned cosmetic → avatar.
-6. **Wire trust-tier border grants.** Trust tier changes should grant and equip the matching border while retiring incompatible old tier-bound borders. This proves trust system → identity.
-7. **Wire live-state override from real equip state.** `flame_crown` should override laurel while the streak is active, then release back to laurel when the streak breaks.
+2. **Implemented: base-piece resolver.** Map chess strength to `pawn` / `knight` / `bishop` / `rook` / `queen` using `users.rating`, imported external ratings, and calibration state. Start conservative; thresholds can tune later. This is the highest-leverage move because it makes base avatars meaningful across the whole UI.
+3. **Implemented: Profile avatar explanation + progression surfaces.** Show the user their avatar large with simple labels: base piece = rating class, border = trust status, adornments = earned history. Profile also needs the non-XP progression surface described above.
+4. **Implemented: the three persistence tables** from § 6.2: `cosmetics`, `user_cosmetics`, and `user_cosmetic_equip`. Runtime composition now has a real ownership/equip backing store, though only the first earned adornment path is wired.
+5. **Implemented: first-win cosmetic grant.** When the `first_win` milestone fires, the server grants and equips `milestone__headwear__laurel`. This proves event → grant → owned cosmetic → avatar.
+6. **Implemented: live-state override from real equip state.** `flame_crown` overrides equipped laurel while the streak is active, then releases back to the equipped headwear when the streak breaks.
+7. **Wire trust-tier border grants.** Trust tier changes should grant and equip the matching border while retiring incompatible old tier-bound borders. This proves trust system → identity and resolves the remaining computed-vs-owned inconsistency.
 8. **Promote the dev editor from alignment tool to catalog tool.** Add sorting/filtering, better uncatalogued-asset intake, and a recipe/variant model for authored composites such as `base piece + item = piece-specific PNG`.
 9. **Upgrade scouting/profile data around the avatar.** Rating class, trust status, calibration confidence, recent form, and H2H should reinforce the visual identity on wager/scout surfaces.
 
-### 8.3 Explicit deferrals
+### 8.3 Ownership/equip slice — May 24, 2026
+
+The first real persistence slice is intentionally narrow:
+
+- `cosmetics` stores seeded catalog metadata for server-owned grants. The initial server seed is minimal and currently covers `milestone__headwear__laurel`; the richer visual manifest remains in `apps/web/assets/cosmetics/manifest.json`.
+- `user_cosmetics` records immutable provenance, e.g. `source = milestone:<milestone_id>`.
+- `user_cosmetic_equip` records the active item per slot. `first_win` auto-equips laurel into `headwear`.
+- The avatar resolver now reads equipped `headwear` first, but a `win_streak >= 3` live state still takes priority and renders `milestone__headwear__flame_crown`.
+- Existing accounts with older `first_win` milestones still get laurel through resolver fallback until a deliberate backfill is added.
+
+Do not generalize this into shop logic yet. The next persistence expansion should be trust-border grants, because those are system-owned identity signals and need clean downgrade/retirement semantics before paid or player-selected cosmetics exist.
+
+### 8.4 Explicit deferrals
 
 - **Item shop.** Defer until ownership/equip state, rating-class base pieces, trust-border grants, and at least one milestone grant are real. The shop should sell expression, not base-piece upgrades or trust signals.
 - **Large catalog expansion.** Add assets only as they can be classified, tuned, and explained. More assets without ownership semantics creates noise.

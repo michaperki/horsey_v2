@@ -44,7 +44,7 @@ import {
   TIER_FLOORS
 } from "../../packages/shared/trust.mjs";
 import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
-import { resolveAvatarForUser } from "./cosmetics.mjs";
+import { grantCosmeticsForMilestone, resolveAvatarForUser } from "./cosmetics.mjs";
 import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
@@ -1234,6 +1234,7 @@ function finalizeGame(game, { result, reason }) {
   const defaultReason = result === "draw" ? "agreement" : "checkmate";
 
   let unlockedMilestones = [];
+  const cosmeticGrants = [];
   db.transaction(() => {
     const outcome = settleGame({
       gameId: game.id,
@@ -1274,11 +1275,15 @@ function finalizeGame(game, { result, reason }) {
       // commit can't leak unlocks for an un-finalized game. Persist here;
       // publish over the broker after the transaction commits.
       unlockedMilestones = detectMilestonesForGame(db, finalizedGame);
-      for (const m of unlockedMilestones) db.insertUserMilestone(m);
+      for (const m of unlockedMilestones) {
+        db.insertUserMilestone(m);
+        cosmeticGrants.push(...grantCosmeticsForMilestone(db, m, { idFactory: newId }));
+      }
     }
   })();
   clearClockTimeout(game.id);
   for (const m of unlockedMilestones) publishMilestoneUnlocked(m);
+  for (const grant of cosmeticGrants) publishCosmeticGranted(grant);
 }
 
 function publishMilestoneUnlocked(milestone) {
@@ -1286,6 +1291,20 @@ function publishMilestoneUnlocked(milestone) {
   broker.publish(CHANNELS.user(milestone.userId), {
     type: "milestone.unlocked",
     milestone: publicMilestonePayload(milestone)
+  });
+}
+
+function publishCosmeticGranted(grant) {
+  if (!grant) return;
+  broker.publish(CHANNELS.user(grant.userId), {
+    type: "cosmetic.granted",
+    cosmetic: {
+      id: grant.id,
+      cosmeticId: grant.cosmeticId,
+      slot: grant.slot,
+      source: grant.source,
+      grantedAt: grant.grantedAt
+    }
   });
 }
 

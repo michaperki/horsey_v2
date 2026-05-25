@@ -43,6 +43,72 @@ const PIECE_THRESHOLDS = [
   { piece: "queen", min: 2100, max: Infinity, label: "elite" }
 ];
 
+const MINIMAL_CATALOG = {
+  milestone__headwear__laurel: {
+    id: "milestone__headwear__laurel",
+    kind: ["atom"],
+    slot: "headwear",
+    z: 50,
+    coupling: "generic",
+    piece: null,
+    persona: "milestone",
+    function: "achievement_trophy",
+    rarity: "earned",
+    acquisition: { mode: "milestone", event_key: "first_win" },
+    trustExclusive: false,
+    phase: "v1",
+    enabled: true,
+    metadata: {
+      label: "First-win laurel",
+      note: "Granted and auto-equipped when the first_win milestone fires."
+    }
+  }
+};
+
+function ensureCatalogItem(db, cosmeticId) {
+  const item = MINIMAL_CATALOG[cosmeticId];
+  if (!item || typeof db?.upsertCosmeticCatalogItem !== "function") return;
+  db.upsertCosmeticCatalogItem(item);
+}
+
+export function cosmeticGrantsForMilestone(milestone) {
+  if (!milestone) return [];
+  if (milestone.eventKey === "first_win") {
+    return [{
+      userId: milestone.userId,
+      cosmeticId: "milestone__headwear__laurel",
+      slot: "headwear",
+      source: `milestone:${milestone.id}`,
+      grantedAt: milestone.occurredAt
+    }];
+  }
+  return [];
+}
+
+export function grantCosmeticsForMilestone(db, milestone, { idFactory } = {}) {
+  const idFor = idFactory || ((prefix) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 8)}`);
+  const grants = [];
+  for (const grant of cosmeticGrantsForMilestone(milestone)) {
+    ensureCatalogItem(db, grant.cosmeticId);
+    const inserted = db.grantUserCosmetic({
+      id: idFor("ucm"),
+      userId: grant.userId,
+      cosmeticId: grant.cosmeticId,
+      source: grant.source,
+      grantedAt: grant.grantedAt
+    });
+    if (!inserted) continue;
+    db.equipUserCosmetic({
+      userId: grant.userId,
+      slot: grant.slot,
+      cosmeticId: grant.cosmeticId,
+      updatedAt: grant.grantedAt
+    });
+    grants.push({ ...grant, id: db.getUserCosmeticBySource?.(grant.userId, grant.cosmeticId, grant.source)?.id ?? null });
+  }
+  return grants;
+}
+
 function outcomeForUser(game, userId) {
   if (!game || game.state !== "finalized") return null;
   if (!game.winnerId) return "draw";
@@ -141,6 +207,9 @@ export function resolveAvatarForUser(db, userId) {
   const accounts = db.listExternalAccountsForUser(userId) || [];
   const tier = computeTrustTier({ externalAccounts: accounts, finishedGames });
   const streak = currentWinStreakFromGames(recentGames, userId);
+  const equipped = typeof db.listUserCosmeticEquipForUser === "function"
+    ? db.listUserCosmeticEquipForUser(userId)
+    : {};
   const hasFirstWin = db.countUserMilestoneByKey(userId, "first_win") > 0;
   const basePiece = resolveBasePieceForUser(user, accounts, finishedGames);
   const piece = basePiece.piece;
@@ -151,7 +220,9 @@ export function resolveAvatarForUser(db, userId) {
     outerwear: null,
     accent: null,
     facewear: null,
-    headwear: headwearFor({ streak, hasFirstWin }),
+    headwear: streak >= 3
+      ? "milestone__headwear__flame_crown"
+      : (equipped.headwear || headwearFor({ streak, hasFirstWin })),
     back_aura: null,
     front_aura: frontAuraForTier(tier, piece),
     attached_badge: badgeForTier(tier),

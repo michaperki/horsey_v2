@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -128,6 +128,51 @@ const SCHEMA = `
     occurred_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_user_milestones_user ON user_milestones(user_id, event_key, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS cosmetics (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    z INTEGER,
+    coupling TEXT NOT NULL,
+    piece TEXT,
+    persona TEXT,
+    function TEXT NOT NULL,
+    rarity TEXT NOT NULL,
+    acquisition_json TEXT NOT NULL,
+    trust_exclusive INTEGER NOT NULL DEFAULT 0,
+    phase TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    metadata_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_cosmetics_slot ON cosmetics(slot);
+  CREATE INDEX IF NOT EXISTS idx_cosmetics_persona ON cosmetics(persona);
+  CREATE INDEX IF NOT EXISTS idx_cosmetics_enabled ON cosmetics(enabled, phase);
+
+  CREATE TABLE IF NOT EXISTS user_cosmetics (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    cosmetic_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    retired_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (cosmetic_id) REFERENCES cosmetics(id),
+    UNIQUE(user_id, cosmetic_id, source)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_cosmetics_user ON user_cosmetics(user_id, retired_at);
+
+  CREATE TABLE IF NOT EXISTS user_cosmetic_equip (
+    user_id TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    cosmetic_id TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, slot),
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (cosmetic_id) REFERENCES cosmetics(id)
+  );
 `;
 
 function rowToPublicUser(row) {
@@ -225,6 +270,40 @@ function rowToTicket(row) {
   };
 }
 
+function rowToCosmetic(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    kind: row.kind ? row.kind.split(",").filter(Boolean) : [],
+    slot: row.slot,
+    z: row.z,
+    coupling: row.coupling,
+    piece: row.piece,
+    persona: row.persona,
+    function: row.function,
+    rarity: row.rarity,
+    acquisition: row.acquisition_json ? JSON.parse(row.acquisition_json) : {},
+    trustExclusive: !!row.trust_exclusive,
+    phase: row.phase,
+    enabled: !!row.enabled,
+    metadata: row.metadata_json ? JSON.parse(row.metadata_json) : {},
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function rowToUserCosmetic(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    cosmeticId: row.cosmetic_id,
+    source: row.source,
+    grantedAt: row.granted_at,
+    retiredAt: row.retired_at
+  };
+}
+
 export function openDatabase(dbPath) {
   mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
@@ -283,6 +362,9 @@ function migrateSchema(db) {
   }
   // v5 → v6: user_milestones table is created by the SCHEMA exec on the next
   // line. No backfill — milestones detected from this point forward only.
+  // v6 → v7: cosmetics, user_cosmetics, and user_cosmetic_equip are likewise
+  // created by the SCHEMA exec. Cosmetic ownership starts prospectively with
+  // new grants; legacy milestones can still render via resolver fallback.
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -420,6 +502,57 @@ function makeApi(db) {
     `),
     listUserMilestones: db.prepare(`
       SELECT * FROM user_milestones WHERE user_id = ? ORDER BY occurred_at DESC LIMIT 50
+    `),
+
+    upsertCosmeticCatalogItem: db.prepare(`
+      INSERT INTO cosmetics (
+        id, kind, slot, z, coupling, piece, persona, function, rarity,
+        acquisition_json, trust_exclusive, phase, enabled, metadata_json,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        kind = excluded.kind,
+        slot = excluded.slot,
+        z = excluded.z,
+        coupling = excluded.coupling,
+        piece = excluded.piece,
+        persona = excluded.persona,
+        function = excluded.function,
+        rarity = excluded.rarity,
+        acquisition_json = excluded.acquisition_json,
+        trust_exclusive = excluded.trust_exclusive,
+        phase = excluded.phase,
+        enabled = excluded.enabled,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `),
+    getCosmeticCatalogItem: db.prepare("SELECT * FROM cosmetics WHERE id = ?"),
+    listCosmeticCatalog: db.prepare("SELECT * FROM cosmetics ORDER BY slot ASC, id ASC"),
+    grantUserCosmetic: db.prepare(`
+      INSERT OR IGNORE INTO user_cosmetics (id, user_id, cosmetic_id, source, granted_at, retired_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `),
+    listUserCosmetics: db.prepare(`
+      SELECT * FROM user_cosmetics
+      WHERE user_id = ? AND retired_at IS NULL
+      ORDER BY granted_at DESC, rowid DESC
+    `),
+    getUserCosmeticBySource: db.prepare(`
+      SELECT * FROM user_cosmetics
+      WHERE user_id = ? AND cosmetic_id = ? AND source = ?
+      LIMIT 1
+    `),
+    equipUserCosmetic: db.prepare(`
+      INSERT INTO user_cosmetic_equip (user_id, slot, cosmetic_id, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, slot) DO UPDATE SET
+        cosmetic_id = excluded.cosmetic_id,
+        updated_at = excluded.updated_at
+    `),
+    listUserCosmeticEquip: db.prepare(`
+      SELECT slot, cosmetic_id, updated_at FROM user_cosmetic_equip
+      WHERE user_id = ?
+      ORDER BY slot ASC
     `),
 
     insertTicket: db.prepare(`
@@ -653,6 +786,58 @@ function makeApi(db) {
         metadata: row.metadata_json ? JSON.parse(row.metadata_json) : {},
         occurredAt: row.occurred_at
       }));
+    },
+
+    upsertCosmeticCatalogItem(item) {
+      const now = item.updatedAt ?? new Date().toISOString();
+      stmts.upsertCosmeticCatalogItem.run(
+        item.id,
+        Array.isArray(item.kind) ? item.kind.join(",") : String(item.kind || "atom"),
+        item.slot,
+        item.z ?? null,
+        item.coupling ?? "generic",
+        item.piece ?? null,
+        item.persona ?? null,
+        item.function ?? "cosmetic",
+        item.rarity ?? "common",
+        JSON.stringify(item.acquisition ?? {}),
+        item.trustExclusive ? 1 : 0,
+        item.phase ?? "v1",
+        item.enabled === false ? 0 : 1,
+        JSON.stringify(item.metadata ?? item),
+        item.createdAt ?? now,
+        now
+      );
+    },
+    getCosmeticCatalogItem(id) {
+      return rowToCosmetic(stmts.getCosmeticCatalogItem.get(id));
+    },
+    listCosmeticCatalog() {
+      return stmts.listCosmeticCatalog.all().map(rowToCosmetic);
+    },
+    grantUserCosmetic(grant) {
+      const result = stmts.grantUserCosmetic.run(
+        grant.id,
+        grant.userId,
+        grant.cosmeticId,
+        grant.source,
+        grant.grantedAt,
+        grant.retiredAt ?? null
+      );
+      return result.changes > 0;
+    },
+    listUserCosmetics(userId) {
+      return stmts.listUserCosmetics.all(userId).map(rowToUserCosmetic);
+    },
+    getUserCosmeticBySource(userId, cosmeticId, source) {
+      return rowToUserCosmetic(stmts.getUserCosmeticBySource.get(userId, cosmeticId, source));
+    },
+    equipUserCosmetic({ userId, slot, cosmeticId, updatedAt = new Date().toISOString() }) {
+      stmts.equipUserCosmetic.run(userId, slot, cosmeticId ?? null, updatedAt);
+    },
+    listUserCosmeticEquipForUser(userId) {
+      const rows = stmts.listUserCosmeticEquip.all(userId);
+      return Object.fromEntries(rows.map((row) => [row.slot, row.cosmetic_id]));
     },
 
     upsertTicket(ticket) {
