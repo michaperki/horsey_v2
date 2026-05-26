@@ -106,6 +106,8 @@ const TIME_DEFAULT = "3+0";
 const CHIP_DENOMS_DOLLARS = [500, 100, 25, 5, 1];
 let lastGameStartAudioId = null;
 let lastGameEndAudioId = null;
+const playedSettlementAudioFor = new Set();
+const completedMoneyTweenKeys = new Set();
 
 function stakeChipStack(amountCents) {
   let remaining = Math.round(amountCents / 100);
@@ -186,6 +188,7 @@ function maybePlayGameEndAudio(gameId, settlement) {
   if (!gameId || !settlement || settlement.state !== "finalized") return;
   if (gameId === lastGameEndAudioId) return;
   lastGameEndAudioId = gameId;
+  playedSettlementAudioFor.add(gameId);
   const result = settlement.result === "draw" ? "draw" : settlement.result === "loss" ? "loss" : "win";
   playSound(`game_end_${result}`);
 }
@@ -2668,7 +2671,7 @@ function finalizedGameSettlementPanel(game) {
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
     : balanceAfterCents + stakeCents;
   const amountTweenAttr = won || drew
-    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
+    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}" data-tween-key="amount:${escapeHtml(game?.id ?? settlement.gameId ?? "")}"`
     : "";
   const firstReveal = isFirstSettlementRenderFor(game?.id);
   const gateClass = firstReveal ? " settlement-rematch-gate" : "";
@@ -2686,7 +2689,7 @@ function finalizedGameSettlementPanel(game) {
       <div class="metric-grid">
         <div>
           <small>Balance</small>
-          <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
+          <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}" data-tween-key="balance:${escapeHtml(game?.id ?? settlement.gameId ?? "")}">${money(balanceAfterCents)}</strong>
         </div>
         ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong${ratingRevealAttr}>${formatRatingDelta(settlement.ratingDelta)}</strong></div>` : ""}
         <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
@@ -3374,7 +3377,7 @@ function renderSettlement() {
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
     : balanceAfterCents + stakeCents;
   const amountTweenAttr = won || drew
-    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}"`
+    ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}" data-tween-key="amount:${escapeHtml(settlement.gameId ?? game?.id ?? "")}"`
     : "";
   const firstReveal = isFirstSettlementRenderFor(settlement.gameId);
   const gateClass = firstReveal ? " settlement-rematch-gate" : "";
@@ -3390,7 +3393,7 @@ function renderSettlement() {
         <div class="metric-grid">
           <div>
             <small>Balance</small>
-            <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}">${money(balanceAfterCents)}</strong>
+            <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}" data-tween-key="balance:${escapeHtml(settlement.gameId ?? game?.id ?? "")}">${money(balanceAfterCents)}</strong>
           </div>
           ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong${ratingRevealAttr}>${formatRatingDelta(settlement.ratingDelta)}${settlement.ratingAfter !== null ? ` <span class="muted">→ ${settlement.ratingAfter}</span>` : ""}</strong></div>` : ""}
           <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
@@ -4359,6 +4362,13 @@ function runBankrollTweens() {
   document.querySelectorAll("[data-bankroll-tween]:not([data-tween-done])").forEach((node) => {
     const from = Number(node.dataset.from ?? 0);
     const to = Number(node.dataset.to ?? 0);
+    const key = node.dataset.tweenKey || `balance:${from}:${to}`;
+    if (completedMoneyTweenKeys.has(key)) {
+      node.textContent = money(to);
+      node.setAttribute("data-tween-done", "1");
+      return;
+    }
+    completedMoneyTweenKeys.add(key);
     if (from !== to && !isReducedMotion()) {
       // Bankroll counter tick — paired sportsbook-style audio. The tick
       // descends in pitch on a downward balance change so the audio is
@@ -4370,17 +4380,16 @@ function runBankrollTweens() {
   });
 }
 
-// Track which settlement we've already played audio for so re-renders
-// during the same view don't retrigger the chip-cascade sound.
-let lastSettlementAudioId = null;
+// Settlement chip audio is event-scoped. Re-rendering an existing settlement
+// for scout/profile/history UI should not replay the economic result.
 function maybePlaySettlementAudio() {
   if (typeof document === "undefined") return;
-  if (state.route !== "settlement" && state.route !== "history") return;
+  if (state.route !== "settlement") return;
   const settlement = state.activeSettlement;
   if (!settlement || settlement.state !== "finalized") return;
   const gameId = state.activeGame?.id ?? state.routeParam;
-  if (!gameId || gameId === lastSettlementAudioId) return;
-  lastSettlementAudioId = gameId;
+  if (!gameId || playedSettlementAudioFor.has(gameId)) return;
+  playedSettlementAudioFor.add(gameId);
   playSettlementSound(settlement.result);
 }
 
@@ -4401,6 +4410,13 @@ function runAmountTweens() {
   document.querySelectorAll("[data-amount-tween]:not([data-tween-done])").forEach((node) => {
     const target = Number(node.dataset.amountTween ?? 0);
     const prefix = node.dataset.amountPrefix ?? "";
+    const key = node.dataset.tweenKey || `amount:${prefix}:${target}`;
+    if (completedMoneyTweenKeys.has(key)) {
+      node.textContent = `${prefix}${money(target)}`;
+      node.setAttribute("data-tween-done", "1");
+      return;
+    }
+    completedMoneyTweenKeys.add(key);
     tweenCents(node, 0, target, 700, (c) => `${prefix}${money(c)}`);
   });
 }
