@@ -13,12 +13,24 @@ Promise.resolve().then(() => render());
 
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
 
-// Minimal initial-letter avatar. The previous PNG-layer cosmetic system was
-// ripped 2026-05-25; the new cosmetic system will introduce its own renderer.
-// Until then every renderAvatar call site just gets this baseline span.
-function renderAvatar(user, _opts = {}) {
+// Curated-avatar renderer. Each user has an equipped avatar id (from the
+// catalog in packages/shared/avatars.mjs) and a trust tier; we render a
+// tier-bordered frame with the avatar PNG and an initial-letter fallback
+// behind it. See docs/PROJECT_SOUL.md § Avatar semantics.
+const DEFAULT_AVATAR_ID = "base";
+const VALID_TRUST_TIERS = new Set(["provisional", "claimed", "verified", "established"]);
+function renderAvatar(user, opts = {}) {
+  const avatarId = user?.equippedAvatar || DEFAULT_AVATAR_ID;
+  const tier = VALID_TRUST_TIERS.has(user?.trustTier) ? user.trustTier : "provisional";
   const initial = escapeHtml((user?.handle?.[0] || "?").toUpperCase());
-  return `<span class="avatar" aria-hidden="true">${initial}</span>`;
+  const sizeClass = opts.size ? ` ${escapeHtml(opts.size)}` : "";
+  const src = `/assets/avatars/${escapeHtml(avatarId)}.png`;
+  return (
+    `<span class="avatar tier-${tier}${sizeClass}" aria-hidden="true">` +
+      `<span class="avatar-fallback">${initial}</span>` +
+      `<img class="avatar-img" src="${src}" alt="" loading="lazy" />` +
+    `</span>`
+  );
 }
 
 function parseHash() {
@@ -48,6 +60,7 @@ const state = {
   wagerCounter: { open: false },
   replay: null,
   walletLedger: [],
+  avatarCatalog: null,
   selectedSquare: null,
   dragFromSquare: null,
   focusSquare: null,
@@ -1215,6 +1228,48 @@ async function updateAccountEmail({ email, password }) {
   }
 }
 
+async function equipAvatar(avatarId) {
+  if (!avatarId || actionInFlight("avatar-equip", avatarId)) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("avatar-equip", avatarId, true);
+  render();
+  try {
+    const payload = await postJson("/api/avatars/equip", { avatarId });
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    state.accountNotice = `Equipped ${avatarId}.`;
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("avatar-equip", avatarId, false);
+    if (state.view === "app") render();
+  }
+}
+
+async function purchaseAvatar(avatarId) {
+  if (!avatarId || actionInFlight("avatar-purchase", avatarId)) return;
+  state.accountError = null;
+  state.accountNotice = null;
+  setActionInFlight("avatar-purchase", avatarId, true);
+  render();
+  try {
+    const payload = await postJson("/api/avatars/purchase", { avatarId });
+    if (payload.viewer) state.bootstrap.viewer = payload.viewer;
+    state.accountNotice = `Unlocked ${avatarId}.`;
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  } finally {
+    setActionInFlight("avatar-purchase", avatarId, false);
+    if (state.view === "app") render();
+  }
+}
+
 async function updateAccountPassword({ currentPassword, nextPassword }) {
   if (actionInFlight("account-password")) return;
   state.accountError = null;
@@ -1474,9 +1529,13 @@ async function enterRoute(parsed) {
     }
   } else if (state.route === "profile") {
     try {
-      const wallet = await getJson("/api/wallet");
+      const [wallet, avatars] = await Promise.all([
+        getJson("/api/wallet"),
+        getJson("/api/avatars")
+      ]);
       state.walletLedger = wallet.ledger;
       if (state.bootstrap) state.bootstrap.viewer = wallet.viewer;
+      state.avatarCatalog = avatars.catalog;
     } catch (error) {
       if (authGuard(error)) return;
     }
@@ -3560,6 +3619,7 @@ function renderProfile() {
         </div>
       </article>
       ${renderAchievementsPanel(viewer)}
+      ${renderAvatarPickerCard(viewer)}
       <section class="grid two">
         <article class="felt settlement">
           <div class="eyebrow">Fake-money wallet</div>
@@ -3739,6 +3799,77 @@ function renderAchievementsPanel(user) {
         <h2>${escapeHtml(String(earned.size))} unlock${earned.size === 1 ? "" : "s"} earned</h2>
       </header>
       ${renderAchievementTrack(user)}
+    </article>
+  `;
+}
+
+const MILESTONE_LABELS = {
+  first_win: "First win",
+  win_streak_3: "3-win streak",
+  win_streak_5: "5-win streak",
+  win_streak_7: "7-win streak",
+  win_streak_10: "10-win streak",
+  win_streak_15: "15-win streak"
+};
+
+function avatarUnlockLabel(acquisition) {
+  if (!acquisition) return "";
+  if (acquisition.type === "default") return "Starter";
+  if (acquisition.type === "milestone") {
+    return `Unlock: ${MILESTONE_LABELS[acquisition.eventKey] || acquisition.eventKey}`;
+  }
+  if (acquisition.type === "purchase") {
+    return `Buy: ${money(acquisition.priceCents)}`;
+  }
+  return "";
+}
+
+function renderAvatarPickerCard(viewer) {
+  const catalog = state.avatarCatalog;
+  if (!catalog) {
+    return `
+      <article class="card avatar-picker-card">
+        <header><span class="eyebrow">Avatar</span><h2>Loading…</h2></header>
+      </article>
+    `;
+  }
+  const owned = new Set(viewer.ownedAvatarIds || []);
+  const equipped = viewer.equippedAvatar || DEFAULT_AVATAR_ID;
+  const balanceCents = viewer.balanceCents ?? 0;
+  const tiles = catalog.map((avatar) => {
+    const isOwned = owned.has(avatar.id);
+    const isEquipped = avatar.id === equipped;
+    const equipBusy = actionInFlight("avatar-equip", avatar.id);
+    const buyBusy = actionInFlight("avatar-purchase", avatar.id);
+    const previewUser = { ...viewer, equippedAvatar: avatar.id };
+    let action = "";
+    if (isEquipped) {
+      action = `<span class="avatar-tile-status">Equipped</span>`;
+    } else if (isOwned) {
+      action = `<button type="button" data-avatar-equip="${escapeHtml(avatar.id)}" ${equipBusy ? "disabled" : ""}>${equipBusy ? "..." : "Equip"}</button>`;
+    } else if (avatar.acquisition.type === "purchase") {
+      const canAfford = balanceCents >= avatar.acquisition.priceCents;
+      action = `<button type="button" data-avatar-buy="${escapeHtml(avatar.id)}" ${(!canAfford || buyBusy) ? "disabled" : ""} title="${canAfford ? "" : "Not enough fake-money"}">${buyBusy ? "..." : `Buy ${money(avatar.acquisition.priceCents)}`}</button>`;
+    } else {
+      action = `<span class="avatar-tile-locked">Locked</span>`;
+    }
+    return `
+      <div class="avatar-tile rarity-${escapeHtml(avatar.rarity)} ${isOwned ? "owned" : "locked"} ${isEquipped ? "equipped" : ""}">
+        ${renderAvatar(previewUser, { size: "huge" })}
+        <strong>${escapeHtml(avatar.id)}</strong>
+        <small class="muted">${escapeHtml(avatarUnlockLabel(avatar.acquisition))}</small>
+        ${action}
+      </div>
+    `;
+  }).join("");
+  return `
+    <article class="card avatar-picker-card">
+      <header>
+        <span class="eyebrow">Avatar</span>
+        <h2>Pick your face</h2>
+        <p class="muted small">Borders are set by trust tier. Buy or unlock new looks below.</p>
+      </header>
+      <div class="avatar-grid">${tiles}</div>
     </article>
   `;
 }
@@ -4054,6 +4185,12 @@ function render() {
   }
   document.querySelectorAll("[data-logout-others]").forEach((b) => {
     b.addEventListener("click", () => logoutOtherSessions());
+  });
+  document.querySelectorAll("[data-avatar-equip]").forEach((b) => {
+    b.addEventListener("click", () => equipAvatar(b.dataset.avatarEquip));
+  });
+  document.querySelectorAll("[data-avatar-buy]").forEach((b) => {
+    b.addEventListener("click", () => purchaseAvatar(b.dataset.avatarBuy));
   });
   const linkExternalForm = document.querySelector("[data-link-external]");
   if (linkExternalForm) {

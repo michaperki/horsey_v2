@@ -1217,6 +1217,8 @@ p {
   overflow: hidden;
   flex: 0 0 auto;
   vertical-align: middle;
+  border: 2px solid transparent;
+  box-sizing: content-box;
 }
 
 .avatar.sm {
@@ -1231,6 +1233,104 @@ p {
   height: 92px;
   border-radius: 18px;
   font-size: 42px;
+}
+
+.avatar .avatar-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+.avatar .avatar-fallback {
+  z-index: 0;
+}
+
+/* Trust tier borders. Pure CSS — no authored art. The provisional treatment
+   is intentionally quiet (claimed shares the same muted ring; the claim
+   distinction lives in the tier-pip text chip, per docs/PROJECT_SOUL.md). */
+.avatar.tier-provisional,
+.avatar.tier-claimed {
+  border-color: rgba(168, 158, 142, 0.45);
+}
+
+.avatar.tier-verified {
+  border-color: #d4af37;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.25);
+}
+
+.avatar.tier-established {
+  border-color: #b9f2ff;
+  box-shadow:
+    0 0 0 1px rgba(185, 242, 255, 0.35),
+    0 0 12px rgba(185, 242, 255, 0.4);
+}
+
+.avatar-picker-card header {
+  margin-bottom: 14px;
+}
+
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.avatar-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(27, 24, 21, 0.04);
+  text-align: center;
+}
+
+.avatar-tile.locked {
+  opacity: 0.55;
+}
+
+.avatar-tile.equipped {
+  background: rgba(212, 175, 55, 0.12);
+  outline: 1px solid rgba(212, 175, 55, 0.4);
+}
+
+.avatar-tile strong {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.avatar-tile small {
+  font-size: 11px;
+}
+
+.avatar-tile button,
+.avatar-tile .avatar-tile-status,
+.avatar-tile .avatar-tile-locked {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.avatar-tile .avatar-tile-status {
+  background: rgba(212, 175, 55, 0.2);
+  color: #8a6a10;
+}
+
+.avatar-tile .avatar-tile-locked {
+  color: var(--muted);
+}
+
+.avatar-tile.rarity-legendary strong {
+  color: #8a3ffc;
+}
+
+.avatar-tile.rarity-rare strong {
+  color: #1a73a3;
 }
 
 .achievements-card header,

@@ -2,8 +2,9 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { initialSeed } from "./seed.mjs";
+import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -14,8 +15,18 @@ const SCHEMA = `
     password_salt TEXT NOT NULL,
     rating INTEGER NOT NULL,
     created_at TEXT NOT NULL,
-    onboarding_completed_at TEXT
+    onboarding_completed_at TEXT,
+    equipped_avatar TEXT NOT NULL DEFAULT '${DEFAULT_AVATAR_ID}'
   );
+
+  CREATE TABLE IF NOT EXISTS user_avatars (
+    user_id TEXT NOT NULL,
+    avatar_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, avatar_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_avatars_user ON user_avatars(user_id);
 
   CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
@@ -138,7 +149,8 @@ function rowToPublicUser(row) {
     handle: row.handle,
     rating: row.rating,
     createdAt: row.created_at,
-    onboardingCompletedAt: row.onboarding_completed_at ?? null
+    onboardingCompletedAt: row.onboarding_completed_at ?? null,
+    equippedAvatar: row.equipped_avatar ?? null
   };
 }
 
@@ -292,6 +304,39 @@ function migrateSchema(db) {
     db.exec("DROP TABLE IF EXISTS user_cosmetics");
     db.exec("DROP TABLE IF EXISTS cosmetics");
   }
+  // v8 → v9: MVP avatar system. users.equipped_avatar holds the avatar id the
+  // user is currently showing; user_avatars is the ownership join. Backfill
+  // grants every existing account the default-owned set so equip works
+  // immediately after the migration.
+  if (currentVersion < 9 && currentVersion >= 1) {
+    const cols = db.prepare("PRAGMA table_info('users')").all();
+    if (!cols.some((c) => c.name === "equipped_avatar")) {
+      db.exec(
+        `ALTER TABLE users ADD COLUMN equipped_avatar TEXT NOT NULL DEFAULT '${DEFAULT_AVATAR_ID}'`
+      );
+    }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS user_avatars (
+        user_id TEXT NOT NULL,
+        avatar_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        acquired_at TEXT NOT NULL,
+        PRIMARY KEY (user_id, avatar_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_avatars_user ON user_avatars(user_id);
+    `);
+    const insertUserAvatar = db.prepare(`
+      INSERT OR IGNORE INTO user_avatars (user_id, avatar_id, source, acquired_at)
+      VALUES (?, ?, 'default', ?)
+    `);
+    const now = new Date().toISOString();
+    const users = db.prepare("SELECT id FROM users").all();
+    for (const u of users) {
+      for (const avatarId of defaultOwnedAvatarIds()) {
+        insertUserAvatar.run(u.id, avatarId, now);
+      }
+    }
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -327,10 +372,22 @@ function makeApi(db) {
     updateUserEmail: db.prepare("UPDATE users SET email = ? WHERE id = ?"),
     updateUserPassword: db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?"),
     updateUserRating: db.prepare("UPDATE users SET rating = ? WHERE id = ?"),
+    updateUserEquippedAvatar: db.prepare("UPDATE users SET equipped_avatar = ? WHERE id = ?"),
     markOnboardingCompleted: db.prepare(`
       UPDATE users SET onboarding_completed_at = ?
       WHERE id = ? AND onboarding_completed_at IS NULL
     `),
+
+    insertUserAvatar: db.prepare(`
+      INSERT OR IGNORE INTO user_avatars (user_id, avatar_id, source, acquired_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    listUserAvatarsForUser: db.prepare(
+      "SELECT avatar_id, source, acquired_at FROM user_avatars WHERE user_id = ?"
+    ),
+    countUserAvatar: db.prepare(
+      "SELECT COUNT(*) AS n FROM user_avatars WHERE user_id = ? AND avatar_id = ?"
+    ),
 
     getSession: db.prepare("SELECT * FROM sessions WHERE id = ?"),
     insertSession: db.prepare(`
@@ -512,9 +569,31 @@ function makeApi(db) {
         user.rating,
         user.createdAt
       );
+      // Grant the default-owned avatar set so every new account can equip
+      // anything baseline without a separate seeding step.
+      for (const avatarId of defaultOwnedAvatarIds()) {
+        stmts.insertUserAvatar.run(user.id, avatarId, "default", user.createdAt);
+      }
     },
     updateUserRating(userId, rating) {
       stmts.updateUserRating.run(rating, userId);
+    },
+    updateUserEquippedAvatar(userId, avatarId) {
+      stmts.updateUserEquippedAvatar.run(avatarId, userId);
+    },
+
+    grantUserAvatar(userId, avatarId, source, acquiredAt = new Date().toISOString()) {
+      stmts.insertUserAvatar.run(userId, avatarId, source, acquiredAt);
+    },
+    listUserAvatarsForUser(userId) {
+      return stmts.listUserAvatarsForUser.all(userId).map((row) => ({
+        avatarId: row.avatar_id,
+        source: row.source,
+        acquiredAt: row.acquired_at
+      }));
+    },
+    userOwnsAvatar(userId, avatarId) {
+      return Number(stmts.countUserAvatar.get(userId, avatarId)?.n ?? 0) > 0;
     },
     markOnboardingCompleted(userId, nowIso = new Date().toISOString()) {
       stmts.markOnboardingCompleted.run(nowIso, userId);

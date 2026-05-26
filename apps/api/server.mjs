@@ -45,6 +45,13 @@ import {
 } from "../../packages/shared/trust.mjs";
 import { detectMilestonesForGame, publicMilestonePayload } from "./milestones.mjs";
 import {
+  AVATAR_CATALOG,
+  avatarsForMilestone,
+  DEFAULT_AVATAR_ID,
+  getAvatar,
+  isValidAvatarId
+} from "../../packages/shared/avatars.mjs";
+import {
   calibratingThresholdForTier,
   claimedSeedFromAccounts,
   ExternalAccountError,
@@ -212,11 +219,15 @@ function enrichGame(game) {
   if (!game) return null;
   const moves = game.moves || [];
   const summary = summarizeGame(game.fen);
-  const playersWithPresence = (game.players || []).map((player) => ({
-    ...player,
-    presence: presence.snapshot(player.id),
-    trustTier: trustTierForUser(player.id)
-  }));
+  const playersWithPresence = (game.players || []).map((player) => {
+    const live = db.getUser(player.id);
+    return {
+      ...player,
+      presence: presence.snapshot(player.id),
+      trustTier: trustTierForUser(player.id),
+      equippedAvatar: live?.equippedAvatar ?? DEFAULT_AVATAR_ID
+    };
+  });
   return {
     ...summary,
     ...game,
@@ -342,12 +353,16 @@ function publishPresenceChanged(userId) {
 function lobbyLiveGameProjection(game) {
   return {
     id: game.id,
-    players: (game.players || []).map((p) => ({
-      id: p.id,
-      handle: p.handle,
-      rating: p.rating,
-      trustTier: trustTierForUser(p.id)
-    })),
+    players: (game.players || []).map((p) => {
+      const live = db.getUser(p.id);
+      return {
+        id: p.id,
+        handle: p.handle,
+        rating: p.rating,
+        trustTier: trustTierForUser(p.id),
+        equippedAvatar: live?.equippedAvatar ?? DEFAULT_AVATAR_ID
+      };
+    }),
     stakeCents: game.pot?.stakeCents ?? 0,
     timeControl: game.timeControl,
     moveCount: (game.moves || []).length,
@@ -411,7 +426,8 @@ function viewerPayload(viewerId) {
     ...walletSummary(db.listLedger(), viewerId),
     ...trustChipsForUser(viewerId),
     stats: aggregateUserStats(viewerId, games),
-    milestones
+    milestones,
+    ownedAvatarIds: db.listUserAvatarsForUser(viewerId).map((a) => a.avatarId)
   };
 }
 
@@ -618,7 +634,8 @@ function withOpponentDecor(user) {
     id: user.id,
     handle: user.handle,
     rating: user.rating,
-    trustTier: trustTierForUser(user.id)
+    trustTier: trustTierForUser(user.id),
+    equippedAvatar: user.equippedAvatar ?? DEFAULT_AVATAR_ID
   };
 }
 
@@ -759,7 +776,11 @@ function handleDomainError(error, res) {
     external_account_already_verified: 409,
     claim_token_missing: 409,
     claim_token_expired: 410,
-    claim_token_not_found_in_profile: 422
+    claim_token_not_found_in_profile: 422,
+    avatar_not_found: 404,
+    avatar_not_owned: 403,
+    avatar_already_owned: 409,
+    avatar_not_purchasable: 400
   };
   const headers = {};
   if (error.code === "rate_limited" && error.retryAfterSeconds) {
@@ -1306,6 +1327,9 @@ function finalizeGame(game, { result, reason }) {
       unlockedMilestones = detectMilestonesForGame(db, finalizedGame);
       for (const m of unlockedMilestones) {
         db.insertUserMilestone(m);
+        for (const avatar of avatarsForMilestone(m.eventKey)) {
+          db.grantUserAvatar(m.userId, avatar.id, `milestone:${m.eventKey}`, m.occurredAt);
+        }
       }
     }
   })();
@@ -1567,6 +1591,64 @@ function startSession(userId, nowIso = new Date().toISOString()) {
   return session;
 }
 
+function avatarCatalogPayload() {
+  return AVATAR_CATALOG.map((a) => ({
+    id: a.id,
+    piece: a.piece,
+    rarity: a.rarity,
+    acquisition: a.acquisition
+  }));
+}
+
+function equipAvatar(viewerId, avatarId) {
+  if (!isValidAvatarId(avatarId)) {
+    const e = new RangeError(`unknown avatar: ${avatarId}`);
+    e.code = "avatar_not_found"; throw e;
+  }
+  if (!db.userOwnsAvatar(viewerId, avatarId)) {
+    const e = new RangeError("you don't own that avatar");
+    e.code = "avatar_not_owned"; throw e;
+  }
+  db.updateUserEquippedAvatar(viewerId, avatarId);
+}
+
+function purchaseAvatar(viewerId, avatarId) {
+  const avatar = getAvatar(avatarId);
+  if (!avatar) {
+    const e = new RangeError(`unknown avatar: ${avatarId}`);
+    e.code = "avatar_not_found"; throw e;
+  }
+  if (avatar.acquisition.type !== "purchase") {
+    const e = new RangeError("that avatar isn't for sale");
+    e.code = "avatar_not_purchasable"; throw e;
+  }
+  if (db.userOwnsAvatar(viewerId, avatarId)) {
+    const e = new RangeError("you already own that avatar");
+    e.code = "avatar_already_owned"; throw e;
+  }
+  const priceCents = avatar.acquisition.priceCents;
+  // Wallet check + spend + grant runs inside one transaction so insufficient
+  // funds can't half-grant the avatar.
+  db.transaction(() => {
+    const balance = walletSummary(db.listLedger(), viewerId).balanceCents;
+    if (balance < priceCents) {
+      const e = new RangeError("insufficient fake-money balance for avatar purchase");
+      e.code = "insufficient_funds"; throw e;
+    }
+    db.appendLedger([{
+      id: newId("led_av"),
+      userId: viewerId,
+      type: "avatar_purchase",
+      availableDeltaCents: -priceCents,
+      escrowDeltaCents: 0,
+      refId: avatarId,
+      note: `Avatar purchase: ${avatarId}`,
+      createdAt: new Date().toISOString()
+    }]);
+    db.grantUserAvatar(viewerId, avatarId, "purchase");
+  })();
+}
+
 function bootstrapPayload(viewer) {
   const baseLobby = db.getLobby();
   const liveness = computeLobbyLiveness();
@@ -1708,6 +1790,30 @@ async function routeApi(req, res) {
 
   if (req.method === "GET" && pathname === "/api/bootstrap") {
     return json(res, 200, bootstrapPayload(viewer));
+  }
+
+  if (req.method === "GET" && pathname === "/api/avatars") {
+    return json(res, 200, {
+      catalog: avatarCatalogPayload(),
+      ownedAvatarIds: db.listUserAvatarsForUser(viewer.id).map((a) => a.avatarId),
+      equippedAvatar: db.getUser(viewer.id)?.equippedAvatar ?? DEFAULT_AVATAR_ID
+    });
+  }
+
+  if (req.method === "POST" && pathname === "/api/avatars/equip") {
+    try {
+      const body = await readJson(req);
+      equipAvatar(viewer.id, body?.avatarId);
+      return json(res, 200, { viewer: viewerPayload(viewer.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/avatars/purchase") {
+    try {
+      const body = await readJson(req);
+      purchaseAvatar(viewer.id, body?.avatarId);
+      return json(res, 200, { viewer: viewerPayload(viewer.id) });
+    } catch (error) { return handleDomainError(error, res); }
   }
 
   if (req.method === "GET" && pathname === "/api/wallet") {
