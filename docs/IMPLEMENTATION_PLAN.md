@@ -237,7 +237,7 @@ The minimum to let real humans use it unattended.
 - **Read-only admin slice (Phase 6 first cut).** Status: **done** — schema v11 adds `users.is_admin` (hand-set in the DB via `UPDATE users SET is_admin=1 WHERE handle='...'`; no admin-creates-admin UI yet). `/api/admin/{users,games,stuck-games,ledger,challenges,external-accounts}` are read-only and gated on `is_admin`. Web `#admin` page renders a tabbed view (Users / Games / Stuck / Ledger / Challenges / External). Nav link only shows when the viewer is admin. No mutations through this surface — corrections are append-only compensating ledger entries written directly to the DB.
 - **Report-player path.** Even as a row in a `reports` table an admin can read. Seeds Phase 6 anti-cheat ingestion.
 - **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
-- **Narrow multiplayer smoke automation.** The one already named in `DEV_QA_WORKFLOW.md` § 5 — pair → checkmate → settle. Not a test pyramid, just the most-repeated path.
+- **Narrow multiplayer smoke automation.** Moved to **Backlog** (operational): the bustling dev daemon already exercises the pair → finalize loop continuously, which covers the regression case for now. Revisit when CI is gating deploys or when the loop changes shape enough that bustling no longer represents real human flow.
 
 ### Bucket C — Payments v1
 
@@ -272,6 +272,7 @@ Items that are scoped, named, and acknowledged — but intentionally not the nex
 - **External error tracker.** Sentry (or equivalent). Plugs into `apps/api/logger.mjs`'s error path — when a `level=error` record fires, mirror it to the tracker with the same `requestId` and field shape. Needs: account, DSN, `fly secrets set SENTRY_DSN=...`. Unblocks remote debugging once a closed-beta tester finds something we can't reproduce locally. Until then, the structured logger + `fly logs` is sufficient.
 - **SQLite backup + restore.** Periodic `sqlite3 /data/horsey.db ".backup"` snapshot uploaded to object storage on a cron, with a documented restore command. Needs: an object-storage bucket (e.g. R2, B2, or a free tier S3). Required *before* opening the closed beta to people whose data we don't want to lose; not required to host the loop for ourselves.
 - **External uptime monitoring.** A check hitting `/api/health` from outside the box (UptimeRobot / Better Stack / Pingdom). Pages on outage. Needs: an account.
+- **Narrow multiplayer smoke harness.** Two isolated cookie jars, signup → pair → Fool's Mate → assert finalized state + settlement payload + history row + ledger deltas. Bustling daemon covers the same shape continuously in dev, so this earns its place only when CI is gating deploys or when the loop changes shape enough that bustling no longer represents real human flow.
 
 ### Product backlog (named-but-deferred features)
 
@@ -476,8 +477,7 @@ Run alongside the phases, not after them:
 
 The MVP playable loop is functionally complete; Bucket A is code-side done. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
 
-1. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
-2. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
+1. **Notification center.** Durable notification rows + deep links so direct challenges, settlement outcomes, and (eventually) payment/cashout/dispute events are receivable when the user isn't on the surface where the event fires. Surface shape still being chosen — see `NOTIFICATIONS_NEXT_PASS.md`.
 3. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
 4. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
 5. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
