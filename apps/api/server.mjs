@@ -8,16 +8,29 @@ import { openDatabase } from "./db.mjs";
 import { CHANNELS, createBroker } from "./realtime.mjs";
 import { SIGNUP_DEFAULT_RATING, SIGNUP_GRANT_CENTS } from "./seed.mjs";
 import {
+  EMAIL_VERIFY_TTL_MS,
+  PASSWORD_RESET_TTL_MS,
+  generateEmailToken,
   generateSessionToken,
+  hashEmailToken,
   hashPassword,
+  isEmailTokenExpired,
   isSessionExpired,
+  newEmailTokenExpiry,
   newSessionExpiry,
   SESSION_TTL_MS,
-  validateLoginInput,
   validateEmailInput,
+  validateLoginInput,
+  validatePasswordInput,
   validateSignupInput,
   verifyPassword
 } from "./auth.mjs";
+import {
+  emailDeliveryConfig,
+  passwordResetBody,
+  sendEmail,
+  verifyEmailBody
+} from "./email.mjs";
 import { applyMove, STARTING_FEN, summarizeGame } from "../../packages/chess/src/board.mjs";
 import {
   calculatePot,
@@ -84,14 +97,23 @@ const db = openDatabase(dbPath);
 const broker = createBroker();
 const presence = createPresenceRegistry();
 const enableDevFinalize = process.env.HORSEY_ENABLE_DEV_FINALIZE === "1";
+const enableDevAccountPicker = process.env.HORSEY_ENABLE_DEV_ACCOUNT_PICKER === "1";
+const devAccountPassword = process.env.HORSEY_DEV_ACCOUNT_PASSWORD || "password123";
+const enableDevBots =
+  process.env.HORSEY_ENABLE_DEV_BOTS === "1" && process.env.NODE_ENV !== "production";
+let botDaemon = null;
 const rateLimits = new Map();
 
 const RATE_LIMITS = {
   auth: { limit: 12, windowMs: 60_000 },
   challenge: { limit: 30, windowMs: 60_000 },
   matchmaking: { limit: 40, windowMs: 60_000 },
-  externalAccounts: { limit: 8, windowMs: 60_000 }
+  externalAccounts: { limit: 8, windowMs: 60_000 },
+  emailLink: { limit: 5, windowMs: 60 * 60_000 }
 };
+
+const EMAIL_LINK_PER_USER_WINDOW_MS = 60 * 60_000;
+const EMAIL_LINK_PER_USER_LIMIT = 5;
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -240,6 +262,12 @@ function enrichGame(game) {
 }
 
 const SESSION_COOKIE = "horsey_session";
+// When running behind a TLS-terminating proxy (Fly's edge, a reverse proxy,
+// or NODE_ENV=production), emit `Secure` so the cookie only flows over HTTPS.
+// Local dev over http://127.0.0.1:8787 keeps the cookie working without TLS.
+const useSecureCookie =
+  process.env.HORSEY_TRUST_PROXY === "1" || process.env.NODE_ENV === "production";
+const secureAttr = useSecureCookie ? "; Secure" : "";
 
 function parseCookies(req) {
   const header = req.headers.cookie;
@@ -259,14 +287,14 @@ function setSessionCookie(res, token) {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
   res.setHeader(
     "set-cookie",
-    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}`
+    `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secureAttr}`
   );
 }
 
 function clearSessionCookie(res) {
   res.setHeader(
     "set-cookie",
-    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`
+    `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureAttr}`
   );
 }
 
@@ -780,7 +808,10 @@ function handleDomainError(error, res) {
     avatar_not_found: 404,
     avatar_not_owned: 403,
     avatar_already_owned: 409,
-    avatar_not_purchasable: 400
+    avatar_not_purchasable: 400,
+    invalid_token: 410,
+    email_rate_limited: 429,
+    email_delivery_failed: 502
   };
   const headers = {};
   if (error.code === "rate_limited" && error.retryAfterSeconds) {
@@ -1510,7 +1541,62 @@ async function signupAccount({ email, handle, password }) {
     }]);
     session = startSession(userId, now);
   })();
-  return { user: db.getUser(userId), session };
+  const user = db.getUser(userId);
+  // Best-effort verification email — if delivery fails we don't block signup.
+  // The user can re-request via the banner action.
+  sendVerificationEmail(user).catch((err) =>
+    console.warn(`[signup] verification email send failed for ${user.id}:`, err.message)
+  );
+  return { user, session };
+}
+
+function issueEmailToken({ userId, type, ttlMs }) {
+  const now = new Date();
+  const sinceIso = new Date(now.getTime() - EMAIL_LINK_PER_USER_WINDOW_MS).toISOString();
+  const recent = db.countRecentEmailTokensForUser(userId, type, sinceIso);
+  if (recent >= EMAIL_LINK_PER_USER_LIMIT) {
+    const e = new RangeError("Too many email requests recently. Try again in an hour.");
+    e.code = "email_rate_limited";
+    throw e;
+  }
+  const rawToken = generateEmailToken();
+  const record = {
+    id: newId("etk"),
+    userId,
+    type,
+    tokenHash: hashEmailToken(rawToken),
+    expiresAt: newEmailTokenExpiry(ttlMs, now.getTime()),
+    createdAt: now.toISOString()
+  };
+  // Replace any unused prior tokens of the same type so a re-request
+  // invalidates earlier links.
+  db.transaction(() => {
+    db.deleteEmailTokensForUserByType(userId, type);
+    db.insertEmailToken(record);
+  })();
+  return { rawToken, record };
+}
+
+async function sendVerificationEmail(user) {
+  const { rawToken } = issueEmailToken({
+    userId: user.id,
+    type: "verify",
+    ttlMs: EMAIL_VERIFY_TTL_MS
+  });
+  const link = `${emailDeliveryConfig().appUrl}/#verify-email/${rawToken}`;
+  const body = verifyEmailBody({ handle: user.handle, link });
+  return sendEmail({ to: user.email, ...body });
+}
+
+async function sendPasswordResetEmail(user) {
+  const { rawToken } = issueEmailToken({
+    userId: user.id,
+    type: "reset",
+    ttlMs: PASSWORD_RESET_TTL_MS
+  });
+  const link = `${emailDeliveryConfig().appUrl}/#password-reset/${rawToken}`;
+  const body = passwordResetBody({ handle: user.handle, link });
+  return sendEmail({ to: user.email, ...body });
 }
 
 function currentSessionId(req) {
@@ -1723,6 +1809,22 @@ async function routeApi(req, res) {
     return json(res, 200, { ok: true, service: "horsey-api" });
   }
 
+  if (req.method === "GET" && pathname === "/api/dev/accounts") {
+    if (!enableDevAccountPicker) return notFound(res);
+    const accounts = db.listUsers()
+      .sort((a, b) => a.handle.localeCompare(b.handle))
+      .map((user) => ({
+        id: user.id,
+        email: user.email,
+        handle: user.handle,
+        rating: user.rating,
+        trustTier: trustTierForUser(user.id),
+        equippedAvatar: user.equippedAvatar,
+        password: devAccountPassword
+      }));
+    return json(res, 200, { accounts });
+  }
+
   if (req.method === "POST" && pathname === "/api/auth/signup") {
     try {
       checkRateLimit(req, "auth");
@@ -1748,6 +1850,81 @@ async function routeApi(req, res) {
     if (token) db.deleteSession(token);
     clearSessionCookie(res);
     return json(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/verify-email/confirm") {
+    try {
+      checkRateLimit(req, "auth");
+      const body = await readJson(req);
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      if (!token) {
+        const e = new RangeError("verification token is required");
+        e.code = "invalid_token"; throw e;
+      }
+      const record = db.findEmailTokenByHash(hashEmailToken(token), "verify");
+      if (!record || record.consumedAt || isEmailTokenExpired(record)) {
+        const e = new RangeError("this verification link is invalid or has expired");
+        e.code = "invalid_token"; throw e;
+      }
+      db.transaction(() => {
+        db.markEmailVerified(record.userId);
+        db.markEmailTokenConsumed(record.id);
+      })();
+      return json(res, 200, { ok: true });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/password/reset/request") {
+    try {
+      checkRateLimit(req, "emailLink");
+      const body = await readJson(req);
+      const email = typeof body.email === "string" ? body.email.toLowerCase().trim() : "";
+      // Always return 200 to avoid leaking which emails are accounts. We
+      // still validate input shape so obviously-garbage requests don't
+      // burn cycles, but we don't surface that distinction.
+      if (email) {
+        const user = db.getUserByEmail(email);
+        if (user) {
+          try {
+            await sendPasswordResetEmail(db.getUser(user.id));
+          } catch (sendError) {
+            // Email-rate-limit and delivery failures are intentionally
+            // swallowed so the response is identical to the unknown-email
+            // path. The token is not issued on these errors.
+            console.warn(
+              `[password-reset] request for ${user.id} failed:`,
+              sendError.message
+            );
+          }
+        }
+      }
+      return json(res, 200, { ok: true });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/password/reset/confirm") {
+    try {
+      checkRateLimit(req, "auth");
+      const body = await readJson(req);
+      const token = typeof body.token === "string" ? body.token.trim() : "";
+      if (!token) {
+        const e = new RangeError("reset token is required");
+        e.code = "invalid_token"; throw e;
+      }
+      const newPassword = validatePasswordInput(body.newPassword);
+      const record = db.findEmailTokenByHash(hashEmailToken(token), "reset");
+      if (!record || record.consumedAt || isEmailTokenExpired(record)) {
+        const e = new RangeError("this reset link is invalid or has expired");
+        e.code = "invalid_token"; throw e;
+      }
+      const { passwordHash, passwordSalt } = await hashPassword(newPassword);
+      db.transaction(() => {
+        db.updateUserPassword(record.userId, { passwordHash, passwordSalt });
+        db.markEmailTokenConsumed(record.id);
+        db.deleteSessionsForUser(record.userId);
+      })();
+      return json(res, 200, { ok: true });
+    } catch (error) { return handleDomainError(error, res); }
   }
 
   let viewer;
@@ -1786,6 +1963,18 @@ async function routeApi(req, res) {
     const token = currentSessionId(req);
     db.deleteOtherSessions(viewer.id, token);
     return json(res, 200, { ok: true });
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/verify-email/send") {
+    try {
+      checkRateLimit(req, "emailLink");
+      const user = db.getUser(viewer.id);
+      if (user.emailVerifiedAt) {
+        return json(res, 200, { ok: true, alreadyVerified: true });
+      }
+      await sendVerificationEmail(user);
+      return json(res, 200, { ok: true });
+    } catch (error) { return handleDomainError(error, res); }
   }
 
   if (req.method === "GET" && pathname === "/api/bootstrap") {
@@ -2374,8 +2563,12 @@ function attachWebSocket(ws, viewer) {
   ws.on("error", cleanup);
 }
 
-export function closeServerResources() {
+export async function closeServerResources() {
   for (const gameId of clockTimeouts.keys()) clearClockTimeout(gameId);
+  if (botDaemon) {
+    await botDaemon.stop();
+    botDaemon = null;
+  }
   wss.close();
   db.close();
 }
@@ -2383,9 +2576,38 @@ export function closeServerResources() {
 export { routeApi };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  server.listen(port, host, () => {
+  server.listen(port, host, async () => {
     console.log(`Horsey dev server running at http://${host}:${port}`);
     console.log(`Database: ${dbPath}`);
+    if (process.env.NODE_ENV === "production" && !process.env.RESEND_API_KEY) {
+      console.warn(
+        "[startup] WARNING: NODE_ENV=production but RESEND_API_KEY is unset — " +
+        "verification and password-reset emails will be silently dropped."
+      );
+    }
     rehydrateClockTimeouts();
+    if (enableDevBots) {
+      try {
+        const { startBotDaemon } = await import("./dev-bots.mjs");
+        botDaemon = await startBotDaemon({
+          db,
+          services: {
+            signupAccount,
+            createChallenge,
+            acceptChallenge,
+            finalizeGame,
+            publishChallengeCreated,
+            publishChallengeUpdated,
+            publishGameUpdated,
+            publishGameFinalized,
+            publishMatchmakingMatched,
+            scheduleClockTimeout
+          },
+          log: (...args) => console.log(...args)
+        });
+      } catch (err) {
+        console.warn("[startup] bot daemon failed to start:", err.message);
+      }
+    }
   });
 }

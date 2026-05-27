@@ -47,6 +47,8 @@ Do not capture:
 - We need to decide whether to build chess board and logic ourselves or use license-compatible open source. Chessground is considered undesirable because of its license implications for this project.
 - Decision update: use BSD-2-Clause `chess.js` for chess rules through Horsey's wrapper package, while keeping board UI custom for now.
 - Current board UI is the accepted custom baseline for this milestone: server-backed rules, legal hints, drag/drop, keyboard navigation, edge coordinates, captured trays, promotion, and mobile-safe tap behavior. Future board work should be scoped as named features rather than reopening a generic "crude board" cleanup loop.
+- The fake-money playable loop is functionally done. The next workstream is **deploy readiness**, not more product surface area — host the loop somewhere a closed-beta tester can reach. SQLite-on-a-volume is the prod store through closed beta; the Postgres swap is a *named pre-real-money slice* (mock #1), not a generic next step. See `IMPLEMENTATION_PLAN.md` § Deploy Readiness Bucket.
+- **Real money is discovery first, code second.** Phase 7 is overwhelmingly legal / jurisdictional / custody / payment-provider / KYC work. Do not write Phase 7 code until that discovery has produced answers on paper.
 - Keep this first pass high level.
 - Establish a clean working relationship between the user and future coding agents so agents retain the big picture and do not become overly narrow.
 - Working context such as WSL vs Windows PowerShell is valid project memory when it helps future agents operate smoothly.
@@ -66,4 +68,5 @@ Related focused notes:
 - `docs/SOUNDSCAPE_NEXT_PASS.md` records the three-layer sound model (core chess interaction, economic, lobby/social), the tactile/material design principles, the reduced-sensory setting, and the mixing hierarchy that keeps blitz from becoming chaos.
 - `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
 - `docs/LIVENESS_NEXT_PASS.md` records the next-pass priorities for making the lobby feel live: heartbeat-over-WS, live challenge timers, in-progress games feed, and the real rating system that the entire identity layer is currently faking.
+- `docs/DEV_QA_WORKFLOW.md` records the current manual two-browser smoke test and the preferred lightweight dev tooling path: scenario fixtures, disposable DBs, and narrow multiplayer smoke automation rather than a sprawling dev panel.
 - `docs/marketing/IMAGE_AD_PROMPTS.md` records reusable image-generation prompts and guardrails for Horsey advertising concepts.

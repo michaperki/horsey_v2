@@ -70,8 +70,14 @@ const state = {
   actionError: null,
   accountError: null,
   accountNotice: null,
+  devAccounts: null,
+  devAccountsLoading: false,
   onboardingError: null,
   verifying: { accountId: null, claimToken: null, expiresAt: null, error: null },
+  verifyEmail: null,
+  passwordReset: null,
+  resetRequest: null,
+  verifyBanner: { sending: false, sent: false, error: null },
   inFlight: new Set(),
   matchmakingPoll: null,
   route: initialRoute.name,
@@ -379,6 +385,20 @@ async function loadBootstrap() {
 }
 
 async function load() {
+  const initial = parseHash();
+  if (initial.name === "verify-email" && initial.param) {
+    state.view = "verify-email";
+    state.verifyEmail = { token: initial.param, status: "verifying", message: null };
+    render();
+    confirmEmailVerificationFromHash(initial.param);
+    return;
+  }
+  if (initial.name === "password-reset" && initial.param) {
+    state.view = "password-reset";
+    state.passwordReset = { token: initial.param, status: "form", error: null };
+    render();
+    return;
+  }
   try {
     await loadBootstrap();
     state.view = "app";
@@ -394,6 +414,54 @@ async function load() {
     }
   }
   render();
+}
+
+async function confirmEmailVerificationFromHash(token) {
+  try {
+    await postJson("/api/auth/verify-email/confirm", { token });
+    state.verifyEmail = { token, status: "success", message: null };
+  } catch (error) {
+    state.verifyEmail = { token, status: "error", message: error.message };
+  }
+  render();
+}
+
+async function resendVerificationEmail() {
+  if (state.verifyBanner.sending) return;
+  state.verifyBanner = { sending: true, sent: false, error: null };
+  render();
+  try {
+    await postJson("/api/auth/verify-email/send");
+    state.verifyBanner = { sending: false, sent: true, error: null };
+  } catch (error) {
+    state.verifyBanner = { sending: false, sent: false, error: error.message };
+  }
+  render();
+}
+
+async function submitPasswordResetRequest(email) {
+  state.resetRequest = { status: "submitting", error: null };
+  render();
+  try {
+    await postJson("/api/auth/password/reset/request", { email });
+    state.resetRequest = { status: "success", error: null };
+  } catch (error) {
+    state.resetRequest = { status: "form", error: error.message };
+  }
+  render();
+}
+
+async function submitPasswordResetConfirm({ token, newPassword }) {
+  state.passwordReset = { token, status: "submitting", error: null };
+  render();
+  try {
+    await postJson("/api/auth/password/reset/confirm", { token, newPassword });
+    state.passwordReset = { token, status: "success", error: null };
+    render();
+  } catch (error) {
+    state.passwordReset = { token, status: "form", error: error.message };
+    render();
+  }
 }
 
 async function submitSignup({ email, handle, password }) {
@@ -415,6 +483,20 @@ async function submitLogin({ email, password }) {
   } catch (error) {
     state.authError = error.message;
     render();
+  }
+}
+
+async function loadDevAccounts() {
+  if (state.devAccounts || state.devAccountsLoading) return;
+  state.devAccountsLoading = true;
+  try {
+    const resp = await getJson("/api/dev/accounts");
+    state.devAccounts = Array.isArray(resp.accounts) ? resp.accounts : [];
+  } catch {
+    state.devAccounts = [];
+  } finally {
+    state.devAccountsLoading = false;
+    if (state.view === "auth") render();
   }
 }
 
@@ -442,6 +524,9 @@ async function logout() {
 function setAuthMode(mode) {
   state.authMode = mode;
   state.authError = null;
+  if (mode === "reset-request") {
+    state.resetRequest = { status: "form", error: null };
+  }
   render();
 }
 
@@ -549,11 +634,13 @@ function renderExpiryChip(challenge, variant = "inline") {
   const urgency = expiryUrgencyClass(remaining);
   const text = remaining > 0 ? `${remaining}s` : "expired";
   const verb = variant === "wager" ? "Accept in" : "auto-decline";
+  const base = Date.parse(challenge.updatedAt || challenge.createdAt);
+  const seconds = challenge.expiresInSeconds ?? 0;
   return `
-    <span class="expiry-chip expiry-${variant} ${urgency}">
+    <span class="expiry-chip expiry-${variant} ${urgency}" data-expiry-base="${base}" data-expiry-seconds="${seconds}">
       <span class="expiry-icon" aria-hidden="true">⏱</span>
       <span class="expiry-verb">${escapeHtml(verb)}</span>
-      <strong class="expiry-time mono tnum">${escapeHtml(text)}</strong>
+      <strong class="expiry-time mono tnum" data-expiry-time>${escapeHtml(text)}</strong>
     </span>
   `;
 }
@@ -567,7 +654,9 @@ function manageChallengeCountdown() {
   const queueTicking = state.route === "play" && !!state.bootstrap?.matchmakingTicket;
   const shouldTick = challengeTicking || queueTicking;
   if (shouldTick && !state.challengeCountdownTimer) {
-    state.challengeCountdownTimer = setInterval(() => render(), 1000);
+    // Targeted updates only — a full render() every second would blow
+    // away the onboarding modal's focused input. See updateExpiryCountdownsDom.
+    state.challengeCountdownTimer = setInterval(updateExpiryCountdownsDom, 1000);
   } else if (!shouldTick && state.challengeCountdownTimer) {
     clearInterval(state.challengeCountdownTimer);
     state.challengeCountdownTimer = null;
@@ -960,7 +1049,17 @@ async function handleRealtimeMessage(msg) {
           navigate("game");
           return;
         }
-        render();
+        // Avoid blowing away the DOM (and any focused input — e.g., the
+        // lichess link modal on Profile) on routes that don't render
+        // challenge rails. Bots create challenges every couple seconds in
+        // bustling mode; only Play and Wager actually depend on this data.
+        if (state.route === "play") {
+          updatePlayChallengeRailsDom();
+          return;
+        }
+        if (state.route === "wager") {
+          render();
+        }
       } catch (error) {
         console.warn("failed to refresh after realtime event", error);
       }
@@ -1635,11 +1734,33 @@ function shell(content) {
         </div>
       </div>
     </header>
+    ${renderVerifyBanner(viewer)}
     <main>${content}</main>
     ${renderMilestoneStack()}
     ${renderScoutPopover()}
     ${resignConfirmDialog()}
     ${renderOnboardingModal()}
+  `;
+}
+
+function renderVerifyBanner(viewer) {
+  if (!viewer || viewer.emailVerifiedAt) return "";
+  const banner = state.verifyBanner || { sending: false, sent: false, error: null };
+  let action;
+  if (banner.sent) {
+    action = `<span class="verify-banner-status">Sent — check your inbox.</span>`;
+  } else if (banner.sending) {
+    action = `<button type="button" class="link" disabled>Sending…</button>`;
+  } else {
+    action = `<button type="button" class="link" data-resend-verify>Resend verification email</button>`;
+  }
+  return `
+    <div class="verify-banner" role="status">
+      <strong>Verify your email.</strong>
+      <span>We sent a link to ${escapeHtml(viewer.email)}. Click it to keep your account active for future real-money features.</span>
+      ${action}
+      ${banner.error ? `<em class="verify-banner-error">${escapeHtml(banner.error)}</em>` : ""}
+    </div>
   `;
 }
 
@@ -2174,6 +2295,7 @@ function renderHeroIdle(lobby) {
 
 function renderHeroQueued(ticket) {
   const elapsed = elapsedSecondsSince(ticket.createdAt);
+  const startedAt = Date.parse(ticket.createdAt);
   return `
     <div class="hero-state-head">
       <span class="picker-label">In the queue</span>
@@ -2188,7 +2310,7 @@ function renderHeroQueued(ticket) {
       </div>
       <div class="hero-state-meta">
         <span class="lbl-sm">~5s typical wait</span>
-        <span class="mono tnum">${formatElapsedShort(elapsed)} elapsed</span>
+        <span class="mono tnum" data-ticket-elapsed="${startedAt}">${formatElapsedShort(elapsed)} elapsed</span>
       </div>
     </div>
     <div class="hero-cta-row">
@@ -2318,9 +2440,15 @@ function updateLiveGamesFeedDom() {
   const counter = card.querySelector("[data-live-games-count]");
   if (counter) counter.textContent = String(games.length);
   if (feed) {
-    feed.innerHTML = games.length === 0
+    const next = games.length === 0
       ? `<p class="muted small">No tables in play yet. Be the first to start one.</p>`
       : games.map(renderLiveGameRow).join("");
+    // Skip the innerHTML swap when nothing changed — otherwise click
+    // targets briefly disappear/reappear under the cursor on every tick.
+    if (feed.dataset.lastRender !== next) {
+      feed.innerHTML = next;
+      feed.dataset.lastRender = next;
+    }
   }
 }
 
@@ -2344,6 +2472,42 @@ function updateWatcherChipDom() {
   const count = Number(game.watcherCount ?? 0);
   document.querySelectorAll("[data-watcher-count]").forEach((node) => {
     node.textContent = String(count);
+  });
+}
+
+function updateExpiryCountdownsDom() {
+  if (typeof document === "undefined") return;
+  const now = Date.now();
+  const urgencyClasses = ["expired", "critical", "low"];
+
+  // Expiry chips (wager screen + anywhere renderExpiryChip is used).
+  document.querySelectorAll("[data-expiry-base]").forEach((node) => {
+    const base = Number(node.dataset.expiryBase);
+    const seconds = Number(node.dataset.expirySeconds);
+    if (!Number.isFinite(base) || !Number.isFinite(seconds) || seconds <= 0) return;
+    const remaining = Math.max(0, Math.ceil((base + seconds * 1000 - now) / 1000));
+    const timeNode = node.querySelector("[data-expiry-time]");
+    if (timeNode) timeNode.textContent = remaining > 0 ? `${remaining}s` : "expired";
+    const next = expiryUrgencyClass(remaining);
+    for (const c of urgencyClasses) node.classList.remove(c);
+    if (next) node.classList.add(next);
+  });
+
+  // Inline "Xs left" hints on challenge rows.
+  document.querySelectorAll("[data-row-time-hint]").forEach((node) => {
+    const base = Number(node.dataset.rowTimeHintBase);
+    const seconds = Number(node.dataset.rowTimeHintSeconds);
+    if (!Number.isFinite(base) || !Number.isFinite(seconds) || seconds <= 0) return;
+    const remaining = Math.max(0, Math.ceil((base + seconds * 1000 - now) / 1000));
+    node.textContent = remaining > 0 ? `${remaining}s left` : "expired";
+  });
+
+  // Matchmaking queue "Ns elapsed".
+  document.querySelectorAll("[data-ticket-elapsed]").forEach((node) => {
+    const startedAt = Number(node.dataset.ticketElapsed);
+    if (!Number.isFinite(startedAt)) return;
+    const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+    node.textContent = `${formatElapsedShort(elapsed)} elapsed`;
   });
 }
 
@@ -2404,22 +2568,97 @@ function renderPlay() {
     ${liveGame ? renderLiveTableModule(liveGame) : ""}
     <section class="grid two">
       ${renderHero(lobby)}
-      <aside class="stack">
+      <aside class="stack" data-play-rails>
         ${renderHeartbeatStrip(lobby)}
-        ${incomingChallenges.length === 0 ? "" : `
-          <article class="card incoming-card">
-            <div class="between"><h2>Incoming</h2><small>${incomingChallenges.length}</small></div>
-            ${incomingChallenges.map(challengeRow).join("")}
-          </article>
-        `}
+        <div data-incoming-rail>${renderIncomingRail(incomingChallenges)}</div>
         ${renderLiveGamesCard(lobby.liveGames)}
-        <article class="card open-tables-card">
-          <div class="between"><h2>Open tables</h2><small>${openCount}</small></div>
-          ${renderOpenTablesList(openChallenges)}
+        <article class="card open-tables-card" data-open-tables-card>
+          <div class="between"><h2>Open tables</h2><small data-open-tables-count>${openCount}</small></div>
+          <div data-open-tables-body>${renderOpenTablesList(openChallenges)}</div>
         </article>
       </aside>
     </section>
   `;
+}
+
+function renderIncomingRail(incomingChallenges) {
+  if (!incomingChallenges || incomingChallenges.length === 0) return "";
+  return `
+    <article class="card incoming-card">
+      <div class="between"><h2>Incoming</h2><small data-incoming-count>${incomingChallenges.length}</small></div>
+      <div data-incoming-body>${incomingChallenges.map(challengeRow).join("")}</div>
+    </article>
+  `;
+}
+
+function updatePlayChallengeRailsDom() {
+  if (typeof document === "undefined") return;
+  if (state.route !== "play" || !state.bootstrap) return;
+  const { lobby, incomingChallenges } = state.bootstrap;
+  if (!lobby) return;
+
+  // Incoming card: replace the whole article when transitioning between
+  // empty/non-empty; otherwise patch its body + count.
+  const incomingRail = document.querySelector("[data-incoming-rail]");
+  if (incomingRail) {
+    const hadIncomingCard = !!incomingRail.querySelector(".incoming-card");
+    const hasIncoming = incomingChallenges.length > 0;
+    if (hadIncomingCard !== hasIncoming) {
+      incomingRail.innerHTML = renderIncomingRail(incomingChallenges);
+      bindPlayRailEventHandlers();
+    } else if (hasIncoming) {
+      const countNode = incomingRail.querySelector("[data-incoming-count]");
+      if (countNode) countNode.textContent = String(incomingChallenges.length);
+      const body = incomingRail.querySelector("[data-incoming-body]");
+      if (body) {
+        const next = incomingChallenges.map(challengeRow).join("");
+        if (body.dataset.lastRender !== next) {
+          body.innerHTML = next;
+          body.dataset.lastRender = next;
+          bindPlayRailEventHandlers();
+        }
+      }
+    }
+  }
+
+  // Open tables: patch the body + count. Skip when unchanged to keep
+  // click targets stable under the cursor.
+  const openChallenges = lobby.openChallenges || [];
+  const openCount = openChallenges.filter((c) => c.challengerId !== viewerId()).length;
+  const countNode = document.querySelector("[data-open-tables-count]");
+  if (countNode) countNode.textContent = String(openCount);
+  const body = document.querySelector("[data-open-tables-body]");
+  if (body) {
+    const next = renderOpenTablesList(openChallenges);
+    if (body.dataset.lastRender !== next) {
+      body.innerHTML = next;
+      body.dataset.lastRender = next;
+      bindPlayRailEventHandlers();
+    }
+  }
+}
+
+function bindPlayRailEventHandlers() {
+  // The only interactive elements inside the rails are the row buttons
+  // tagged `data-select-challenge`. Re-attach handlers to anything not
+  // yet bound (rebinding is cheap; we mark with `dataset.bound` so a
+  // patched row from a prior render isn't double-bound).
+  const railRoot = document.querySelector("[data-play-rails]");
+  if (!railRoot) return;
+  railRoot.querySelectorAll("[data-select-challenge]").forEach((b) => {
+    if (b.dataset.bound === "1") return;
+    b.dataset.bound = "1";
+    b.addEventListener("click", () => {
+      const id = b.dataset.selectChallenge;
+      const all = [
+        ...state.bootstrap.incomingChallenges,
+        ...state.bootstrap.sentChallenges,
+        ...state.bootstrap.lobby.openChallenges
+      ];
+      const challenge = all.find((c) => c.id === id);
+      if (challenge) selectChallenge(challenge);
+    });
+  });
 }
 
 function challengeRow(challenge) {
@@ -2429,11 +2668,16 @@ function challengeRow(challenge) {
     ? (challenge.recipient ? `your invite → ${challenge.recipient.handle}` : "your open invite")
     : `from ${opponent.handle}`;
   const remaining = challengeSecondsRemaining(challenge);
-  const timeHint = remaining === null
+  const base = Date.parse(challenge.updatedAt || challenge.createdAt);
+  const seconds = challenge.expiresInSeconds ?? 0;
+  const timeHintText = remaining === null
     ? ""
     : remaining > 0
       ? `${remaining}s left`
       : "expired";
+  const timeHintSpan = remaining === null
+    ? ""
+    : ` · <span data-row-time-hint data-row-time-hint-base="${base}" data-row-time-hint-seconds="${seconds}">${escapeHtml(timeHintText)}</span>`;
   const identity = opponent?.id ? `
     <span class="table-row-id">
       ${renderAvatar(opponent, { surface: "dense_row" })}
@@ -2448,7 +2692,7 @@ function challengeRow(challenge) {
         "table-row-scout"
       ) : identity}
       <span>${money(challenge.stakeCents)} · ${challenge.timeControl}</span>
-      <em>${isMine && !challenge.recipientId ? "yours · " : ""}${escapeHtml(challenge.state)}${timeHint ? ` · ${escapeHtml(timeHint)}` : ""}</em>
+      <em>${isMine && !challenge.recipientId ? "yours · " : ""}${escapeHtml(challenge.state)}${timeHintSpan}</em>
       <span>→</span>
     </button>
   `;
@@ -2720,22 +2964,46 @@ function renderGame() {
     : game.status;
   const whiteStakeLabel = viewer?.color === "white" ? "Your stake" : `${white?.handle ?? "White"} stake`;
   const blackStakeLabel = viewer?.color === "black" ? "Your stake" : `${black?.handle ?? "Black"} stake`;
+
+  const replay = game.state === "finalized" && state.replay ? state.replay : null;
+  const replayPly = replay ? replay.currentPly : 0;
+  const replayTotal = replay ? replay.moves.length : 0;
+  const replayFen = replay
+    ? (replayPly === 0 ? replay.startingFen : replay.moves[replayPly - 1].fenAfter)
+    : null;
+  const replayLastMove = replay && replayPly > 0 ? replay.moves[replayPly - 1] : null;
+  const replayCurrentSan = replay && replayPly > 0 ? replay.moves[replayPly - 1].san : null;
+
   return `
     <section class="game-layout">
       <aside class="card game-panel move-panel">
         <div class="between">
           <h2>Move history</h2>
-          <small>${game.moveNumber ? `move ${game.moveNumber}` : "opening"}</small>
+          <small>${replay ? `ply ${replayPly} / ${replayTotal}` : (game.moveNumber ? `move ${game.moveNumber}` : "opening")}</small>
         </div>
         <div class="move-head"><span>White</span><span>Black</span></div>
         <ol class="moves" data-move-list>
-          ${(game.moveRows || []).map((move, index, rows) => `
-            <li class="${index === rows.length - 1 ? "current" : ""}">
-              <span class="move-number">${index + 1}.</span>
-              <span>${escapeHtml(move[0])}</span>
-              <span>${escapeHtml(move[1] || "")}</span>
-            </li>
-          `).join("") || `<li><span class="move-number">1.</span><span>No moves yet</span><span></span></li>`}
+          ${(game.moveRows || []).map((move, index, rows) => {
+            const whitePly = index * 2 + 1;
+            const blackPly = index * 2 + 2;
+            const isLastRow = index === rows.length - 1;
+            const liveCurrent = !replay && isLastRow ? "current" : "";
+            const whiteCell = replay
+              ? `<button class="move-cell-button${replayPly === whitePly ? " active" : ""}" type="button" data-replay-ply="${whitePly}">${escapeHtml(move[0])}</button>`
+              : `<span>${escapeHtml(move[0])}</span>`;
+            const blackCell = move[1]
+              ? (replay
+                  ? `<button class="move-cell-button${replayPly === blackPly ? " active" : ""}" type="button" data-replay-ply="${blackPly}">${escapeHtml(move[1])}</button>`
+                  : `<span>${escapeHtml(move[1])}</span>`)
+              : `<span></span>`;
+            return `
+              <li class="${liveCurrent}">
+                <span class="move-number">${index + 1}.</span>
+                ${whiteCell}
+                ${blackCell}
+              </li>
+            `;
+          }).join("") || `<li><span class="move-number">1.</span><span>No moves yet</span><span></span></li>`}
         </ol>
       </aside>
       <article class="board-column">
@@ -2743,6 +3011,13 @@ function renderGame() {
           const orientation = boardOrientation(game);
           const topPlayer = orientation === "black" ? white : black;
           const bottomPlayer = orientation === "black" ? black : white;
+          if (replay) {
+            return `
+              ${playerStrip(game, topPlayer, false)}
+              ${replayBoard(replayFen, orientation, replayLastMove)}
+              ${playerStrip(game, bottomPlayer, false)}
+            `;
+          }
           return `
             ${playerStrip(game, topPlayer, game.turn === topPlayer.color)}
             ${captureTray(game, topPlayer.color)}
@@ -2752,11 +3027,21 @@ function renderGame() {
             ${playerStrip(game, bottomPlayer, game.turn === bottomPlayer.color)}
           `;
         })()}
-        <div class="turn-strip">
-          <strong>${escapeHtml(statusText)}</strong>
-          <span>${escapeHtml(game.status)}${game.inCheck ? " · check" : ""}</span>
-          ${state.gameError ? `<em>${escapeHtml(state.gameError)} <button type="button" class="inline-dismiss" data-dismiss-game-error aria-label="Dismiss game error">Dismiss</button></em>` : ""}
-        </div>
+        ${replay ? `
+          <div class="turn-strip replay-nav" role="group" aria-label="Replay controls">
+            <button type="button" class="replay-nav-button" data-replay-jump="first" aria-label="First position" ${replayPly === 0 ? "disabled" : ""}>⏮</button>
+            <button type="button" class="replay-nav-button" data-replay-jump="prev" aria-label="Previous move" ${replayPly === 0 ? "disabled" : ""}>◀</button>
+            <strong class="replay-ply-indicator">${replayPly === 0 ? "Start" : escapeHtml(replayCurrentSan)}</strong>
+            <button type="button" class="replay-nav-button" data-replay-jump="next" aria-label="Next move" ${replayPly >= replayTotal ? "disabled" : ""}>▶</button>
+            <button type="button" class="replay-nav-button" data-replay-jump="last" aria-label="Last position" ${replayPly >= replayTotal ? "disabled" : ""}>⏭</button>
+          </div>
+        ` : `
+          <div class="turn-strip">
+            <strong>${escapeHtml(statusText)}</strong>
+            <span>${escapeHtml(game.status)}${game.inCheck ? " · check" : ""}</span>
+            ${state.gameError ? `<em>${escapeHtml(state.gameError)} <button type="button" class="inline-dismiss" data-dismiss-game-error aria-label="Dismiss game error">Dismiss</button></em>` : ""}
+          </div>
+        `}
       </article>
       <aside class="stack">
         <article class="felt pot game-panel">
@@ -2790,7 +3075,6 @@ function renderGame() {
         `}
       </aside>
     </section>
-    ${game.state === "finalized" ? replayPanel() : ""}
   `;
 }
 
@@ -3686,8 +3970,12 @@ function ledgerRowsWithBalances(entries) {
 }
 
 function renderAuth() {
+  if (state.authMode === "reset-request") return renderResetRequest();
   const mode = state.authMode === "signup" ? "signup" : "login";
   const isSignup = mode === "signup";
+  if (state.devAccounts === null && !state.devAccountsLoading) {
+    loadDevAccounts();
+  }
   return `
     <main class="auth-shell">
       <article class="auth-card felt">
@@ -3713,9 +4001,132 @@ function renderAuth() {
           <button class="primary" type="submit">${isSignup ? "Create account" : "Log in"}</button>
           ${state.authError ? `<em class="action-error">${escapeHtml(state.authError)}</em>` : ""}
         </form>
+        ${!isSignup ? `<button type="button" class="link auth-forgot" data-auth-mode="reset-request">Forgot password?</button>` : ""}
+        ${renderDevAccountPicker()}
         <p class="muted small">New accounts start with $1,000 in fake-money escrow funds.</p>
       </article>
     </main>
+  `;
+}
+
+function renderResetRequest() {
+  const flow = state.resetRequest || { status: "form", error: null };
+  if (flow.status === "success") {
+    return `
+      <main class="auth-shell">
+        <article class="auth-card felt">
+          <a class="brand auth-brand" href="#"><span class="mark">♞</span>Horsey</a>
+          <h2>Check your inbox.</h2>
+          <p>If an account exists for that email, we sent a password-reset link. The link expires in 1 hour.</p>
+          <button type="button" class="primary" data-auth-mode="login">Back to log in</button>
+        </article>
+      </main>
+    `;
+  }
+  const submitting = flow.status === "submitting";
+  return `
+    <main class="auth-shell">
+      <article class="auth-card felt">
+        <a class="brand auth-brand" href="#"><span class="mark">♞</span>Horsey</a>
+        <h2>Reset your password</h2>
+        <p class="muted small">We'll send a link to your email. The link expires in 1 hour.</p>
+        <form data-reset-request-form class="stack">
+          <label>Email
+            <input name="email" type="email" autocomplete="email" required />
+          </label>
+          <button class="primary" type="submit" ${submitting ? "disabled" : ""}>${submitting ? "Sending…" : "Send reset link"}</button>
+          ${flow.error ? `<em class="action-error">${escapeHtml(flow.error)}</em>` : ""}
+        </form>
+        <button type="button" class="link auth-forgot" data-auth-mode="login">Back to log in</button>
+      </article>
+    </main>
+  `;
+}
+
+function renderVerifyEmail() {
+  const flow = state.verifyEmail || { status: "verifying", message: null };
+  let body;
+  if (flow.status === "verifying") {
+    body = `<p>Verifying your email…</p>`;
+  } else if (flow.status === "success") {
+    body = `
+      <h2>Email verified.</h2>
+      <p>Your account is now fully active.</p>
+      <button type="button" class="primary" data-verify-continue>Continue to Horsey</button>
+    `;
+  } else {
+    body = `
+      <h2>That link didn't work.</h2>
+      <p>${escapeHtml(flow.message || "The verification link is invalid or has expired.")}</p>
+      <p class="muted small">Log in and use the banner action to request a fresh link.</p>
+      <button type="button" class="primary" data-verify-continue>Back to Horsey</button>
+    `;
+  }
+  return `
+    <main class="auth-shell">
+      <article class="auth-card felt">
+        <a class="brand auth-brand" href="#"><span class="mark">♞</span>Horsey</a>
+        ${body}
+      </article>
+    </main>
+  `;
+}
+
+function renderPasswordResetView() {
+  const flow = state.passwordReset || { status: "form", error: null, token: null };
+  if (flow.status === "success") {
+    return `
+      <main class="auth-shell">
+        <article class="auth-card felt">
+          <a class="brand auth-brand" href="#"><span class="mark">♞</span>Horsey</a>
+          <h2>Password updated.</h2>
+          <p>Sign in with your new password.</p>
+          <button type="button" class="primary" data-reset-continue>Go to log in</button>
+        </article>
+      </main>
+    `;
+  }
+  const submitting = flow.status === "submitting";
+  return `
+    <main class="auth-shell">
+      <article class="auth-card felt">
+        <a class="brand auth-brand" href="#"><span class="mark">♞</span>Horsey</a>
+        <h2>Choose a new password</h2>
+        <form data-password-reset-form class="stack">
+          <label>New password
+            <input name="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+            <small class="muted">8+ characters</small>
+          </label>
+          <button class="primary" type="submit" ${submitting ? "disabled" : ""}>${submitting ? "Updating…" : "Set new password"}</button>
+          ${flow.error ? `<em class="action-error">${escapeHtml(flow.error)}</em>` : ""}
+        </form>
+      </article>
+    </main>
+  `;
+}
+
+function renderDevAccountPicker() {
+  const accounts = state.devAccounts || [];
+  if (accounts.length === 0) return "";
+  return `
+    <section class="dev-account-picker" aria-label="Dev account picker">
+      <div class="between">
+        <strong>Dev accounts</strong>
+        <span class="muted small">QA mode</span>
+      </div>
+      <div class="dev-account-list">
+        ${accounts.map((account) => `
+          <button type="button" class="dev-account" data-dev-login="${escapeHtml(account.email)}" data-dev-password="${escapeHtml(account.password)}">
+            ${renderAvatar(account, { size: "sm" })}
+            <span>
+              <strong>${escapeHtml(account.handle)}</strong>
+              <small>${escapeHtml(account.email)}</small>
+            </span>
+            <em class="tier-${escapeHtml(account.trustTier)}">${escapeHtml(account.trustTier)}</em>
+          </button>
+        `).join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -3965,6 +4376,37 @@ function renderUserProfile() {
 
 function render() {
   if (state.view === "loading") return;
+  if (state.view === "verify-email") {
+    document.querySelector("#app").innerHTML = renderVerifyEmail();
+    document.querySelectorAll("[data-verify-continue]").forEach((b) => {
+      b.addEventListener("click", () => {
+        window.location.hash = "#play";
+        window.location.reload();
+      });
+    });
+    return;
+  }
+  if (state.view === "password-reset") {
+    document.querySelector("#app").innerHTML = renderPasswordResetView();
+    const form = document.querySelector("[data-password-reset-form]");
+    if (form) {
+      form.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const fd = new FormData(form);
+        submitPasswordResetConfirm({
+          token: state.passwordReset?.token || "",
+          newPassword: fd.get("newPassword")
+        });
+      });
+    }
+    document.querySelectorAll("[data-reset-continue]").forEach((b) => {
+      b.addEventListener("click", () => {
+        window.location.hash = "";
+        window.location.reload();
+      });
+    });
+    return;
+  }
   if (state.view === "auth") {
     document.querySelector("#app").innerHTML = renderAuth();
     document.querySelectorAll("[data-auth-mode]").forEach((b) => {
@@ -3984,6 +4426,20 @@ function render() {
         }
       });
     }
+    const resetForm = document.querySelector("[data-reset-request-form]");
+    if (resetForm) {
+      resetForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const fd = new FormData(resetForm);
+        submitPasswordResetRequest(fd.get("email"));
+      });
+    }
+    document.querySelectorAll("[data-dev-login]").forEach((b) => {
+      b.addEventListener("click", () => {
+        state.authMode = "login";
+        submitLogin({ email: b.dataset.devLogin, password: b.dataset.devPassword });
+      });
+    });
     return;
   }
   if (!state.bootstrap) return;
@@ -4008,6 +4464,9 @@ function render() {
   });
   document.querySelectorAll("[data-logout]").forEach((b) => {
     b.addEventListener("click", () => logout());
+  });
+  document.querySelectorAll("[data-resend-verify]").forEach((b) => {
+    b.addEventListener("click", () => resendVerificationEmail());
   });
   document.querySelectorAll("[data-dismiss-game-error]").forEach((b) => {
     b.addEventListener("click", () => {

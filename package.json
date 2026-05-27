@@ -5,8 +5,12 @@
   "type": "module",
   "description": "Horsey wagered chess product baseline.",
   "scripts": {
-    "dev": "node apps/api/server.mjs",
+    "dev": "HORSEY_EMAIL_DRY_RUN_LOG=1 node apps/api/server.mjs",
+    "dev:qa": "HORSEY_DB_PATH=/tmp/horsey-qa.db HORSEY_ENABLE_DEV_ACCOUNT_PICKER=1 HORSEY_EMAIL_DRY_RUN_LOG=1 node apps/api/server.mjs",
+    "dev:bustling": "HORSEY_DB_PATH=/tmp/horsey-bustling.db HORSEY_ENABLE_DEV_BOTS=1 HORSEY_ENABLE_DEV_ACCOUNT_PICKER=1 HORSEY_EMAIL_DRY_RUN_LOG=1 node apps/api/server.mjs",
     "start": "node apps/api/server.mjs",
+    "scenario": "node scripts/dev-scenario.mjs",
+    "scenario:qa": "node scripts/dev-scenario.mjs trust-matrix --db /tmp/horsey-qa.db",
     "test": "node --test",
     "check": "node scripts/check-project.mjs",
     "lint": "biome lint .",

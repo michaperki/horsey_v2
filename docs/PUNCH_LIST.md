@@ -28,11 +28,21 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 - [x] **"Reconnecting" pill is only rendered on the game page.** The shell now shows the realtime live/reconnecting/offline pill across Play / History / Profile.
 - [x] **`game.finalized` auto-navigates to settlement from any route** (`handleRealtimeMessage`). Realtime settlement now refreshes game, wallet, settlement, and replay state in place; the game page stays on the board and swaps the right rail to settlement.
+- [x] **Onboarding modal couldn't accept input** with bots active. `manageChallengeCountdown`'s 1Hz `setInterval(() => render(), 1000)` was blowing away the entire DOM each tick, including focused inputs. Replaced with targeted text + class updates on `[data-expiry-base]` / `[data-row-time-hint]` / `[data-ticket-elapsed]` nodes — no `render()` calls per tick.
+- [x] **`challenge.*` realtime events triggered full re-renders on every route.** Now route-guarded: only Play (via targeted `updatePlayChallengeRailsDom`) and Wager re-render. Profile / Game / History keep their DOM intact, so modals + focused inputs survive.
+- [x] **Open Tables / Live now rails rebuilt their innerHTML on every tick.** Both `updateLiveGamesFeedDom` and `updatePlayChallengeRailsDom` now cache the last rendered HTML on the container's dataset and skip the swap when nothing changed. Click targets stay stable under the cursor.
+- [x] **Sidebar bouncing when Live now grew/shrank pushed click targets around.** Live now / Incoming / Open tables card bodies now have `max-height` + `overflow-y: auto` (Live now also has a `min-height` to prevent empty-state collapse). Rails stay anchored as games rotate.
+
+## In-game polish (continued)
+
+- [x] **Post-finalize `#game` showed both a static end-state board AND the replay panel.** Two boards on one page, redundant. The board column now swaps to the replay board in place when finalized, the move history becomes click-to-jump, and the turn-strip is replaced with inline replay nav (⏮ ◀ <san> ▶ ⏭). Capture trays drop in replay mode (they'd be stale at scrubbed plies). `renderSettlement` (the `#history/:gameId` route) is unchanged.
+- [x] **Live-feed name overflow.** Two long bot handles + "vs" + ratings used to wrap onto a second line. `.live-feed-players` now `flex-wrap: nowrap` with `min-width: 0`; each scout wrapper truncates with ellipsis via `flex: 1 1 0; overflow: hidden`; `vs` and rating chip stay intact with `flex-shrink: 0`.
 
 ## Settlement / History
 
 - [x] **`endReason` is rendered raw** in history rows ("checkmate", "resignation", "timeout", "agreement"). Added friendly labels.
 - [x] **History list has no filters/grouping.** Added Wins / Losses / Draws result counts without aggregate net-loss money.
+- [ ] **Spectator settlement shows "Loading…" indefinitely.** When a watched game finalizes, the spectator's right rail says "Table settled · Loading pot settlement…" forever — because `state.activeSettlement` only fills from `/api/games/:id/settlement`, which is player-scoped. The game record itself already carries everything a spectator should see: winner handle, end reason, pot, players + ratings, move count. The fix is a spectator-flavored panel rendered from `game` directly (no settlement fetch) — third-person headline like "alice won by checkmate", end-reason chip, pot stake, optional rating deltas if `game.ratingChange` is populated, and a CTA back to Play. Privacy guardrail per `project_no_loss_advertising`: winner-centric or neutral copy only, no "Y lost $X" framing. (`app.js:finalizedGameSettlementPanel`)
 
 ## Profile
 

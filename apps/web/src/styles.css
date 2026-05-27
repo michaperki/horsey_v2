@@ -181,6 +181,83 @@ button.link {
   border-bottom-color: var(--ink);
 }
 
+.auth-forgot {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+.verify-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 16px;
+  background: rgba(211, 164, 65, 0.15);
+  border-bottom: 1px solid rgba(211, 164, 65, 0.35);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.verify-banner strong {
+  color: var(--gold-2);
+}
+
+.verify-banner .verify-banner-status {
+  color: var(--muted);
+}
+
+.verify-banner .verify-banner-error {
+  color: var(--red);
+  font-style: normal;
+  font-weight: 600;
+}
+
+.dev-account-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 247, 232, 0.18);
+}
+
+.dev-account-list {
+  display: grid;
+  gap: 8px;
+}
+
+.dev-account {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  background: rgba(251, 246, 234, 0.08);
+  border-color: rgba(255, 247, 232, 0.16);
+  color: #fff7e8;
+}
+
+.dev-account span {
+  min-width: 0;
+}
+
+.dev-account strong,
+.dev-account small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dev-account em {
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 input[type="email"],
 input[type="password"],
 input[type="text"] {
@@ -559,6 +636,28 @@ main {
 
 .open-tables-empty {
   margin: 8px 0 0;
+}
+
+/* Cap rail bodies and scroll within them so a Live Now / Incoming
+ * card growing doesn't shift the Open Tables card underneath it
+ * (which would make rows under the cursor jump as the user clicks).
+ * min-heights give an empty card enough room not to visibly collapse
+ * when its last row disappears.
+ */
+[data-live-games-feed] {
+  min-height: 96px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+[data-incoming-body] {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+[data-open-tables-body] {
+  max-height: 380px;
+  overflow-y: auto;
 }
 
 .open-tables-list {
@@ -1662,7 +1761,8 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 
 .live-feed-scout {
@@ -1670,6 +1770,8 @@ p {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  flex: 1 1 0;
+  overflow: hidden;
 }
 
 .live-feed-handle {
@@ -1679,6 +1781,8 @@ p {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .live-feed-rating {
@@ -1693,6 +1797,7 @@ p {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+  flex-shrink: 0;
 }
 
 .live-feed-meta {
@@ -2205,6 +2310,35 @@ p {
   font-weight: 800;
 }
 
+.turn-strip.replay-nav {
+  gap: 8px;
+}
+
+.turn-strip.replay-nav .replay-nav-button {
+  padding: 6px 12px;
+  font-size: 16px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.turn-strip.replay-nav .replay-nav-button:hover:not([disabled]) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.turn-strip.replay-nav .replay-nav-button[disabled] {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.turn-strip.replay-nav .replay-ply-indicator {
+  min-width: 6ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .inline-dismiss {
   border: 0;
   background: transparent;
@@ -2585,6 +2719,29 @@ p {
 
 .moves li.current {
   background: rgba(211, 164, 65, 0.18);
+}
+
+.moves .move-cell-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.moves .move-cell-button:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.moves .move-cell-button.active {
+  background: rgba(241, 201, 107, 0.22);
+  border-color: rgba(241, 201, 107, 0.45);
 }
 
 .pot h2,

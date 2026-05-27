@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -16,8 +16,21 @@ const SCHEMA = `
     rating INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     onboarding_completed_at TEXT,
-    equipped_avatar TEXT NOT NULL DEFAULT '${DEFAULT_AVATAR_ID}'
+    equipped_avatar TEXT NOT NULL DEFAULT '${DEFAULT_AVATAR_ID}',
+    email_verified_at TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS email_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash, type);
+  CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id, type);
 
   CREATE TABLE IF NOT EXISTS user_avatars (
     user_id TEXT NOT NULL,
@@ -150,7 +163,21 @@ function rowToPublicUser(row) {
     rating: row.rating,
     createdAt: row.created_at,
     onboardingCompletedAt: row.onboarding_completed_at ?? null,
-    equippedAvatar: row.equipped_avatar ?? null
+    equippedAvatar: row.equipped_avatar ?? null,
+    emailVerifiedAt: row.email_verified_at ?? null
+  };
+}
+
+function rowToEmailToken(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    tokenHash: row.token_hash,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at ?? null,
+    createdAt: row.created_at
   };
 }
 
@@ -337,6 +364,34 @@ function migrateSchema(db) {
       }
     }
   }
+  // v9 → v10: email verification + password reset. users.email_verified_at is
+  // null for unverified accounts. Existing rows are grandfathered to
+  // created_at so accounts that pre-date verification don't get nagged. The
+  // email_tokens table stores hashed verify/reset tokens with TTL + single-use
+  // consumption.
+  if (currentVersion < 10 && currentVersion >= 1) {
+    const cols = db.prepare("PRAGMA table_info('users')").all();
+    if (!cols.some((c) => c.name === "email_verified_at")) {
+      db.exec("ALTER TABLE users ADD COLUMN email_verified_at TEXT");
+    }
+    db.prepare(`
+      UPDATE users SET email_verified_at = created_at
+      WHERE email_verified_at IS NULL
+    `).run();
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS email_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_email_tokens_hash ON email_tokens(token_hash, type);
+      CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id, type);
+    `);
+  }
   db.pragma(`user_version = ${SCHEMA_VERSION}`);
 }
 
@@ -369,9 +424,10 @@ function makeApi(db) {
       INSERT INTO users (id, email, handle, password_hash, password_salt, rating, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `),
-    updateUserEmail: db.prepare("UPDATE users SET email = ? WHERE id = ?"),
+    updateUserEmail: db.prepare("UPDATE users SET email = ?, email_verified_at = NULL WHERE id = ?"),
     updateUserPassword: db.prepare("UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?"),
     updateUserRating: db.prepare("UPDATE users SET rating = ? WHERE id = ?"),
+    markEmailVerified: db.prepare("UPDATE users SET email_verified_at = ? WHERE id = ? AND email_verified_at IS NULL"),
     updateUserEquippedAvatar: db.prepare("UPDATE users SET equipped_avatar = ? WHERE id = ?"),
     markOnboardingCompleted: db.prepare(`
       UPDATE users SET onboarding_completed_at = ?
@@ -396,6 +452,7 @@ function makeApi(db) {
     `),
     deleteSession: db.prepare("DELETE FROM sessions WHERE id = ?"),
     deleteOtherSessions: db.prepare("DELETE FROM sessions WHERE user_id = ? AND id != ?"),
+    deleteSessionsForUser: db.prepare("DELETE FROM sessions WHERE user_id = ?"),
     deleteExpiredSessions: db.prepare("DELETE FROM sessions WHERE expires_at <= ?"),
 
     getChallenge: db.prepare("SELECT * FROM challenges WHERE id = ?"),
@@ -540,7 +597,25 @@ function makeApi(db) {
       SELECT * FROM external_accounts
       WHERE provider = ? AND LOWER(external_username) = LOWER(?)
     `),
-    deleteExternalAccount: db.prepare("DELETE FROM external_accounts WHERE id = ?")
+    deleteExternalAccount: db.prepare("DELETE FROM external_accounts WHERE id = ?"),
+
+    insertEmailToken: db.prepare(`
+      INSERT INTO email_tokens (id, user_id, type, token_hash, expires_at, consumed_at, created_at)
+      VALUES (?, ?, ?, ?, ?, NULL, ?)
+    `),
+    findEmailTokenByHash: db.prepare(`
+      SELECT * FROM email_tokens WHERE token_hash = ? AND type = ? LIMIT 1
+    `),
+    markEmailTokenConsumed: db.prepare(`
+      UPDATE email_tokens SET consumed_at = ? WHERE id = ?
+    `),
+    deleteEmailTokensForUserByType: db.prepare(`
+      DELETE FROM email_tokens WHERE user_id = ? AND type = ?
+    `),
+    countRecentEmailTokensForUser: db.prepare(`
+      SELECT COUNT(*) AS n FROM email_tokens
+      WHERE user_id = ? AND type = ? AND created_at > ?
+    `)
   };
 
   return {
@@ -615,6 +690,7 @@ function makeApi(db) {
     },
     deleteSession(id) { stmts.deleteSession.run(id); },
     deleteOtherSessions(userId, keepSessionId) { stmts.deleteOtherSessions.run(userId, keepSessionId); },
+    deleteSessionsForUser(userId) { stmts.deleteSessionsForUser.run(userId); },
     deleteExpiredSessions(nowIso = new Date().toISOString()) {
       stmts.deleteExpiredSessions.run(nowIso);
     },
@@ -813,6 +889,32 @@ function makeApi(db) {
     },
     listExternalAccountsByProviderHandle(provider, username) {
       return stmts.listExternalAccountsByProviderHandle.all(provider, username).map(rowToExternalAccount);
+    },
+
+    insertEmailToken(token) {
+      stmts.insertEmailToken.run(
+        token.id,
+        token.userId,
+        token.type,
+        token.tokenHash,
+        token.expiresAt,
+        token.createdAt
+      );
+    },
+    findEmailTokenByHash(tokenHash, type) {
+      return rowToEmailToken(stmts.findEmailTokenByHash.get(tokenHash, type));
+    },
+    markEmailTokenConsumed(id, consumedAt = new Date().toISOString()) {
+      stmts.markEmailTokenConsumed.run(consumedAt, id);
+    },
+    deleteEmailTokensForUserByType(userId, type) {
+      stmts.deleteEmailTokensForUserByType.run(userId, type);
+    },
+    countRecentEmailTokensForUser(userId, type, sinceIso) {
+      return Number(stmts.countRecentEmailTokensForUser.get(userId, type, sinceIso)?.n ?? 0);
+    },
+    markEmailVerified(userId, verifiedAt = new Date().toISOString()) {
+      return stmts.markEmailVerified.run(verifiedAt, userId).changes > 0;
     },
 
     transaction(fn) { return db.transaction(fn); },

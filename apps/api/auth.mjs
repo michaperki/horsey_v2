@@ -1,4 +1,4 @@
-import { randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
 const scrypt = promisify(scryptCb);
@@ -6,7 +6,10 @@ const scrypt = promisify(scryptCb);
 const SCRYPT_KEY_LEN = 64;
 const SCRYPT_SALT_LEN = 16;
 const SESSION_TOKEN_BYTES = 32;
+const EMAIL_TOKEN_BYTES = 32;
 export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+export const EMAIL_VERIFY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+export const PASSWORD_RESET_TTL_MS = 60 * 60 * 1000;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const HANDLE_RE = /^[a-zA-Z0-9_-]{3,20}$/;
@@ -70,4 +73,29 @@ export function validateLoginInput({ email, password }) {
     throw err;
   }
   return { email: email.toLowerCase().trim(), password };
+}
+
+export function generateEmailToken() {
+  return randomBytes(EMAIL_TOKEN_BYTES).toString("hex");
+}
+
+export function hashEmailToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+export function newEmailTokenExpiry(ttlMs, now = Date.now()) {
+  return new Date(now + ttlMs).toISOString();
+}
+
+export function isEmailTokenExpired(token, nowIso = new Date().toISOString()) {
+  return !token || token.expiresAt <= nowIso;
+}
+
+export function validatePasswordInput(password, message = "password must be at least 8 characters") {
+  if (typeof password !== "string" || password.length < 8) {
+    const err = new RangeError(message);
+    err.code = "invalid_password";
+    throw err;
+  }
+  return password;
 }

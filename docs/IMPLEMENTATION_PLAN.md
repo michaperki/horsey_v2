@@ -2,11 +2,13 @@
 
 This is the single master document for Horsey's product execution. It covers the product shape, the working principles, what is built today, what is mocked, the staged plan to replace each mock with the real version, and the cross-cutting work that runs alongside. Update this doc — not a side note — when product direction changes.
 
-Companion docs (not roadmaps): `PROJECT_SOUL.md` (product voice and feel), `ARCHITECTURE_FIRST_PASS.md` (early system shape), `DESIGN_REVIEW.md` (design intent), `adr/` (durable architecture decisions).
+Companion docs (not roadmaps): `PROJECT_SOUL.md` (product voice and feel), `ARCHITECTURE_FIRST_PASS.md` (early system shape), `DESIGN_REVIEW.md` (design intent), `DEV_QA_WORKFLOW.md` (manual multiplayer smoke workflow + lightweight dev-tool direction), `adr/` (durable architecture decisions).
 
 ## Product Shape
 
 Horsey is a wagered chess product. Two players pick a stake and time control, escrow the wager, play a chess game with server-authoritative state, and the winner takes the pot minus rake. The first milestone is a local fake-money playable loop. Real-money decisions are gated to Phase 7.
+
+The path from "playable on my laptop" to "real money in production" runs through three buckets in order: (A) **Deploy Readiness** — host the fake-money loop somewhere a closed-beta tester can reach it; (B) **Closed Beta Operations** — minimum admin / smoke / observability so humans can use it unattended; (C) **Real-Money Discovery** — legal, jurisdiction, custody, KYC, payments — a *non-code* phase that decides whether and where Phase 7 ships. Those buckets are described under "Deploy Readiness Bucket" and "Likely Next Steps" below; they sit alongside the numbered phases rather than replacing them.
 
 ## Working Principles
 
@@ -21,10 +23,13 @@ Horsey is a wagered chess product. Two players pick a stake and time control, es
 
 These reflect *how* we're working right now, not permanent rules. Update as conditions change.
 
-- **Rapid iteration mode.** Surfaces are still moving. Don't propose broad automated test scaffolding (E2E, integration sweeps) as a headline next step — targeted tests for specific new domain logic are fine, but locking-in-the-milestone-via-tests is deferred until the loop stabilizes. The existing 42 unit tests should keep passing; we're just not investing in a test pyramid yet.
+- **Rapid iteration mode.** Surfaces are still moving. Don't propose broad automated test scaffolding (E2E, integration sweeps) as a headline next step — targeted tests for specific new domain logic are fine, but locking-in-the-milestone-via-tests is deferred until the loop stabilizes. The existing Node test suite should keep passing; we're just not investing in a full test pyramid yet.
+- **Manual multiplayer QA is now documented.** The user's current smoke test is two isolated browser sessions, two accounts, pair a game, play a quick checkmate, and inspect settlement/history/realtime behavior. See `DEV_QA_WORKFLOW.md`. Because this loop is repetitive, a small scenario runner and one narrow two-browser smoke automation are now considered worthwhile dev ergonomics, without changing the broader "no big E2E push yet" preference.
 - **Nav is product, not scaffolding.** The current top nav (`LOBBY · WAGER · GAME · SETTLEMENT · WALLET`) treats flow stops as destinations. Wager / Game / Settlement are places a user passes through, not places they navigate to. Information architecture rethink is a tracked workstream (see below); the current nav is a debug-era artifact.
 - **UI placeholder fields count as mocks.** A field that *looks* real but is hardcoded (opponent rating, country, h2h, momentum, rating delta, rematch button) is as much a mock as any subsystem in the seam list — and arguably more misleading, because it pretends to be product. Track them.
 - **Docs over chat.** When a working session produces a durable direction or preference, the relevant doc (this one, `PROJECT_SOUL`, or an ADR) gets updated in the same change.
+- **Deploy with the dev store; swap stores only when real money forces it.** SQLite-on-a-volume is the prod store through the fake-money closed beta. The Postgres swap is a *named* pre-real-money slice, not a generic next step — it costs an async refactor of every `db.X(...)` call site in the server and earns its place only when concurrent-write safety, point-in-time recovery, and audit-grade backups actually matter (i.e., when funds are real). See mock #1 and the Deploy Readiness Bucket.
+- **Real money is discovery first, code second.** Phase 7 is overwhelmingly legal / jurisdictional / custody / payment-provider / KYC work. Until those answers exist on paper, do not write Phase 7 code.
 
 ## Where We Are Right Now
 
@@ -41,6 +46,8 @@ What a developer can do locally today, end to end:
 - Clocks tick server-side. Each `/moves` advances the moving side's clock; if a side runs out, the server auto-finalizes as a timeout and credits the opponent through the same `settleGame` path used by resign/checkmate. Live actions such as resign and draw offer/accept/decline also check for a flag before applying the requested action. Per-game timeout scheduler rehydrates after a server restart from `state=live` games.
 - Either player can offer a draw mid-game (`POST /api/games/:id/draw-offer`); the opponent accepts (`/draw-accept` → game finalizes as a draw via `settleGame(winnerId=null)`, pot split with 1-cent remainder to house) or declines (`/draw-decline` → offer cleared). Same-side double offers, self-accept, and self-decline all return `409`. The offerer's own pending offer auto-clears on their next move.
 
+The repeatable human QA version of this flow lives in `docs/DEV_QA_WORKFLOW.md`, including the current Chrome + Edge two-session habit and the quick checkmate script.
+
 The domain code in `packages/shared/domain.mjs` (money math, escrow, ledger summary, `settleGame`, challenge transitions) and `packages/chess/src/board.mjs` (chess.js wrapper, FEN, legal moves, terminal detection) is already production-shaped. The mocked surface is everything around it: identity, transport, persistence, asset quality, and seed-vs-real data.
 
 ## Dev Mocks That Replace To Reach The MVP
@@ -49,15 +56,15 @@ Each item below is a named seam. The "Phase" line points to where the real versi
 
 ### 1. In-memory state → persistent storage
 
-Today: SQLite via `better-sqlite3` (see ADR 0003). DB lives at `data/horsey.db` by default, overridable via `HORSEY_DB_PATH`. Schema covers users, ledger entries, challenges, games, lobby, settlements. The `apps/api/seed.mjs` module is now an `initialSeed()` factory that is inserted only when the DB is empty. Multi-step writes (accept, finalize, resign) run inside `db.transaction(...)`. Restart-survival smoke-tested: mid-game and post-finalize state both resume cleanly. Status: **done** for the dev SQLite scaffold.
-Real version remaining: Postgres for prod. Because the DB module is the only place SQL lives and the domain code in `packages/shared/domain.mjs` is unchanged, the swap is contained.
-Phase: **3** scaffold done; **4** prod store + migrations + multi-game indexing pending.
+Today: SQLite via `better-sqlite3` (see ADR 0003). DB lives at `data/horsey.db` by default, overridable via `HORSEY_DB_PATH`. Schema covers users, ledger entries, challenges, games, lobby, settlements. The `apps/api/seed.mjs` module is now an `initialSeed()` factory that is inserted only when the DB is empty. Multi-step writes (accept, finalize, resign) run inside `db.transaction(...)`. Restart-survival smoke-tested: mid-game and post-finalize state both resume cleanly. Status: **done** for the dev SQLite scaffold *and* as the closed-beta prod store on a mounted volume (see ADR 0006).
+Real version remaining: Postgres only becomes load-bearing at the real-money gate, when concurrent-write safety, point-in-time recovery, and audit-grade backups stop being optional. The swap is **not contained** the way an earlier reading suggested: SQL itself lives in `apps/api/db.mjs`, but `better-sqlite3` is synchronous and `node-postgres` is async — the swap propagates `await` through every `db.X(...)` call site in `server.mjs` (~190 sites today) plus `scripts/dev-scenario.mjs` and `apps/api/milestones.mjs`. Treat it as a dedicated slice, not an incidental refactor.
+Phase: **3** scaffold done; **closed-beta deploy** uses SQLite-on-volume (Deploy Readiness Bucket); **pre-Phase-7** Postgres swap pending.
 
 ### 2. Header-based identity → real auth
 
 Today: email + password signup/login via `POST /api/auth/signup|login|logout`, with `crypto.scrypt`-hashed passwords and DB-backed sessions cookie'd as `horsey_session` (HttpOnly, SameSite=Lax, 30-day TTL). `resolveViewer` reads the cookie. The WebSocket `/ws` upgrade reads the same cookie instead of the prior `?as=<userId>` query string. Downstream guards (`requireRecipient`, `requireTurnOwner`, `requirePlayer`) are unchanged. Viewer-switch UI and `?as=` query string are gone. New accounts are granted $1,000 fake-money on signup. See ADR 0005. Status: **done** for the dev scaffold.
-Real version remaining: password reset, email verification, `Secure` cookie flag once the server runs over TLS, CSRF token if the API ever serves a cross-origin caller. Basic in-memory rate limiting now covers signup/login, challenge creation, and quick matchmaking; production will still need a shared store and abuse analytics. Profile now exposes email change, password change, and log-out-other-sessions actions. Targeted challenges still work server-side but the lobby picker is gone (re-introduce via handle lookup when rivals/friends land).
-Phase: **3** scaffold done; hardening pending under Phase 6.
+Real version remaining: CSRF token if the API ever serves a cross-origin caller; shared rate-limit store + abuse analytics. The `Secure` cookie flag is now wired and emits behind TLS (ADR 0006). Email verification + password reset are **shipped** — schema v10 adds `users.email_verified_at` + `email_tokens` (hashed, single-use, TTL: verify 7d / reset 1h); existing rows are grandfathered to verified on migration. Thin Resend HTTP client at `apps/api/email.mjs` (no SDK) with a silent default sink so test runs don't pollute output; `npm run dev[:qa]` sets `HORSEY_EMAIL_DRY_RUN_LOG=1` so local devs see the link in the terminal when no API key is configured. Endpoints: `POST /api/auth/verify-email/send|confirm`, `POST /api/auth/password/reset/request|confirm`. Reset confirm runs inside a transaction that updates the password, consumes the token, and deletes every session for that user. Reset request always returns 200 regardless of email existence. Soft-verify policy: account works pre-verification, persistent shell banner with "Resend" action, every privileged surface can later gate on `emailVerifiedAt`. Profile already exposes email change, password change, and log-out-other-sessions actions; changing email now also clears `email_verified_at`. Production startup warns if `RESEND_API_KEY` is unset. Targeted challenges still work server-side but the lobby picker is gone (re-introduce via handle lookup when rivals/friends land).
+Phase: **3** scaffold done; verification + reset done under Deploy Readiness Bucket A; CSRF / shared rate-limit store pending under Phase 6.
 
 ### 3. Manual refresh → realtime push
 
@@ -200,11 +207,49 @@ None of these need a separate trust subsystem — they're queries against existi
 
 ### What's shipped vs pending
 
-- **Shipped:** `claimed` tier via Settings/Onboarding link (mock #2 follow-on, Phase 6 deliverable). `external_accounts` table (schema v3). Rating seed at 1800 cap (claimed) / 2400 cap (verified). Calibrating flag for first 10 Horsey games. Onboarding modal with skip-to-completion (schema v4). Tier computation as a shared function (`packages/shared/trust.mjs`). Tier + stake-cap on viewer/profile payloads. Stake cap enforced in `createChallenge` + `acceptChallenge` + `quickMatch` (lower of both sides applies when a recipient is set). `verified` tier via profile-token claim-challenge on **Lichess only** — token in bio / first / last / location, server fetches raw profile + case-insensitive scan, idempotent token (regenerate on demand), conflicting claims auto-dropped on verify, verified-tier reseed runs in the same transaction. Matchmaking tier preference (`any` / `claimed` / `verified` floor) on Quick Match tickets — schema v5 adds `tier_pref`; matches require mutual floor satisfaction. Trust tier surfaced on opponent identities (live feed, open tables, player strips) via a compact `tier-pip` chip (hidden for provisional to keep dense rows quiet).
+- **Shipped:** `claimed` tier via Settings/Onboarding link (mock #2 follow-on, Phase 6 deliverable). `external_accounts` table (schema v3). Rating seed at 1800 cap (claimed) / 2400 cap (verified). Calibrating flag for first 10 Horsey games. Onboarding modal with skip-to-completion (schema v4). Tier computation as a shared function (`packages/shared/trust.mjs`). Tier + stake-cap on viewer/profile payloads. Stake cap enforced in `createChallenge` + `acceptChallenge` + `quickMatch` (lower of both sides applies when a recipient is set). `verified` tier via profile-token claim-challenge on **Lichess only** — token in bio / first / last / location, server fetches raw profile + case-insensitive scan, idempotent token (regenerate on demand), conflicting claims auto-dropped on verify, verified-tier reseed runs in the same transaction. Matchmaking tier preference (`any` / `claimed` / `verified` floor) on Quick Match tickets — schema v5 adds `tier_pref`; matches require mutual floor satisfaction. Trust tier surfaced on opponent identities (live feed, open tables, player strips) via a compact `tier-pip` chip (hidden for provisional to keep dense rows quiet). Avatar frames/borders also carry trust tier through CSS classes around the curated avatar image.
 - **In flight:** none currently named.
-- **Pending:** Chess.com verification (needs OAuth, club-name claim, or a different mechanism — Chess.com's public API has no reliably user-editable text field, so bio-claim can't ship there). Lichess OAuth/PKCE (higher-confidence verified channel than bio-claim). Per-time-control placement tracking + `placed` tier. Tier preference on Open Tables (filter the rail by minimum opponent tier). Dual-currency split (sweeps tokens). Phase 7 sweeps gate. Admin queue for handle disputes / sandbag flags.
+- **Pending:** Chess.com verification (needs OAuth, club-name claim, or a different mechanism — Chess.com's public API has no reliably user-editable text field, so bio-claim can't ship there). Lichess OAuth/PKCE (higher-confidence verified channel than bio-claim). Per-time-control placement tracking + `placed` tier. Tier preference on Open Tables (filter the rail by minimum opponent tier). Dev fixtures for realistic trust-tier coverage, so local QA does not require manually grinding 50 finalized games to inspect established-tier banners. Dual-currency split (sweeps tokens). Phase 7 sweeps gate. Admin queue for handle disputes / sandbag flags.
 
 This whole section is a load-bearing input to Phase 6 and Phase 7 below — those phases own *building* the surfaces, this section owns the *model*. When the model changes, update here first.
+
+## Deploy Readiness Bucket
+
+A workstream parallel to the phases, not a numbered phase of its own. It exists because "playable on my laptop" and "the fake-money loop is done" do not equal "a closed-beta tester can use this." That gap is operational, not chess-product. Reaching it is what unblocks any Phase 7 conversation.
+
+Three buckets, in order:
+
+### Bucket A — Pre-deploy hardening (real-money-agnostic)
+
+The minimum to host the fake-money loop somewhere external.
+
+- **Deploy target picked + plumbing in repo.** Status: **done** — Fly.io with a persistent volume for SQLite. See `docs/adr/0006-deploy-target.md`, `fly.toml`, `Dockerfile`.
+- **Production-safe cookies.** Status: **done** for the seam — `Set-Cookie` emits the `Secure` attribute when running behind TLS (`HORSEY_TRUST_PROXY=1` or `NODE_ENV=production`).
+- **Email verification + password reset.** Status: **done** — mock #2 follow-on. Resend HTTP client (no SDK), hashed-token table, four endpoints, soft-verify (account works pre-verification but every privileged surface can later gate on `emailVerifiedAt`), persistent shell banner, `#verify-email/:token` and `#password-reset/:token` routes work even when unauthenticated, password reset deletes every session for the user in the same transaction. Deploy needs `fly secrets set RESEND_API_KEY=re_... EMAIL_FROM='Horsey <onboarding@resend.dev>' HORSEY_APP_URL=https://horsey.fly.dev`.
+- **Observability minimum.** Status: **pending** — structured server logs + an external error tracker (Sentry-equivalent) so you can debug remote users.
+- **Backup + restore story.** Status: **pending** — for SQLite-on-volume, a periodic snapshot of `/data/horsey.db` to object storage with a documented restore command. Replaces "production backups" until the Postgres swap lands.
+- **Health endpoint smoke check from outside.** Status: **partial** — `/api/health` exists; an external uptime check pointing at it is pending.
+
+### Bucket B — Closed-beta operations
+
+The minimum to let real humans use it unattended.
+
+- **Read-only admin slice (Phase 6 first cut).** Inspect users, games, ledger, settlements, external account claims, stuck states. Manual correction = append compensating ledger entries, *never* mutate balances in place.
+- **Report-player path.** Even as a row in a `reports` table an admin can read. Seeds Phase 6 anti-cheat ingestion.
+- **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
+- **Narrow multiplayer smoke automation.** The one already named in `DEV_QA_WORKFLOW.md` § 5 — pair → checkmate → settle. Not a test pyramid, just the most-repeated path.
+
+### Bucket C — Real-money discovery (non-code)
+
+The work that decides whether Phase 7 ships, and where.
+
+- **Gaming attorney conversation.** Costs money. Unblocks everything downstream.
+- **Jurisdiction shortlist + regulatory framing per region.** Skill-gaming vs. sweepstakes vs. licensed sportsbook. The dual-currency model documented under Trust Tiers is one of the answer shapes; others remain open.
+- **Custody model.** Do we hold funds, or does the payment provider? PFML-style escrow? This decision constrains the provider list.
+- **KYC vendor evaluation.**
+- **Payment + payout provider evaluation** — narrow shortlist of providers willing to touch a chess-wagering product in the chosen jurisdictions.
+
+Status: **pending** across the board. Bucket C inputs the *code* spec for Phase 7. Without Bucket C, Phase 7 code is premature.
 
 ## Phased Plan
 
@@ -345,18 +390,21 @@ Exit criteria:
 
 Goal: decide if and how Horsey can become real-money in specific jurisdictions.
 
-Deliverables:
-- Jurisdiction and legal/compliance review.
-- Payment and payout provider evaluation.
-- KYC/age verification approach.
-- AML/fraud/chargeback/sanctions plan.
+**Phase 7 is discovery first, code second.** The Deploy Readiness Bucket § C names the discovery items that block this phase's code work. The deliverables below presuppose that discovery has produced answers. Do not begin Phase 7 *code* (KYC integration, payment integration, Postgres swap, AML pipeline) until Bucket C has named the jurisdiction(s), the custody model, the provider shortlist, and a written legal opinion.
+
+Deliverables (gated on Bucket C answers):
+- Jurisdiction and legal/compliance review *complete*.
+- Payment and payout provider integrated.
+- KYC/age verification approach implemented.
+- AML/fraud/chargeback/sanctions plan implemented.
 - Responsible-play controls.
 - Terms, disclosures, rake/fee visibility, tax/reporting plan.
 - Security review of wallet, escrow, settlement flows.
+- Postgres swap (mock #1) lands here — concurrent-write safety, point-in-time recovery, and audit-grade backups become required, not optional.
 
-Status: **pending** — mock #9. No work has started.
+Status: **pending** — mock #9. Bucket C discovery has not started.
 
-Key decisions:
+Key decisions (Bucket C):
 - Launch geography.
 - Whether Horsey is skill gaming, gambling, sweepstakes, or another regulated model in each target region.
 - Custody model and provider responsibilities.
@@ -371,7 +419,7 @@ Run alongside the phases, not after them:
 - **Arena atmosphere.** Horsey's defining feel is **intentional casino energy** — high-stakes poker room / sportsbook / esports broadcast, *not* mobile-game candy-crush casino spam (see `PROJECT_SOUL.md` § Intentional casino energy and `docs/ARENA_NEXT_PASS.md`). The arena doc tracks named slots — animated buy-ins, settlement physicality, watcher counts, featured tables, streak heaters, match intros, momentum cues — grouped by play-loop phase with shipped/partial/pending status. Atmosphere is built across many small slices over time, not one redesign; treat the arena doc as a backlog feeding the phased plan, not a milestone of its own. Two systems feed atmosphere as peers, each with its own doc:
   - **Milestones (`docs/MILESTONES_NEXT_PASS.md`)** — the celebration-licensing system. First-time + recurring milestones (first win, upset, biggest pot, streaks, hot table), four intensity tiers (toast → broadcast), detection schema, dedup rules. Milestones are the only thing that licenses contained confetti / strong audio / banners; ordinary settlements stay grounded.
   - **Soundscape (`docs/SOUNDSCAPE_NEXT_PASS.md`)** — the audio layer. Three layers (core chess interaction, economic, lobby/social), tactile/material design principles (no cartoon sounds, no coin-shower), reduced-sensory setting, mixing hierarchy, WebAudio implementation notes. Foundation sound is now shipped with synthesized placeholders for chess moves, check, settlement, bankroll ticks, and strong game-start/game-end hooks; recorded sample sourcing and lobby/social cues remain next-pass polish.
-- **Avatar identity and cosmetics.** *(v1 ripped 2026-05-25; MVP direction set 2026-05-26.)* Out: the v1 PNG-layered atomic renderer (composition canvas, anchors, slots, live-state derivation, ownership/equip schema). In: a curated catalog of full-image avatars that players select. Acquisition is two-rail — milestone unlocks (signals of experience) plus in-game-currency purchases (signals of taste); avatar choice is purely cosmetic, with no rating gate on equipping. Trust status lives in the **border**, rendered as one of four CSS treatments (`provisional` / `claimed` / `verified` / `established`) rather than authored art. Adornments (badges, auras, crowns) are deferred. Assets are at `apps/web/assets/avatars/` (1 base + 19 piece avatars: 3 knight, 4 each of bishop/king/queen/rook). Render surface today is still the baseline initial-letter span in `apps/web/src/app.js`; next slice replaces `renderAvatar()` with a `<img>` + tier-class wrapper backed by an `equipped_avatar` user field and a catalog module. The v1 thinking is archived at `docs/archive/COSMETICS_FORMALIZATION.md`, `docs/archive/COSMETICS_NEXT_PASS.md`, `docs/archive/COSMETICS_INVENTORY_AUDIT.md`, and the v1 PNG assets at `scripts/reference/cosmetics-v1/assets/`. The principle that cosmetics must never impersonate trust survives.
+- **Avatar identity and cosmetics.** *(v1 ripped 2026-05-25; MVP direction set 2026-05-26.)* Out: the v1 PNG-layered atomic renderer (composition canvas, anchors, slots, live-state derivation, ownership/equip schema). In: a curated catalog of full-image avatars that players select. Acquisition is two-rail — milestone unlocks (signals of experience) plus in-game-currency purchases (signals of taste); avatar choice is purely cosmetic, with no rating gate on equipping. Trust status lives in the **border**, rendered as one of four CSS treatments (`provisional` / `claimed` / `verified` / `established`) rather than authored art. Adornments (badges, auras, crowns) are deferred. Assets are at `apps/web/assets/avatars/` (1 base + 19 piece avatars: 3 knight, 4 each of bishop/king/queen/rook). Current render surface uses `renderAvatar()` with the equipped avatar image plus an initial-letter fallback and tier-class wrapper; `users.equipped_avatar` and `user_avatars` exist for the MVP selector. The v1 thinking is archived at `docs/archive/COSMETICS_FORMALIZATION.md`, `docs/archive/COSMETICS_NEXT_PASS.md`, `docs/archive/COSMETICS_INVENTORY_AUDIT.md`, and the v1 PNG assets at `scripts/reference/cosmetics-v1/assets/`. The principle that cosmetics must never impersonate trust survives.
 - **Information architecture.** First pass landed: top nav is now Play · History · Profile, with a Resume-game pill that appears only when a live game exists. Wager/Game/Settlement keep their routes but are reached through the flow, not the chrome. Wallet folded into Profile. History list + detail (reusing the settlement renderer) shipped. Deferred destinations (Live spectator, Friends/Rivals, Admin) remain named slots. **See `IA_PROPOSAL.md` for the per-screen real-vs-mocked matrix; it stays live as mocks turn real.**
 - **UI surfaces still showing seed/decorative data.** Distinct from the numbered subsystem mocks (#1–#9). Status after the IA pass:
   - Wager page opponent `country` / `reputation` / `verified` / `h2h` / `note` — **deleted from API and UI.** Will re-emerge with real backing under Phase 5 (rivalry/h2h) + trust subsystem (Phase 6).
@@ -379,13 +427,28 @@ Run alongside the phases, not after them:
   - Settlement rematch button — **now a real action** (`POST /api/challenges` against prior opponent + stake + time control).
   - Game page eval / anti-cheat insights — the prior "Momentum" placeholder has been removed from the live rail; real eval/scouting remains deferred to trust/safety work.
   - Play page rivals list — not yet rendered (was always pending). Will arrive with Phase 5.
-- **Dev ergonomics.** Phase 0 lint/format/typecheck are still partial. Biome lint/format scripts and a single `npm run verify` aggregate now exist. Remaining low-cost work: optional `tsc --noEmit` for JSDoc/types and pre-commit wiring.
-- **Testing.** Unit tests for domains plus a focused API/session integration slice are in `tests/` (currently 45 passing). Broader E2E investment is **deferred** while we're in rapid-iteration mode — see Working Preferences. Targeted tests for specific new domain logic are still welcome; what's deferred is a test-pyramid push.
+- **Dev ergonomics.** Phase 0 lint/format/typecheck are still partial. Biome lint/format scripts and a single `npm run verify` aggregate now exist. `docs/DEV_QA_WORKFLOW.md` now captures the manual multiplayer smoke loop and the desired lightweight tools: disposable scenario DBs, known dev accounts, a small scenario runner, and a tiny helper surface for session/game IDs. **Bustling mode (`npm run dev:bustling`)** spawns a bot daemon (`apps/api/dev-bots.mjs`) that populates Live now / Open Tables with bot-vs-bot games running canned Fool's Mate; gated on `HORSEY_ENABLE_DEV_BOTS=1` + non-prod, scoped to `/tmp/horsey-bustling.db`. Remaining low-cost work: optional `tsc --noEmit` for JSDoc/types and pre-commit wiring.
+- **Testing.** Unit tests for domains plus focused API/session/realtime integration slices are in `tests/` (currently 74 passing). Broad E2E investment is **deferred** while we're in rapid-iteration mode — see Working Preferences. The exception now worth building is a narrow two-browser smoke harness for pair → checkmate → settlement, because that is the user's repeated manual QA path. Targeted tests for specific new domain logic are still welcome; what's deferred is a test-pyramid push.
 - **Observability.** Logs, metrics, traces, audit events, error reporting.
 - **Security.** Auth, authorization, input validation, rate limiting, secrets, abuse prevention.
 - **Accessibility.** Keyboard board controls, focus states, color contrast, mobile ergonomics.
 - **Performance.** Board responsiveness, realtime latency, clock accuracy, query health.
 - **Documentation.** Update `PROJECT_SOUL`, architecture docs, ADRs, and this roadmap as product decisions change.
+
+## Likely Next Steps
+
+The MVP playable loop is functionally complete. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
+
+1. **Finish Bucket A (pre-deploy hardening).** Fly.io deploy plumbing + Secure-cookie wiring are now in tree (this session); the remaining items are: email verification + password reset (mock #2 follow-on), structured logs + an external error tracker, and a documented backup/restore for the SQLite-on-volume store. None of these are big slices individually.
+2. **Bucket B item #1: read-only admin slice.** Inspect users / games / ledger / settlements / external account claims / stuck states. Append-only compensating entries for corrections. This is your only answer when something goes wrong with a real tester.
+3. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
+4. **Open Bucket C (real-money discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision. Non-code work, but blocks all Phase 7 code.
+5. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
+6. **Finish trust visibility on inspection surfaces.** Tier borders and compact pips are present on many identity surfaces; Scout Card and full Profile should explain the tier/evidence relationship more clearly without inventing fake trust badges.
+7. **Open Tables tier filtering.** Quick Match already supports tier floors; the Open Tables rail should get a lightweight filter once table volume justifies it.
+8. **Phase 5 retention layer.** Rivalry threads, richer History/Profile stats, and rematch/double-or-nothing/auto-requeue decisions. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
+
+Notable de-prioritization: more atmosphere / cosmetics cycles, broad E2E investment, and any Phase 7 code work are intentionally below the items above. The first two don't gate deploy; Phase 7 code is gated on Bucket C answers we don't have.
 
 ## First Build Milestone — Local Fake-Money Playable Loop
 
