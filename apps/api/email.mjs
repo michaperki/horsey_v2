@@ -1,7 +1,9 @@
 // Thin Resend HTTP client. No SDK — keeps ADR 0001's dependency-light
 // preference. Reads RESEND_API_KEY + EMAIL_FROM from env. When the API key
-// is unset (local dev), emails fall through to a console log so the surface
+// is unset (local dev), emails fall through to the logger so the surface
 // is observable without delivery.
+
+import { logger } from "./logger.mjs";
 //
 // Set in production via:
 //   fly secrets set RESEND_API_KEY=re_... EMAIL_FROM='Horsey <onboarding@resend.dev>'
@@ -27,7 +29,12 @@ export function emailDeliveryConfig() {
 // copy the verification link straight from the terminal.
 let dryRunSink = (entry) => {
   if (process.env.HORSEY_EMAIL_DRY_RUN_LOG === "1") {
-    console.log(`[email:dry-run] to=${entry.to} subject=${JSON.stringify(entry.subject)}\n${entry.text || entry.html}`);
+    logger.info("email dry-run", {
+      event: "email.dry_run",
+      to: entry.to,
+      subject: entry.subject,
+      body: entry.text || entry.html
+    });
   }
 };
 

@@ -85,6 +85,7 @@ import {
   declineDraw,
   offerDraw
 } from "../../packages/shared/draw-offers.mjs";
+import { logger, nextRequestId } from "./logger.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -1545,7 +1546,11 @@ async function signupAccount({ email, handle, password }) {
   // Best-effort verification email — if delivery fails we don't block signup.
   // The user can re-request via the banner action.
   sendVerificationEmail(user).catch((err) =>
-    console.warn(`[signup] verification email send failed for ${user.id}:`, err.message)
+    logger.warn("verification email send failed", {
+      event: "signup.verification_email_failed",
+      userId: user.id,
+      err
+    })
   );
   return { user, session };
 }
@@ -1891,10 +1896,11 @@ async function routeApi(req, res) {
             // Email-rate-limit and delivery failures are intentionally
             // swallowed so the response is identical to the unknown-email
             // path. The token is not issued on these errors.
-            console.warn(
-              `[password-reset] request for ${user.id} failed:`,
-              sendError.message
-            );
+            logger.warn("password reset email send failed", {
+              event: "password_reset.email_failed",
+              userId: user.id,
+              err: sendError
+            });
           }
         }
       }
@@ -2429,16 +2435,50 @@ async function serveStatic(req, res) {
   createReadStream(filePath).pipe(res);
 }
 
+function logRequest(req, res, log, startMs) {
+  // Health endpoint is hit by uptime checks every few seconds; logging each
+  // call drowns out real signal. Successful 2xx health pings are silenced;
+  // anything else still surfaces.
+  const pathname = req.url ? req.url.split("?")[0] : "";
+  const isHealth = pathname === "/api/health" && res.statusCode < 400;
+  if (isHealth) return;
+  const durationMs = Date.now() - startMs;
+  const fields = {
+    event: "request.complete",
+    method: req.method,
+    path: pathname,
+    status: res.statusCode,
+    durationMs
+  };
+  if (res.statusCode >= 500) log.error("request 5xx", fields);
+  else if (res.statusCode >= 400) log.warn("request 4xx", fields);
+  else log.info("request", fields);
+}
+
 const server = http.createServer((req, res) => {
+  const requestId = nextRequestId();
+  const reqLog = logger.child({ requestId });
+  const startMs = Date.now();
+  res.on("finish", () => logRequest(req, res, reqLog, startMs));
   if (req.url.startsWith("/api/")) {
     routeApi(req, res).catch((error) => {
-      console.error(error);
+      reqLog.error("unhandled api error", {
+        event: "request.unhandled_error",
+        method: req.method,
+        path: req.url,
+        err: error
+      });
       json(res, 500, { error: "internal_error" });
     });
     return;
   }
   serveStatic(req, res).catch((error) => {
-    console.error(error);
+    reqLog.error("unhandled static error", {
+      event: "request.unhandled_error",
+      method: req.method,
+      path: req.url,
+      err: error
+    });
     json(res, 500, { error: "internal_error" });
   });
 });
@@ -2577,18 +2617,24 @@ export { routeApi };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   server.listen(port, host, async () => {
-    console.log(`Horsey dev server running at http://${host}:${port}`);
-    console.log(`Database: ${dbPath}`);
+    logger.info("server listening", {
+      event: "startup.listening",
+      host,
+      port,
+      dbPath,
+      nodeEnv: process.env.NODE_ENV || "development"
+    });
     if (process.env.NODE_ENV === "production" && !process.env.RESEND_API_KEY) {
-      console.warn(
-        "[startup] WARNING: NODE_ENV=production but RESEND_API_KEY is unset — " +
-        "verification and password-reset emails will be silently dropped."
+      logger.warn(
+        "NODE_ENV=production but RESEND_API_KEY is unset — verification and password-reset emails will be silently dropped",
+        { event: "startup.resend_key_missing" }
       );
     }
     rehydrateClockTimeouts();
     if (enableDevBots) {
       try {
         const { startBotDaemon } = await import("./dev-bots.mjs");
+        const botLog = logger.child({ component: "dev-bots" });
         botDaemon = await startBotDaemon({
           db,
           services: {
@@ -2603,10 +2649,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
             publishMatchmakingMatched,
             scheduleClockTimeout
           },
-          log: (...args) => console.log(...args)
+          log: (...args) => botLog.info(args.map(String).join(" "), { event: "dev_bots.log" })
         });
       } catch (err) {
-        console.warn("[startup] bot daemon failed to start:", err.message);
+        logger.warn("bot daemon failed to start", {
+          event: "startup.bot_daemon_failed",
+          err
+        });
       }
     }
   });
