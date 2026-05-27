@@ -234,7 +234,7 @@ The minimum to host the fake-money loop somewhere external. **Status: code-side 
 
 The minimum to let real humans use it unattended.
 
-- **Read-only admin slice (Phase 6 first cut).** Inspect users, games, ledger, settlements, external account claims, stuck states. Manual correction = append compensating ledger entries, *never* mutate balances in place.
+- **Read-only admin slice (Phase 6 first cut).** Status: **done** — schema v11 adds `users.is_admin` (hand-set in the DB via `UPDATE users SET is_admin=1 WHERE handle='...'`; no admin-creates-admin UI yet). `/api/admin/{users,games,stuck-games,ledger,challenges,external-accounts}` are read-only and gated on `is_admin`. Web `#admin` page renders a tabbed view (Users / Games / Stuck / Ledger / Challenges / External). Nav link only shows when the viewer is admin. No mutations through this surface — corrections are append-only compensating ledger entries written directly to the DB.
 - **Report-player path.** Even as a row in a `reports` table an admin can read. Seeds Phase 6 anti-cheat ingestion.
 - **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
 - **Narrow multiplayer smoke automation.** The one already named in `DEV_QA_WORKFLOW.md` § 5 — pair → checkmate → settle. Not a test pyramid, just the most-repeated path.
@@ -476,12 +476,11 @@ Run alongside the phases, not after them:
 
 The MVP playable loop is functionally complete; Bucket A is code-side done. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
 
-1. **Bucket B item #1: read-only admin slice.** Inspect users / games / ledger / settlements / external account claims / stuck states. Append-only compensating entries for corrections. This is the only answer when something goes wrong with a real tester.
-2. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
-3. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
-4. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
-5. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
-6. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
+1. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
+2. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
+3. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
+4. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
+5. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
 
 Everything else named-but-deferred — external error tracker, SQLite backup/restore, uptime monitoring, Open Tables tier filtering, Scout/Profile trust narration, Chess.com verification, Lichess OAuth, `placed` tier, per-tab clock throttling, WS reconnect replay, dropping the matchmaking poll, Phase 5 retention loops, the Postgres swap — lives in **Backlog** above. Items move out of the backlog when their gating condition (external account, real tester traffic, real-money gate, etc.) is met.
 

@@ -676,6 +676,15 @@ function requireRecipient(viewer, challenge) {
   }
 }
 
+function requireAdmin(viewer) {
+  const user = db.getUser(viewer.id);
+  if (!user?.isAdmin) {
+    const e = new RangeError("admin only");
+    e.code = "admin_only";
+    throw e;
+  }
+}
+
 function requireChallenger(viewer, challenge) {
   if (viewer.id !== challenge.challengerId) {
     const e = new RangeError("only the challenger can withdraw this challenge");
@@ -798,6 +807,7 @@ function handleDomainError(error, res) {
     external_account_taken: 409,
     external_account_not_found: 404,
     external_handle_not_found: 404,
+    admin_only: 403,
     external_rate_limited: 502,
     external_fetch_timeout: 504,
     external_fetch_failed: 502,
@@ -2409,7 +2419,153 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
+  // ---- Admin (read-only) -----------------------------------------------------
+  // Every /api/admin/* route gates on users.is_admin via requireAdmin.
+  // No mutations: corrections in this slice are append-only compensating
+  // ledger entries issued by hand against the DB, not through this surface.
+
+  if (req.method === "GET" && pathname === "/api/admin/users") {
+    try {
+      requireAdmin(viewer);
+      const ledger = db.listLedger();
+      const users = db.listUsers().map((user) => {
+        const wallet = walletSummary(ledger, user.id);
+        const finishedGames = db.listFinalizedGamesForUser(user.id, 50).length;
+        const externalAccounts = db.listExternalAccountsForUser(user.id);
+        const trustTier = computeTrustTier({ externalAccounts, finishedGames });
+        return {
+          id: user.id,
+          handle: user.handle,
+          email: user.email,
+          rating: user.rating,
+          isAdmin: user.isAdmin,
+          createdAt: user.createdAt,
+          emailVerifiedAt: user.emailVerifiedAt,
+          balanceCents: wallet.balanceCents,
+          escrowCents: wallet.escrowCents,
+          finishedGames,
+          trustTier
+        };
+      });
+      users.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+      return json(res, 200, { users });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/games") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 50, 1, 500);
+      const live = db.listLiveGames().map(summarizeGameRow);
+      const recentFinalized = db.listRecentFinalizedGames(limit).map(summarizeGameRow);
+      return json(res, 200, { live, recentFinalized });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/stuck-games") {
+    try {
+      requireAdmin(viewer);
+      const now = Date.now();
+      const stuck = db.listLiveGames()
+        .map((game) => {
+          const flagged = game.clock ? flaggedSide(game.clock, now) : null;
+          const lastMoveIso = game.clock?.lastMoveAt ?? null;
+          const idleMs = lastMoveIso ? now - new Date(lastMoveIso).getTime() : null;
+          return { game, flagged, idleMs };
+        })
+        .filter(({ flagged, idleMs }) => flagged || (idleMs != null && idleMs > 15 * 60 * 1000))
+        .map(({ game, flagged, idleMs }) => ({
+          ...summarizeGameRow(game),
+          flaggedSide: flagged,
+          idleMs
+        }));
+      return json(res, 200, { stuck });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/ledger") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 200, 1, 1000);
+      const userIdFilter = url.searchParams.get("userId") || null;
+      const typeFilter = url.searchParams.get("type") || null;
+      let entries = userIdFilter
+        ? db.listLedgerForUser(userIdFilter)
+        : db.listLedger();
+      if (typeFilter) entries = entries.filter((e) => e.type === typeFilter);
+      entries.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);
+      entries = entries.slice(0, limit);
+      return json(res, 200, { entries });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/external-accounts") {
+    try {
+      requireAdmin(viewer);
+      const accounts = db.listAllExternalAccounts().map((a) => ({
+        id: a.id,
+        userId: a.userId,
+        provider: a.provider,
+        externalUsername: a.externalUsername,
+        status: a.status,
+        verifiedAt: a.verifiedAt,
+        claimTokenExpiresAt: a.claimTokenExpiresAt,
+        lastSyncedAt: a.lastSyncedAt,
+        createdAt: a.createdAt
+      }));
+      return json(res, 200, { accounts });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/challenges") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 100, 1, 500);
+      const challenges = db.listRecentChallengesAll(limit).map((c) => ({
+        id: c.id,
+        state: c.state,
+        challengerId: c.challengerId,
+        recipientId: c.recipientId,
+        gameId: c.gameId,
+        stakeCents: c.stakeCents,
+        timeControl: c.timeControl,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt
+      }));
+      return json(res, 200, { challenges });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   return notFound(res);
+}
+
+function clampInt(raw, fallback, min, max) {
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function summarizeGameRow(game) {
+  return {
+    id: game.id,
+    state: game.state,
+    createdAt: game.createdAt,
+    updatedAt: game.updatedAt,
+    endedAt: game.endedAt,
+    endReason: game.endReason,
+    winnerId: game.winnerId,
+    timeControl: game.timeControl,
+    players: (game.players || []).map((p) => ({
+      id: p.id,
+      handle: p.handle,
+      color: p.color
+    })),
+    moveCount: game.moves?.length ?? 0,
+    pot: game.pot
+  };
 }
 
 async function serveStatic(req, res) {

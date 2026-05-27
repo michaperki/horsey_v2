@@ -3556,3 +3556,44 @@ p {
   .milestone-card { animation: none !important; }
   .milestone-burst { display: none; }
 }
+
+/* ---- Admin (read-only) ---------------------------------------------------- */
+.admin-panel header { margin-bottom: 12px; }
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+.admin-tab {
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+.admin-tab.active {
+  background: rgba(211, 164, 65, 0.18);
+  border-color: rgba(211, 164, 65, 0.6);
+}
+.admin-body section { margin-bottom: 18px; }
+.admin-body h3 { margin: 8px 0; font-size: 14px; opacity: 0.8; }
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.admin-table th,
+.admin-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+.admin-table th { font-weight: 600; opacity: 0.7; }
+.admin-table td.muted { opacity: 0.6; }

@@ -1659,6 +1659,11 @@ async function enterRoute(parsed) {
     }
   } else if (state.route === "wager") {
     loadWagerOpponent();
+  } else if (state.route === "admin") {
+    const viewer = state.bootstrap?.viewer;
+    if (viewer?.isAdmin) {
+      await loadAdminData(state.adminTab || "users");
+    }
   }
 
   if (state.route !== "wager") {
@@ -1719,6 +1724,7 @@ function shell(content) {
         ${navLink("play", "Play")}
         ${navLink("history", "History")}
         ${navLink("profile", "Profile")}
+        ${viewer.isAdmin ? navLink("admin", "Admin") : ""}
       </nav>
       <div class="topbar-actions">
         ${connectionPill()}
@@ -4343,6 +4349,215 @@ function renderAvatarPickerCard(viewer) {
   `;
 }
 
+const ADMIN_TABS = [
+  { id: "users", label: "Users", endpoint: "/api/admin/users" },
+  { id: "games", label: "Games", endpoint: "/api/admin/games" },
+  { id: "stuck", label: "Stuck", endpoint: "/api/admin/stuck-games" },
+  { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200" },
+  { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100" },
+  { id: "externals", label: "External", endpoint: "/api/admin/external-accounts" }
+];
+
+async function loadAdminData(tabId) {
+  const tab = ADMIN_TABS.find((t) => t.id === tabId) || ADMIN_TABS[0];
+  state.adminTab = tab.id;
+  state.adminLoading = true;
+  state.adminError = null;
+  try {
+    const resp = await getJson(tab.endpoint);
+    state.adminData = { ...(state.adminData || {}), [tab.id]: resp };
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+  }
+}
+
+function switchAdminTab(tabId) {
+  loadAdminData(tabId).then(() => render());
+  render();
+}
+
+function renderAdmin() {
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer?.isAdmin) {
+    return `<article class="card"><h2>Admin only</h2><p class="muted">This page requires an admin account.</p></article>`;
+  }
+  const activeTab = state.adminTab || "users";
+  const tabBar = ADMIN_TABS.map((t) =>
+    `<button class="admin-tab ${t.id === activeTab ? "active" : ""}" data-admin-tab="${t.id}">${t.label}</button>`
+  ).join("");
+  const body = state.adminLoading
+    ? `<p class="muted">Loading…</p>`
+    : state.adminError
+    ? `<p class="error">${escapeHtml(state.adminError)}</p>`
+    : renderAdminBody(activeTab);
+  return `
+    <article class="card admin-panel">
+      <header>
+        <h2>Admin · read-only</h2>
+        <p class="muted small">No mutations from this surface. Corrections are append-only compensating ledger entries against the DB.</p>
+      </header>
+      <nav class="admin-tabs">${tabBar}</nav>
+      <div class="admin-body">${body}</div>
+    </article>
+  `;
+}
+
+function renderAdminBody(tabId) {
+  const data = state.adminData?.[tabId];
+  if (!data) return `<p class="muted">No data yet.</p>`;
+  if (tabId === "users") return renderAdminUsers(data.users || []);
+  if (tabId === "games") return renderAdminGames(data);
+  if (tabId === "stuck") return renderAdminStuck(data.stuck || []);
+  if (tabId === "ledger") return renderAdminLedger(data.entries || []);
+  if (tabId === "challenges") return renderAdminChallenges(data.challenges || []);
+  if (tabId === "externals") return renderAdminExternals(data.accounts || []);
+  return "";
+}
+
+function adminTable(headers, rows) {
+  if (!rows.length) return `<p class="muted">Empty.</p>`;
+  const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
+  const body = rows
+    .map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
+function renderAdminUsers(users) {
+  return adminTable(
+    ["Handle", "Email", "Rating", "Tier", "Balance", "Escrow", "Games", "Admin", "Verified", "Created"],
+    users.map((u) => [
+      escapeHtml(u.handle),
+      escapeHtml(u.email),
+      u.rating,
+      u.trustTier,
+      money(u.balanceCents),
+      money(u.escrowCents),
+      u.finishedGames,
+      u.isAdmin ? "yes" : "",
+      u.emailVerifiedAt ? "yes" : "no",
+      escapeHtml(formatShortTimestamp(u.createdAt))
+    ])
+  );
+}
+
+function renderAdminGames(data) {
+  const liveRows = (data.live || []).map((g) => adminGameRow(g));
+  const finalizedRows = (data.recentFinalized || []).map((g) => adminGameRow(g));
+  return `
+    <section>
+      <h3>Live (${(data.live || []).length})</h3>
+      ${adminTable(["Id", "Players", "TC", "Moves", "Pot", "Updated"], liveRows)}
+    </section>
+    <section>
+      <h3>Recent finalized</h3>
+      ${adminTable(["Id", "Players", "TC", "Moves", "End", "Winner", "Ended"], finalizedRows.map((_, i) => {
+        const g = data.recentFinalized[i];
+        return [
+          escapeHtml(g.id),
+          adminPlayersCell(g),
+          escapeHtml(g.timeControl || ""),
+          g.moveCount,
+          escapeHtml(g.endReason || ""),
+          escapeHtml(playerHandle(g, g.winnerId) || (g.winnerId ? g.winnerId.slice(0, 10) : "draw")),
+          escapeHtml(formatShortTimestamp(g.endedAt || g.updatedAt))
+        ];
+      }))}
+    </section>
+  `;
+}
+
+function adminGameRow(g) {
+  return [
+    escapeHtml(g.id),
+    adminPlayersCell(g),
+    escapeHtml(g.timeControl || ""),
+    g.moveCount,
+    g.pot?.stakeCents != null ? money(g.pot.stakeCents * 2) : "—",
+    escapeHtml(formatShortTimestamp(g.updatedAt))
+  ];
+}
+
+function adminPlayersCell(g) {
+  return (g.players || [])
+    .map((p) => `${escapeHtml(p.handle || p.id.slice(0, 8))} (${p.color[0]})`)
+    .join(" vs ");
+}
+
+function playerHandle(g, userId) {
+  const p = (g.players || []).find((x) => x.id === userId);
+  return p?.handle ?? null;
+}
+
+function renderAdminStuck(stuck) {
+  return adminTable(
+    ["Id", "Players", "TC", "Flagged side", "Idle (s)", "Updated"],
+    stuck.map((g) => [
+      escapeHtml(g.id),
+      adminPlayersCell(g),
+      escapeHtml(g.timeControl || ""),
+      g.flaggedSide ? `<span class="error">${g.flaggedSide}</span>` : "—",
+      g.idleMs != null ? Math.round(g.idleMs / 1000) : "—",
+      escapeHtml(formatShortTimestamp(g.updatedAt))
+    ])
+  );
+}
+
+function renderAdminLedger(entries) {
+  return adminTable(
+    ["When", "User", "Type", "Available Δ", "Escrow Δ", "Ref", "Note"],
+    entries.map((e) => [
+      escapeHtml(formatShortTimestamp(e.createdAt)),
+      escapeHtml(e.userId.slice(0, 14)),
+      escapeHtml(e.type),
+      money(e.availableDeltaCents),
+      money(e.escrowDeltaCents),
+      escapeHtml(e.refId || ""),
+      escapeHtml(e.note || "")
+    ])
+  );
+}
+
+function renderAdminChallenges(challenges) {
+  return adminTable(
+    ["Id", "State", "From", "To", "Stake", "TC", "Game", "Created"],
+    challenges.map((c) => [
+      escapeHtml(c.id.slice(0, 14)),
+      escapeHtml(c.state),
+      escapeHtml(c.challengerId.slice(0, 12)),
+      escapeHtml(c.recipientId ? c.recipientId.slice(0, 12) : "open"),
+      money(c.stakeCents),
+      escapeHtml(c.timeControl || ""),
+      escapeHtml(c.gameId ? c.gameId.slice(0, 14) : ""),
+      escapeHtml(formatShortTimestamp(c.createdAt))
+    ])
+  );
+}
+
+function renderAdminExternals(accounts) {
+  return adminTable(
+    ["User", "Provider", "Handle", "Status", "Verified", "Created"],
+    accounts.map((a) => [
+      escapeHtml(a.userId.slice(0, 14)),
+      escapeHtml(a.provider),
+      escapeHtml(a.externalUsername),
+      escapeHtml(a.status),
+      escapeHtml(formatShortTimestamp(a.verifiedAt)),
+      escapeHtml(formatShortTimestamp(a.createdAt))
+    ])
+  );
+}
+
+function formatShortTimestamp(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toISOString().replace("T", " ").replace(/\..+$/, "");
+}
+
 function renderUserProfile() {
   if (state.actionError) {
     return `<p class="muted">${escapeHtml(state.actionError)} <a href="#play">Back to lobby.</a></p>`;
@@ -4505,7 +4720,8 @@ function render() {
     settlement: renderSettlement,
     history: state.routeParam ? renderSettlement : renderHistoryList,
     profile: renderProfile,
-    user: renderUserProfile
+    user: renderUserProfile,
+    admin: renderAdmin
   };
   const view = routes[state.route] || renderPlay;
   document.querySelector("#app").innerHTML = shell(view());
@@ -4516,6 +4732,9 @@ function render() {
 
   document.querySelectorAll("[data-nav]").forEach((b) => {
     b.addEventListener("click", () => navigate(b.dataset.nav));
+  });
+  document.querySelectorAll("[data-admin-tab]").forEach((b) => {
+    b.addEventListener("click", () => switchAdminTab(b.dataset.adminTab));
   });
   document.querySelectorAll("[data-logout]").forEach((b) => {
     b.addEventListener("click", () => logout());

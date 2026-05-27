@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -17,7 +17,8 @@ const SCHEMA = `
     created_at TEXT NOT NULL,
     onboarding_completed_at TEXT,
     equipped_avatar TEXT NOT NULL DEFAULT '${DEFAULT_AVATAR_ID}',
-    email_verified_at TEXT
+    email_verified_at TEXT,
+    is_admin INTEGER NOT NULL DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS email_tokens (
@@ -164,7 +165,8 @@ function rowToPublicUser(row) {
     createdAt: row.created_at,
     onboardingCompletedAt: row.onboarding_completed_at ?? null,
     equippedAvatar: row.equipped_avatar ?? null,
-    emailVerifiedAt: row.email_verified_at ?? null
+    emailVerifiedAt: row.email_verified_at ?? null,
+    isAdmin: Number(row.is_admin ?? 0) === 1
   };
 }
 
@@ -364,6 +366,16 @@ function migrateSchema(db) {
       }
     }
   }
+  // v10 → v11: add users.is_admin (default 0). Admins are hand-set in the DB
+  // (`UPDATE users SET is_admin=1 WHERE handle='...'`); there is no
+  // admin-creates-admin UI in this slice. The flag gates the read-only
+  // /api/admin/* routes and the #admin web page.
+  if (currentVersion < 11 && currentVersion >= 1) {
+    const cols = db.prepare("PRAGMA table_info('users')").all();
+    if (!cols.some((c) => c.name === "is_admin")) {
+      db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+    }
+  }
   // v9 → v10: email verification + password reset. users.email_verified_at is
   // null for unverified accounts. Existing rows are grandfathered to
   // created_at so accounts that pre-date verification don't get nagged. The
@@ -502,6 +514,16 @@ function makeApi(db) {
     `),
     listLiveGames: db.prepare("SELECT * FROM games WHERE state = 'live'"),
     countLiveGames: db.prepare("SELECT count(*) AS n FROM games WHERE state = 'live'"),
+    listRecentFinalizedGames: db.prepare(`
+      SELECT * FROM games WHERE state = 'finalized'
+      ORDER BY COALESCE(ended_at, updated_at) DESC LIMIT ?
+    `),
+    listRecentChallengesAll: db.prepare(`
+      SELECT * FROM challenges ORDER BY created_at DESC LIMIT ?
+    `),
+    listAllExternalAccounts: db.prepare(`
+      SELECT * FROM external_accounts ORDER BY created_at DESC
+    `),
     findMostRecentGameForUser: db.prepare(`
       SELECT g.* FROM games g
       JOIN game_players gp ON gp.game_id = g.id
@@ -771,6 +793,15 @@ function makeApi(db) {
     },
     listLiveGames() { return stmts.listLiveGames.all().map(rowToGame); },
     countLiveGames() { return Number(stmts.countLiveGames.get()?.n ?? 0); },
+    listRecentFinalizedGames(limit = 50) {
+      return stmts.listRecentFinalizedGames.all(limit).map(rowToGame);
+    },
+    listRecentChallengesAll(limit = 100) {
+      return stmts.listRecentChallengesAll.all(limit).map(rowToChallenge);
+    },
+    listAllExternalAccounts() {
+      return stmts.listAllExternalAccounts.all().map(rowToExternalAccount);
+    },
 
     getLobby() { return JSON.parse(stmts.getLobby.get().data_json); },
 
