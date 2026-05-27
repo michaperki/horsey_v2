@@ -25,6 +25,7 @@ This repository is the beginning of the real Horsey project. The current JSX and
 - `docs/ARCHITECTURE_FIRST_PASS.md` records the initial high-level system architecture and unresolved decisions.
 - `docs/IMPLEMENTATION_PLAN.md` stages the work from project foundation through playable fake-money loop, trust/safety, and real-money readiness.
 - `docs/IA_PROPOSAL.md` is a live proposal for top-nav and per-screen architecture. Read before touching UI shell or proposing new screens.
+- `docs/DEV_QA_WORKFLOW.md` captures the user's current two-browser multiplayer smoke test and the lightweight dev-tool direction for reducing repetitive setup.
 
 ## Update Rule For Future Agents
 

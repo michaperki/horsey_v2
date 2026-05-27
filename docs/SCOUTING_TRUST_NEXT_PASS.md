@@ -351,12 +351,17 @@ Final shape (`renderOpenTableRow` + `.open-table-row`):
   - All blocks skip rendering entirely when no signal crosses the threshold — missing block beats a fake one.
 - Disconnect-rate remains pending the event-policy slice (Trust roadmap).
 
-### Wave T1 - Trust foundation
+### Wave T1 - Trust foundation  *(partial)*
 
-- Define provisional/established policy.
-- Add internal reliability metrics: timeout rate first, disconnect rate only after event policy.
-- Add external account linking tables and sync jobs.
-- Gate stake limits by trust state before real-money readiness.
+- [x] Define provisional/claimed/verified/established policy in `IMPLEMENTATION_PLAN.md` and `packages/shared/trust.mjs`.
+- [x] Add external account linking tables and claimed-tier sync for Lichess/Chess.com public stats.
+- [x] Add Lichess profile-token verification.
+- [x] Gate stake limits by trust state before real-money readiness.
+- [x] Surface trust state through tier pips and avatar trust frames.
+- [x] Add timeout-rate reliability evidence where sample size is sufficient.
+- [ ] Add disconnect rate after the event-policy slice.
+- [ ] Add Open Tables tier filtering.
+- [ ] Add dev fixtures/scenario runner for local trust-tier coverage without manually grinding 50 games.
 
 ### Wave T2 - External chess-account calibration
 

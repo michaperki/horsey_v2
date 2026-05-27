@@ -6,7 +6,7 @@ Companion docs: `docs/IA_PROPOSAL.md` (nav-level IA), `docs/LOBBY_DESIGN_GAP.md`
 
 ## Why this exists
 
-Players need to trust that the games are fair. Part of that trust is being able to inspect opponents and see evidence they're real, fallible players: they win and lose, they have a history, they have a record. Today the app surfaces opponent avatars + handles + ratings in nine places, but **none of them are clickable, and we expose no public projection of any user beyond `{id, handle, rating}`**. There is no `/api/users/:id` endpoint and no `#user/:id` route.
+Players need to trust that the games are fair. Part of that trust is being able to inspect opponents and see evidence they're real, fallible players: they win and lose, they have a history, they have a record. Earlier versions surfaced opponent avatars + handles + ratings in nine places but exposed no public projection beyond `{id, handle, rating}`. That foundation has now shipped: identity surfaces are scoutable, `GET /api/users/:id` exists, and `#user/:id` renders the full player profile. This document remains the living plan for what gets layered onto those surfaces next.
 
 The canonical designs treat identity as a first-class system. `profile.jsx` is titled "Player profile / opponent HUD variations + flow + system" and defines three identity surfaces (compact scout card, full dossier, trust panel) plus the wager screen which is structurally an opponent dossier at the moment of decision. `DESIGN_REVIEW.md:47` is explicit: *"Opponent context matters before accepting a wager."* `ARCHITECTURE_FIRST_PASS.md:28` names `/players/:id` as a route candidate. The flow map in `profile.jsx:281` includes "Scout / Accept" as a core-loop node.
 
@@ -111,8 +111,8 @@ Match the design's 3-column dossier shape but render only what we can populate t
 
 | Column | Block | Real today? |
 |---|---|---|
-| Left | Avatar + handle + tenure + status pills | yes (initials only) |
-| Left | H2h vs viewer (score + beads, dollar tally suppressed if negative) | yes (after new query) |
+| Left | Avatar + handle + tenure + status pills | yes (curated avatar image + trust-tier frame) |
+| Left | H2h vs viewer (score + beads, dollar tally suppressed if negative) | yes |
 | Left | Challenge + Rematch CTAs | yes |
 | Left | Message / Follow / Report | **skip** — no underlying systems |
 | Center | Recent earnings chart (their own) | yes, with a later endpoint extension (ledger aggregation) |

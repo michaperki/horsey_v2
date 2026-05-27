@@ -126,11 +126,11 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Surface | Status | Notes |
 |---|---|---|
 | Handle, email | ✅ | Already on the viewer object |
-| Rating | ✅ | Real but defaulted (no system updates it post-game yet) |
+| Rating | ✅ | Real ELO; updates on every game finalize and settlement shows viewer-relative delta |
 | Wallet section (above) | ✅ | Moves here from its own route |
-| Account settings (password change, etc.) | 🚫 | Mock #2 — pending under Phase 6 hardening |
+| Account settings (password change, etc.) | ✅ | Email change, password change, logout-other-sessions shipped |
 | Game stats (W/L/D, by stake, by time control) | 🚫 | Phase 5 |
-| Trust profile | 🚫 | Phase 6 |
+| Trust profile | ⚠️ | Tier, linked-account chips, calibration, stake cap, and avatar trust frame ship; full trust/safety panel and admin review remain Phase 6 |
 
 ### History (new destination)
 | Surface | Status | Notes |
@@ -146,7 +146,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Signup / login / logout | ✅ | Cookie sessions, scrypt hashing |
 | Email verification | 🚫 | Mock #2 |
 | Password reset | 🚫 | Mock #2 |
-| Rate limiting on auth endpoints | 🚫 | Mock #2 |
+| Rate limiting on auth endpoints | ✅ | Conservative in-memory rate limits cover signup/login plus challenge and quick-match creation |
 
 ## Implementation status
 
