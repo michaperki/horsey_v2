@@ -1,57 +1,130 @@
 # Notifications Next Pass
 
-**Posture set 2026-05-27.** Horsey cannot rely on "the event fired" as the user experience. If a bot, rival, or stranger challenges a player, the recipient needs a visible route to receive it, inspect it, and act before expiry. Notifications are part of the wager loop.
+**Posture set 2026-05-27, surface choice locked 2026-05-27.** Horsey cannot rely on "the event fired" as the user experience. If a bot, rival, or stranger challenges a player, the recipient needs a visible route to receive it, inspect it, and act before expiry. If a pot is held for security review, the player needs a reliable place to find the verdict later. Notifications are part of the wager loop.
 
 The current realtime layer is necessary but not sufficient. WebSocket events wake the UI while the user is online; durable notification rows provide the inbox, unread count, reconnect recovery, and audit trail.
 
-## What ships
+## Two jobs, one surface
 
-### Notification center
-- Topbar bell/inbox with unread count.
-- Compact dropdown for recent items; full Profile -> Notifications panel for history.
-- Items deep-link into the right surface: challenge -> Wager, live game -> Game, settlement -> History detail, account/payment notices -> Profile.
-- Read/unread state is per user and survives refresh.
+The notification system serves two cognitively distinct jobs:
 
-### Challenge delivery
-- Direct challenges create a durable notification for the recipient at the same time as the challenge row.
-- Bot greetings use the same path as human direct challenges. No special hidden route.
-- Incoming challenge toast appears when the recipient is online; inbox item remains if they miss the toast.
-- Challenge notifications expire in place when the challenge expires, is withdrawn, declined, accepted, or countered.
-- Countered challenges notify the new responding party.
+1. **Time-bounded actionable.** Bob challenged you; draw offered; the clock will flag in 30s. These need to wake the user; if missed, they become irrelevant.
+2. **Async resolution of something the user already did.** Your pot from game #X cleared security review and $42 was credited. Your $20 payment cleared. Your cashout was declined, reason: …. Not actionable in the moment; not time-bounded; but the user *will* come looking later, sometimes hours later, and trust depends on the record being there.
 
-### Event types for the first pass
-- `challenge_received`
-- `challenge_countered`
-- `challenge_expiring`
-- `challenge_accepted`
-- `draw_offered`
-- `turn_started` for async/future slower modes only; do not spam blitz.
-- `game_finalized`
-- `payment_completed`
-- `cashout_waitlist_opened`
-- `account_action_required`
+Both ship through the same surface (the bell, below). The data model has to recognise that they have opposite shapes — actionable items have a short life and resolve into oblivion; async resolutions have a long tail and must persist.
+
+## Surface — bell only
+
+One surface. No toasts. No persistent banner stack. No conditional chrome chips.
+
+- **Topbar bell with unread count** on every authenticated page.
+- **Compact dropdown** on click: recent items, scrollable, each with a one-line title + relative timestamp + one-tap deep link.
+- **Full panel at Profile → Notifications** for history beyond the dropdown's window.
+- **Read/unread state** per user, survives refresh, updates in-place when the row is opened or its underlying entity changes.
+
+Surface explicitly rejected (and why):
+- **Toast popups** — interrupt focus; user explicitly opted out.
+- **Persistent banner stack** — would compete with the verify-email banner pattern and lose its meaning as "this is the one important nag."
+- **Conditional chrome chips** ("1 challenge", "1 pot pending") — clever but loses history that pot/payment/cashout events must keep around for trust.
+
+## Settlement is the source of truth for pot state
+
+When pot disbursement is gated on security review (future Phase 6/7 work — not today), the **settlement page itself shows the pending state** with a clear "review in progress, typical ~N min" cue. The notification is a *deep link into settlement*, not a parallel display of pot state.
+
+This means:
+- One canonical place to read pot state (settlement / history detail).
+- Notifications carry "here's where to look," not "here's the current value." They redirect.
+- A user can open settlement directly (history detail link) and see the same pending → resolved transition without ever touching the bell.
+- The bell row for a pot is one logical thread that updates in place: title moves from "Pot pending review" → "Pot awarded $42" → "Pot held for review (escalated)" on the same row. No double-write, no scroll-burying.
+
+The same principle extends to payment and cashout flows: their canonical state lives on a Profile sub-page; the notification redirects there.
+
+## Data model — entity-anchored, state mutates
+
+Rows are anchored to `(user_id, entity_type, entity_id)` and update in place rather than being append-only. A pot's lifecycle is one row whose `status` and `title` mutate.
+
+`notifications` schema:
+
+```
+id              TEXT PRIMARY KEY
+user_id         TEXT NOT NULL
+type            TEXT NOT NULL          -- 'challenge_received', 'pot_state', 'payment_state', ...
+entity_type     TEXT NOT NULL          -- 'challenge' | 'game' | 'payment' | 'cashout' | 'account'
+entity_id       TEXT NOT NULL
+status          TEXT NOT NULL          -- type-specific: 'pending' | 'resolved' | 'expired' | 'failed' | ...
+title           TEXT NOT NULL          -- denormalized at create/update
+body            TEXT
+data_json       TEXT                   -- route hint, action context, money amount, etc.
+read_at         TEXT
+created_at      TEXT NOT NULL
+updated_at      TEXT NOT NULL
+UNIQUE(user_id, entity_type, entity_id)
+```
+
+The UNIQUE constraint enforces the one-thread-per-entity rule. `createNotification` becomes upsert-shaped: if a row already exists for the same `(user_id, entity_type, entity_id)`, mutate it; otherwise insert. The realtime layer publishes `notification.created` or `notification.updated` accordingly.
+
+Read/unread semantics on update: an entity transitioning to a *new* status (pending → awarded) flips `read_at` back to null so the user notices the resolution. An entity transitioning to a *terminal-but-uninteresting* status (challenge expired without action) does not — there's no reason to nag.
+
+## Event taxonomy
+
+Time-bounded actionable:
+- `challenge_received` (entity = challenge) — direct challenges only; open-table fanout would drown the bell.
+- `challenge_countered` (entity = challenge).
+- `draw_offered` (entity = game).
+- `turn_started` (entity = game) — async/correspondence modes only when those land; do not spam blitz.
+
+Async resolution:
+- `pot_state` (entity = game) — `pending_review` → `awarded` / `held` / `disputed`. The notification redirects to settlement.
+- `payment_state` (entity = payment) — `processing` → `completed` / `failed` / `refunded`. Redirects to Profile → Payments.
+- `cashout_state` (entity = cashout) — `submitted` → `approved` / `paid` / `rejected`. Redirects to Profile → Cashouts.
+- `account_action_required` (entity = account) — verification expired, password reset confirmed, suspicious sign-in, ToS bump.
+- `cashout_waitlist_opened` (entity = account) — sent to waitlist subscribers when the gate opens.
+
+Terminal but worth filing as record:
+- `game_finalized` for non-player observers / record-keeping. Players see this through settlement directly; the row exists so the audit trail is complete in the inbox.
+
+Explicitly out of scope:
+- Open-table challenge fanout — would generate one row per recipient and overwhelm the bell.
+- Per-move notifications in live games — the board is the surface.
+- Marketing / re-engagement nudges — different system if it ever exists.
 
 ## Product rules
 
-- Notifications should be actionable, not noisy. A user should see why the item matters and have one obvious next action.
-- Blitz/live games must not become notification spam. Turn notifications are for future slower/async modes, not rapid live play.
+- Notifications should be actionable or load-bearing for trust. Never both noisy and disposable.
+- Loss copy stays neutral or winner-centric; never "you lost $X."
+- Settlement / Profile sub-pages are canonical for entity state. Notifications redirect, they don't reproduce.
 - Challenge expiry is honest urgency. Payment and retention surfaces must not manufacture urgency.
-- Loss copy stays neutral or winner-centric; no push notification should advertise "you lost $X."
-- Browser push/email/SMS are later channels. The first product requirement is in-app durability.
+- Browser push / email / SMS are later channels. The first product requirement is in-app durability.
 
 ## Implementation shape
 
-1. `notifications` table: `id, user_id, type, entity_type, entity_id, title, body, read_at, expires_at, created_at, data_json`.
-2. API: `GET /api/notifications`, `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`.
-3. Server helper: `createNotification(userId, type, entity, payload)` colocated with challenge/game/payment mutations.
-4. Realtime publish: after inserting a notification, publish `notification.created` to `user:<userId>`.
-5. Bootstrap includes unread count and recent notifications so reconnect/refresh is correct.
-6. Client topbar bell renders unread count, dropdown, and route-aware deep links.
-7. Challenge lifecycle mutations update or expire existing related notification rows.
-8. Dev-bot greeting path uses the same direct-challenge notification helper.
+1. `notifications` table per the schema above. Migration adds the table; no backfill (notifications are forward-looking).
+2. API:
+   - `GET /api/notifications` — list for viewer, paginated, newest first.
+   - `GET /api/notifications/unread-count` — number; cheap; pollable until the WS event lands.
+   - `POST /api/notifications/:id/read` — flip `read_at`.
+   - `POST /api/notifications/read-all` — sweep.
+3. Server helper: `upsertNotification({ userId, type, entityType, entityId, status, title, body, data })` colocated with challenge / game / payment mutations. Upsert keyed on the UNIQUE triple; inserts → publish `notification.created`; updates → publish `notification.updated`.
+4. Realtime: `notification.created` and `notification.updated` published to `user:<userId>`. Client bumps unread count and slides the row to the top of the bell.
+5. Bootstrap response includes unread count and the most recent N rows so reconnect/refresh is correct.
+6. Client topbar bell renders unread count, dropdown, and route-aware deep links. Profile → Notifications renders the full list.
+7. Challenge lifecycle mutations (`createChallenge`, accept, decline, counter, withdraw, expire) upsert the matching row to its new status.
+8. Dev-bot greeting path uses the same direct-challenge upsert. No bot-only side channel.
+9. Settlement page renders pot pending state directly (when the security-review pipeline lands) — the bell is the redirector, not the source.
+
+## What lands first
+
+The pot-review / payment / cashout pipelines that justify the async-resolution side of this design **do not exist yet**. Today's slice is just:
+
+- Schema + upsert + read/unread API + realtime publish + bootstrap + client bell.
+- Challenge lifecycle wired in (the only live event source we have now).
+- `pot_state`, `payment_state`, `cashout_state` event types reserved in the taxonomy so when those systems land, they plug into an already-built inbox without surface churn.
+
+The data model is doing the future-proofing here. The visible surface is small.
 
 ## Open questions
 
-- Whether notification text should be fully denormalized at creation or derived at render. Default: denormalize title/body plus keep `data_json` for route/action context.
-- Whether challenge-expiring should be a stored row or only an in-app urgency state. Default: store only for direct challenges with more than a minimal lifetime, not for every open-table row.
-- Whether email should mirror account/security/payment notices before social notices. Default: yes, when email infrastructure is already configured.
+- Pagination: cursor by `updated_at` or `created_at`? Probably `updated_at` so an entity that just moved to "awarded" lifts back to the top.
+- Whether `account_action_required` should also mirror to email when the address is verified. Default: yes once email is configured (Resend is already wired).
+- How long to keep terminal rows. Default: forever for money-related events (audit trail), 90 days for resolved social events.
+- Whether the bell should render a soft sound on `notification.created` (consistent with the existing soundscape layer) or stay silent. Default: silent until proven needed; the unread badge is enough.
