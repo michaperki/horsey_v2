@@ -8,7 +8,7 @@ Companion docs (not roadmaps): `PROJECT_SOUL.md` (product voice and feel), `ARCH
 
 Horsey is a wagered chess product. Two players pick a stake and time control, escrow the wager, play a chess game with server-authoritative state, and the winner takes the pot minus rake. The first milestone is a local fake-money playable loop. The next money step is a real payments panel for buying non-cashout entertainment chips; cashout/payout decisions are gated to Phase 7.
 
-The path from "playable on my laptop" to production now has four parallel lanes: (A) **Deploy Readiness** — host the loop somewhere a closed-beta tester can reach it; (B) **Closed Beta Operations** — minimum admin / smoke / observability so humans can use it unattended; (C) **Payments v1** — Stripe-backed chip purchases, ToS acceptance, refunds, spend caps, kill switch, and no cashout; (D) **Cashout Discovery** — jurisdiction, KYC, AML, custody, payouts, and written decisions before redeemable balances ship. These lanes sit alongside the numbered phases rather than replacing them.
+The path from "playable on my laptop" to production now has four parallel lanes: (A) **Deploy Readiness** — host the loop somewhere a closed-beta tester can reach it; (B) **Closed Beta Operations** — minimum admin / smoke / observability so humans can use it unattended; (C) **Payments v1** — NOWPayments stablecoin chip purchases, ToS acceptance, refunds, spend caps, kill switch, and no cashout; (D) **Cashout Discovery** — jurisdiction, dual-currency/sweepstakes framing, KYC, AML, custody, payouts, and written decisions before redeemable balances ship. These lanes sit alongside the numbered phases rather than replacing them.
 
 ## Working Principles
 
@@ -29,7 +29,9 @@ These reflect *how* we're working right now, not permanent rules. Update as cond
 - **UI placeholder fields count as mocks.** A field that *looks* real but is hardcoded (opponent rating, country, h2h, momentum, rating delta, rematch button) is as much a mock as any subsystem in the seam list — and arguably more misleading, because it pretends to be product. Track them.
 - **Docs over chat.** When a working session produces a durable direction or preference, the relevant doc (this one, `PROJECT_SOUL`, or an ADR) gets updated in the same change.
 - **Deploy with the dev store; swap stores only when real money forces it.** SQLite-on-a-volume is the prod store through the fake-money closed beta. The Postgres swap is a *named* pre-real-money slice, not a generic next step — it costs an async refactor of every `db.X(...)` call site in the server and earns its place only when concurrent-write safety, point-in-time recovery, and audit-grade backups actually matter (i.e., when funds are real). See mock #1 and the Deploy Readiness Bucket.
-- **Payments v1 is buy chips, not cashout.** Build toward Stripe-backed chip purchases with ToS acceptance, refunds, spend caps, and a no-cashout wall. Cashout/payouts remain discovery first, code second. See `PAYMENTS_NEXT_PASS.md`.
+- **Mobile pass comes before the next product expansion.** The app is mobile-native in intent, and the next broad UI work should be a full mobile pass before deeper admin/fair-play surfaces. Scope + decisions live in `MOBILE_NEXT_PASS.md` — bottom tab bar, compact topbar, unified pointer-events board, `dvh` + safe-areas, `(pointer: coarse)` target sweep.
+- **Fair-play is the next trust conversation after mobile.** Engine use and stronger-player assistance are the two obvious cheating paths. Blunder rate, average centipawn loss, top-engine agreement, and time/quality anomalies should enter the admin review model first, then selectively graduate into History/Profile/HUD once the analysis pipeline and caveats are real. See `FAIR_PLAY_NEXT_PASS.md`.
+- **Payments v1 is buy chips, not cashout.** Build toward NOWPayments stablecoin chip purchases with ToS acceptance, refunds, spend caps, and a no-cashout wall. Cashout/payouts remain discovery first, code second. The dual-currency / sweepstakes-compatible route is now the favored cashout discovery thesis, but it still needs legal review and explicit product rules before product copy implies redeemability. See `PAYMENTS_NEXT_PASS.md`.
 
 ## Where We Are Right Now
 
@@ -106,8 +108,8 @@ Phase: **6** for the remaining work; **Bucket B #1** for the read-only slice (do
 ### 9. Fake money → payments v1 → cashout
 
 Today: every entry is seeded/fake-money; "house" is a pseudo-account; no payment integration.
-Payments v1: users can buy non-cashout entertainment chips through Stripe Checkout. Webhooks append `purchase` ledger entries to the existing play-token balance; Profile shows receipts; ToS acceptance, refunds, spend caps, geo-blocks, and `HORSEY_PAYMENTS_ENABLED=0` are part of the slice. See `PAYMENTS_NEXT_PASS.md`.
-Cashout version: jurisdiction + legal review, payout provider, KYC, AML, sanctions, responsible-play controls, tax/reporting plan, and security review of wallet/escrow/settlement flows. The ledger schema is intentionally shaped to support future cashout/redeemable balances via a `currency` column without domain rewrites.
+Payments v1: users can buy non-cashout entertainment chips through NOWPayments hosted stablecoin invoices. Webhooks append `purchase` ledger entries to the existing play-token balance; Profile/Cashier shows receipts; ToS acceptance, refunds, spend caps, geo-blocks, and `HORSEY_PAYMENTS_ENABLED=0` are part of the slice. See `PAYMENTS_NEXT_PASS.md`.
+Cashout version: jurisdiction + legal review, dual-currency/sweepstakes-compatible rules, payout provider, KYC, AML, sanctions, responsible-play controls, tax/reporting plan, and security review of wallet/escrow/settlement flows. The ledger schema is intentionally shaped to support future cashout/redeemable balances via a `currency` column without domain rewrites.
 Phase: **Payments v1 before Phase 7; cashout gated to Phase 7**.
 
 ## Trust Tiers
@@ -480,7 +482,7 @@ Run alongside the phases, not after them:
 The MVP playable loop is functionally complete; Bucket A is code-side done. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
 
 1. **Notification center.** Durable notification rows + deep links so direct challenges, settlement outcomes, and (eventually) payment/cashout/dispute events are receivable when the user isn't on the surface where the event fires. Surface shape still being chosen — see `NOTIFICATIONS_NEXT_PASS.md`.
-3. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
+3. **Bucket C payments v1.** Buy Chips/Cashier panel, NOWPayments checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
 4. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
 5. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
 

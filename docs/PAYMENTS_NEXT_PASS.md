@@ -41,12 +41,12 @@ Initial package shape (tune as data comes in):
 
 ## What stays deferred (cashout = Phase 7 redux)
 
-Phase 7 isn't deleted — it narrows. It's *cashout* and the AML/payout stack, not the entire money system. Until Bucket D names a jurisdiction, custody model, and payout provider, the following don't ship:
+Phase 7 isn't deleted — it narrows. It's *cashout* and the AML/payout stack, not the entire money system. The current strategic thesis is to investigate a dual-currency / sweepstakes-compatible model as the fastest plausible route to redemption, but that does not remove legal review. Until Bucket D names a jurisdiction, rules model, custody model, and payout provider, the following don't ship:
 
 - Real cashout flow.
 - KYC at chip purchase (KYC only at cashout when that lands).
 - Tax reporting / 1099-equivalents.
-- Dual-currency split (`sweeps_cents` remains the right future shape — useful only once cashout exists).
+- Dual-currency split in production (`sweeps_cents` remains the right future shape, and is now the favored cashout-discovery model rather than a casual someday idea).
 - Sportsbook-style responsible-play controls beyond the soft spend cap.
 
 ## Implementation order

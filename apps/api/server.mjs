@@ -95,8 +95,11 @@ import {
 import {
   CHIP_PACKAGES,
   PAYMENT_PROVIDER,
-  SUPPORTED_PAY_CURRENCIES
+  SUPPORTED_PAY_CURRENCIES,
+  packageById,
+  mapNowPaymentsStatus
 } from "../../packages/shared/payments.mjs";
+import { createInvoice, verifyIpnSignature } from "./payments.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -184,6 +187,12 @@ async function readJson(req) {
   for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+async function readRawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function moveRows(moves) {
@@ -942,6 +951,9 @@ function handleDomainError(error, res) {
     payments_disabled: 503,
     payments_geo_blocked: 451,
     payments_not_implemented: 501,
+    payments_not_configured: 503,
+    payments_unknown_package: 400,
+    payments_provider_error: 502,
     waitlist_email_required: 400,
     external_rate_limited: 502,
     external_fetch_timeout: 504,
@@ -2119,6 +2131,71 @@ async function routeApi(req, res) {
     });
   }
 
+  // NOWPayments IPN webhook. Unauthenticated (the provider has no session) —
+  // HMAC-SHA512 on the raw body against NOWPAYMENTS_IPN_SECRET gates this.
+  if (req.method === "POST" && pathname === "/api/payments/webhook") {
+    try {
+      const raw = await readRawBody(req);
+      const signature = req.headers["x-nowpayments-sig"];
+      if (!verifyIpnSignature(raw, signature)) {
+        logger.warn("payments webhook signature rejected", {
+          event: "payments.webhook_bad_signature"
+        });
+        return json(res, 401, { error: "invalid_signature" });
+      }
+      const payload = JSON.parse(raw);
+      const orderId = payload.order_id || null;
+      const invoiceId = payload.invoice_id != null ? String(payload.invoice_id) : null;
+      const paymentId = payload.payment_id != null ? String(payload.payment_id) : null;
+      const purchase =
+        (orderId && db.getPurchase(orderId)) ||
+        (invoiceId && db.findPurchaseByProviderSession(PAYMENT_PROVIDER, invoiceId)) ||
+        null;
+      if (!purchase) {
+        logger.warn("payments webhook for unknown purchase", {
+          event: "payments.webhook_unknown_purchase",
+          orderId,
+          invoiceId
+        });
+        return json(res, 200, { ok: true, skipped: "unknown_purchase" });
+      }
+      const nextStatus = mapNowPaymentsStatus(payload.payment_status);
+      const shouldCredit = nextStatus === "finished" && !purchase.ledgerEntryId;
+      db.transaction(() => {
+        let ledgerEntryId = purchase.ledgerEntryId || null;
+        if (shouldCredit) {
+          ledgerEntryId = newId("led_purchase");
+          db.appendLedger([{
+            id: ledgerEntryId,
+            userId: purchase.userId,
+            type: "purchase",
+            availableDeltaCents: purchase.chipsCreditedCents,
+            escrowDeltaCents: 0,
+            refId: purchase.id,
+            note: `Chip purchase: ${purchase.packageId}`,
+            createdAt: new Date().toISOString()
+          }]);
+        }
+        db.updatePurchase(purchase.id, {
+          providerSessionId: invoiceId || purchase.providerSessionId,
+          providerPaymentId: paymentId || purchase.providerPaymentId,
+          status: nextStatus,
+          payCurrency: payload.pay_currency || purchase.payCurrency,
+          payAmount: payload.pay_amount != null ? String(payload.pay_amount) : purchase.payAmount,
+          ledgerEntryId,
+          rawProvider: payload
+        });
+      })();
+      return json(res, 200, { ok: true });
+    } catch (error) {
+      logger.error("payments webhook handler failed", {
+        event: "payments.webhook_error",
+        err: error
+      });
+      return json(res, 500, { error: "webhook_failed" });
+    }
+  }
+
   let viewer;
   try {
     viewer = resolveViewer(req);
@@ -2629,17 +2706,42 @@ async function routeApi(req, res) {
         const e = new RangeError("You must accept the current Horsey Terms first.");
         e.code = "tos_required"; throw e;
       }
-      // Slice 2 lands here. Until then, 501.
-      const e = new RangeError("Checkout is wired in slice 2.");
-      e.code = "payments_not_implemented"; throw e;
+      const body = await readJson(req);
+      const pkg = packageById(body?.packageId);
+      if (!pkg) {
+        const e = new RangeError("Unknown chip package.");
+        e.code = "payments_unknown_package"; throw e;
+      }
+      const purchaseId = newId("pur");
+      db.insertPurchase({
+        id: purchaseId,
+        userId: viewer.id,
+        provider: PAYMENT_PROVIDER,
+        packageId: pkg.id,
+        amountUsdCents: pkg.priceUsdCents,
+        chipsCreditedCents: pkg.chipsCents,
+        status: "pending"
+      });
+      let invoice;
+      try {
+        invoice = await createInvoice({
+          purchaseId,
+          amountUsdCents: pkg.priceUsdCents,
+          packageLabel: pkg.label
+        });
+      } catch (providerError) {
+        db.updatePurchase(purchaseId, {
+          status: "failed",
+          rawProvider: { error: String(providerError?.message || providerError) }
+        });
+        throw providerError;
+      }
+      db.updatePurchase(purchaseId, {
+        providerSessionId: invoice.invoiceId,
+        rawProvider: invoice.raw
+      });
+      return json(res, 200, { purchaseId, invoiceUrl: invoice.invoiceUrl });
     } catch (error) { return handleDomainError(error, res); }
-  }
-
-  if (req.method === "POST" && pathname === "/api/payments/webhook") {
-    // Slice 2 verifies the NOWPayments HMAC-SHA512 signature and idempotently
-    // credits chips on `finished` status. Until then, drop on the floor with
-    // a 501 so misconfigured webhooks fail loudly instead of silently.
-    return json(res, 501, { error: "payments_not_implemented" });
   }
 
   if (req.method === "GET" && pathname === "/api/payments/purchases") {

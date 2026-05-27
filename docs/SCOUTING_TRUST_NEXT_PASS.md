@@ -104,9 +104,9 @@ Prefer metrics that are understandable, hard to humiliate with, and hard to over
 | Established / provisional | Summary trust state | needs policy threshold |
 | Verified chess account | External identity confidence | needs integration |
 
-Avoid first-generation metrics that feel precise but are not ready:
+Avoid first-generation public scouting metrics that feel precise but are not ready:
 
-- Centipawn loss / accuracy until there is an engine pipeline and clear caveats.
+- Centipawn loss / accuracy until there is an engine pipeline and clear caveats. These metrics are important for admin fair-play review and later History/Profile review surfaces, but they should not appear as casual Scout Card trust claims before the pipeline exists.
 - Opening score / favorite openings until ECO classification exists.
 - "Aggression" or "pressure collapse" until there is enough time/move data and a defensible definition.
 - Fair-play score until trust review and anti-cheat pipelines exist.

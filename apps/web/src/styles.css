@@ -53,14 +53,26 @@ button:disabled {
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 5;
+  /* Bumped above .piece's z-index (10) so static pieces near the top of the
+   * board don't punch through the sticky topbar when the page scrolls. Still
+   * below .modal-backdrop (20), .scout-popover (30), .bell-dropdown (50),
+   * .piece-ghost (40), and .milestone-stack (200). */
+  z-index: 15;
   display: flex;
   align-items: center;
   gap: 24px;
-  padding: 14px 28px;
+  padding: max(14px, env(safe-area-inset-top)) 28px 14px;
   border-bottom: 1px solid var(--rule);
   background: rgba(251, 246, 234, 0.88);
   backdrop-filter: blur(14px);
+}
+
+/* mobile-only / desktop-only utilities for content that swaps between
+ * the topbar (desktop) and Profile (mobile). See MOBILE_NEXT_PASS.md. */
+.mobile-only { display: none; }
+@media (max-width: 720px) {
+  .mobile-only { display: revert; }
+  .desktop-only { display: none; }
 }
 
 .brand {
@@ -139,7 +151,8 @@ button.link {
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  padding: 28px;
+  min-height: 100dvh;
+  padding: max(28px, env(safe-area-inset-top)) 28px max(28px, env(safe-area-inset-bottom));
 }
 
 .auth-card {
@@ -367,7 +380,11 @@ main {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
+.hero-state-head { min-width: 0; }
+.hero-state-head h1 { overflow-wrap: anywhere; }
 
 .hero-identity-badge {
   display: flex;
@@ -2077,6 +2094,21 @@ p {
   box-shadow: 0 24px 55px -32px rgba(0, 0, 0, 0.75);
   user-select: none;
   touch-action: manipulation;
+  /* Contain piece z-index (10) within the board's stacking context so a
+   * scrolled board never punches its pieces through the sticky topbar. */
+  isolation: isolate;
+}
+
+/* Landscape phones: viewport height becomes the binding dimension. Without
+ * this the 1:1 aspect-ratio + width: 100% combo lets the board exceed the
+ * visible height, pushing the controls offscreen. The 78dvh budget leaves
+ * room for the compact topbar and the bottom tab bar's safe-area inset. */
+@media (orientation: landscape) and (max-height: 480px) {
+  .board {
+    width: auto;
+    height: min(78dvh, calc(100vw - 32px));
+    aspect-ratio: 1;
+  }
 }
 
 .board button {
@@ -2092,8 +2124,26 @@ p {
   border-radius: 0;
   padding: 0;
   color: inherit;
-  touch-action: manipulation;
+  touch-action: none;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Floating ghost piece during a pointer drag. Built by cloning the source
+ * .piece in the pointermove handler; positioned with translate() relative
+ * to the document. On touch, the pointermove handler raises it ~44px above
+ * the finger so the source square stays visible. */
+.piece-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 40;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  object-fit: contain;
+  opacity: 0.92;
+  filter: drop-shadow(0 8px 8px rgba(0, 0, 0, 0.36));
+  will-change: transform;
 }
 
 .board .source {
@@ -2598,6 +2648,7 @@ p {
 }
 
 .player-main strong {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2691,6 +2742,7 @@ p {
   list-style: decimal;
   padding-left: 24px;
   max-height: 54vh;
+  max-height: 54dvh;
   overflow: auto;
   padding-right: 4px;
 }
@@ -2893,6 +2945,28 @@ p {
 
 .sound-toggle:hover {
   border-color: var(--gold, var(--rule));
+}
+
+.cashier-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cashier-btn:hover {
+  border-color: var(--gold, var(--rule));
+  background: var(--paper-2, var(--paper));
 }
 
 .resume-pill {
@@ -3217,6 +3291,156 @@ p {
   .history-when   { grid-area: when; }
 }
 
+/* ---- Mobile (≤720px): compact topbar + bottom tab bar ------------------
+ * Comes after the 920px block so its overrides win the cascade. The 920px
+ * block collapses the topbar to a column for tablets; mobile flips it back
+ * to a single row and drops the secondary action chips. See
+ * docs/MOBILE_NEXT_PASS.md.
+ */
+.tabbar { display: none; }
+.profile-session-card { display: none; }
+
+@media (max-width: 720px) {
+  .topbar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding-left: 14px;
+    padding-right: 14px;
+    /* backdrop-filter creates a containing block for fixed-positioned
+     * descendants, which made the bell-dropdown (position: fixed bottom:0)
+     * anchor to the topbar instead of the viewport — turning the sheet
+     * into a sub-100px strip below the topbar. Drop the blur on mobile. */
+    backdrop-filter: none;
+    background: var(--paper);
+  }
+  .topbar nav,
+  .topbar .viewer-id,
+  .topbar .connection-pill,
+  .topbar .sound-toggle {
+    display: none;
+  }
+  .topbar-actions {
+    width: auto;
+    flex: 1;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+  .wallet-pill {
+    padding: 6px 10px;
+    font-size: 14px;
+  }
+  .wallet-pill small { font-size: 11px; }
+
+  /* Defensive width caps so nothing inside main can introduce horizontal
+   * scroll on a narrow viewport. The 920px block already constrains these
+   * to min(100%, 560), which can still spill on phones if intrinsic content
+   * exceeds 100%; max-width: 100% forces a hard ceiling. overflow-x: clip
+   * on html prevents any rogue child from creating a scroll without
+   * disturbing the topbar's position: sticky (which `overflow: hidden`
+   * would). */
+  html { overflow-x: clip; }
+  main { overflow-x: clip; }
+  .felt,
+  .card,
+  .player-strip,
+  .turn-strip,
+  .live-table-module {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .felt > *,
+  .card > * { min-width: 0; }
+
+  /* Hero numerics that were sized for desktop — clamp on mobile so they
+   * never push the .felt out. */
+  .hero h1,
+  .settlement h1 {
+    font-size: clamp(32px, 9vw, 48px);
+  }
+  .match-card h2 { font-size: clamp(32px, 9vw, 48px); }
+
+  .tabbar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 6;
+    padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    gap: 4px;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(211, 164, 65, 0.10), transparent 40%),
+      linear-gradient(180deg, #14110d, #0c0a08);
+    border-top: 1px solid rgba(255, 247, 232, 0.08);
+    box-shadow: 0 -12px 28px -16px rgba(0, 0, 0, 0.55);
+  }
+  .tabbar-link {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 8px 4px;
+    min-height: 52px;
+    text-decoration: none;
+    color: rgba(245, 237, 224, 0.62);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    border-radius: 10px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tabbar-link.active {
+    color: var(--gold-2);
+    background: rgba(241, 201, 107, 0.08);
+  }
+  .tabbar-link.active::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    width: 24px;
+    height: 3px;
+    border-radius: 99px;
+    background: var(--gold-2);
+    box-shadow: 0 0 8px rgba(241, 201, 107, 0.55);
+  }
+  .tabbar-glyph { font-size: 18px; line-height: 1; }
+  .tabbar-label { text-transform: uppercase; }
+
+  main {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  .profile-session-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .profile-session-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(27, 24, 21, 0.04);
+  }
+  .profile-session-row strong { font-size: 15px; }
+  .profile-session-row button { min-height: 40px; }
+
+  /* ---- Bottom-sheet variants ------------------------------------------
+   * Sheet variants moved to end of file — see the late "Mobile sheet
+   * variants" block. They were here originally, but the default .bell-dropdown
+   * rules at line ~3990 are defined AFTER this block and win on equal
+   * specificity, so the desktop position/top/right/etc. defeated the mobile
+   * sheet positioning. Late block puts the mobile rules after the defaults.
+   */
+}
+
 .replay {
   margin-top: 20px;
 }
@@ -3311,7 +3535,8 @@ p {
   z-index: 20;
   display: grid;
   place-items: center;
-  padding: 20px;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right))
+           max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
   background: rgba(27, 24, 21, 0.42);
 }
 
@@ -3360,6 +3585,59 @@ p {
 
 .onboarding-actions .link:hover:not(:disabled) {
   color: var(--ink);
+}
+
+.cashier-modal {
+  width: min(100%, 560px);
+  max-height: 86vh;
+  max-height: 86dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  color: var(--ink);
+}
+
+.cashier-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cashier-header h2 {
+  margin: 4px 0 0;
+}
+
+.cashier-close {
+  background: none;
+  border: 0;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.cashier-close:hover {
+  color: var(--ink);
+  background: var(--paper-2, transparent);
+}
+
+.cashier-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cashier-section h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.cashier-section .chip-tiles {
+  margin-top: 4px;
 }
 
 .presence-dot {
@@ -3636,6 +3914,7 @@ p {
   min-width: 320px;
   max-width: 380px;
   max-height: 70vh;
+  max-height: 70dvh;
   overflow-y: auto;
   background: var(--paper);
   color: var(--ink);
@@ -3749,6 +4028,7 @@ p {
 .tos-modal {
   max-width: 640px;
   max-height: 86vh;
+  max-height: 86dvh;
   overflow-y: auto;
   color: var(--ink);
 }
@@ -3781,4 +4061,238 @@ p {
   color: var(--gold);
   text-decoration: underline;
   cursor: pointer;
+}
+
+/* ---- Admin table horizontal scroll wrapper ------------------------------
+ * .admin-table itself uses white-space: nowrap on every cell, so on a phone
+ * the table overflows the viewport. Wrap it so the overflow is contained
+ * and horizontally scrollable instead. See docs/MOBILE_NEXT_PASS.md.
+ */
+.admin-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+.admin-table-scroll .admin-table {
+  border-radius: 0;
+  border: 0;
+}
+
+/* ---- Touch-target sweep -------------------------------------------------
+ * On coarse pointers (phones/tablets), bump small chrome buttons so they
+ * clear the 44×44 thumb-target floor. See docs/MOBILE_NEXT_PASS.md.
+ */
+@media (pointer: coarse) {
+  .bell,
+  .sound-toggle,
+  .cashier-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .bell { padding: 8px 12px; }
+  .replay-nav-button {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+  .live-table-resign {
+    min-height: 40px;
+    padding: 10px 14px;
+  }
+  .inline-dismiss {
+    min-height: 32px;
+    padding: 6px 8px;
+    text-decoration: none;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper);
+  }
+  /* Hover-only affordances become :active on touch so the cue is still
+   * discoverable. */
+  .open-table-row:active .open-row-sit {
+    color: var(--gold);
+    transform: translateX(2px);
+  }
+  .chip-pick:active {
+    transform: translateY(-1px);
+  }
+}
+
+/* ---- ≤480px small-phone sweep ------------------------------------------
+ * The 920px and 720px blocks above handle the desktop→mobile chrome swap.
+ * This block handles the dense bits that still overflow on narrow phones
+ * (iPhone SE class, ~320–414px wide).
+ */
+@media (max-width: 480px) {
+  /* History stats: 3-up stat cards squeeze hard at 360px. Stack to 1col. */
+  .history-stats {
+    grid-template-columns: 1fr;
+  }
+  .history-stats strong { font-size: 22px; }
+
+  /* Live table meta row: clock + chip-stack + handle was originally
+   * intended for a wide row. Wrap so each item gets room. */
+  .live-table-row {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .live-table-meta {
+    flex-wrap: wrap;
+  }
+
+  /* Promotion dialog: 4 buttons at 78px each + gap doesn't fit a 320px
+   * width. Tighten paddings; allow 2x2 grid. */
+  .promotion-options {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Milestone stack: top:80px collides with the wrapped mobile topbar
+   * (and the verify banner). Drop it lower; right margin tighter. */
+  .milestone-stack {
+    top: auto;
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    right: 10px;
+    left: 10px;
+  }
+  .milestone-card {
+    min-width: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  /* Hero CTA + pot panel collide on narrow widths. Stack them. */
+  .hero-cta-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hero-pot-panel {
+    min-width: 0;
+  }
+
+  /* Metric grid: drop from 4col to 2col on small phones (the 920 block
+   * already does 2col; here we keep the 2col but tighten paddings). */
+  .metric-grid div { padding: 10px; }
+
+  /* Settlement headline numbers: the 64px money-* numbers can overflow. */
+  .pot h2,
+  .money-win,
+  .money-loss,
+  .money-draw {
+    font-size: 48px;
+  }
+  .game-panel.settlement .money-win,
+  .game-panel.settlement .money-loss,
+  .game-panel.settlement .money-draw {
+    font-size: 40px;
+  }
+  .match-card h2 { font-size: 42px; }
+
+  /* Open-table-row terms: allow wrapping so long time-control strings
+   * don't blow out the row. */
+  .open-row-terms { white-space: normal; }
+}
+
+/* ---- Mobile sheet variants (cascade-late) ------------------------------
+ * These overrides MUST come after the default .bell-dropdown / .scout-popover
+ * / .cashier-modal rules earlier in this file. They turn each surface into a
+ * bottom-sheet at ≤720px. The scout uses !important because the JS render
+ * sets inline top/left/width on the popover for desktop anchoring.
+ * See docs/MOBILE_NEXT_PASS.md.
+ */
+@media (max-width: 720px) {
+  .bell-dropdown,
+  .scout-popover,
+  .cashier-modal {
+    animation: sheet-up 220ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  }
+
+  .bell-dropdown {
+    position: fixed;
+    top: auto;
+    right: 0;
+    left: 0;
+    bottom: 0;
+    min-width: 0;
+    max-width: none;
+    max-height: 72dvh;
+    border-radius: 18px 18px 0 0;
+    padding: 20px 0 calc(8px + env(safe-area-inset-bottom));
+    box-shadow: 0 -18px 44px -8px rgba(27, 24, 21, 0.32);
+  }
+  .bell-dropdown::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 40px;
+    height: 4px;
+    border-radius: 99px;
+    background: rgba(27, 24, 21, 0.18);
+    transform: translateX(-50%);
+  }
+
+  .scout-popover {
+    position: fixed !important;
+    top: auto !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: auto !important;
+    max-height: 72dvh;
+    border-radius: 18px 18px 0 0;
+    padding: 22px 16px calc(16px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+    box-shadow: 0 -18px 44px -8px rgba(27, 24, 21, 0.32);
+  }
+  .scout-popover::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 40px;
+    height: 4px;
+    border-radius: 99px;
+    background: rgba(27, 24, 21, 0.18);
+    transform: translateX(-50%);
+  }
+
+  .modal-backdrop:has(.cashier-modal) {
+    place-items: end stretch;
+    padding: 0;
+  }
+  .cashier-modal {
+    width: auto;
+    max-width: none;
+    max-height: 86dvh;
+    border-radius: 18px 18px 0 0;
+    padding: 22px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+  .cashier-modal::before {
+    content: "";
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 99px;
+    background: rgba(27, 24, 21, 0.18);
+    margin: -10px auto 8px;
+  }
+
+  /* Hide the inline "· offline" / "· last seen Xm ago" text in the player
+   * strip on mobile. The presence-dot next to the handle already conveys
+   * online/offline; the inline text was pushing the clock-box off the
+   * right edge for opponents marked offline (bot games / spectated games). */
+  .player-offline-label { display: none; }
+}
+
+@keyframes sheet-up {
+  0%   { transform: translateY(12%); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bell-dropdown,
+  .scout-popover,
+  .cashier-modal {
+    animation: none !important;
+  }
 }

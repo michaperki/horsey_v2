@@ -120,7 +120,7 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Balance | ✅ | |
 | Escrow held | ✅ | |
 | Ledger entries | ✅ | Append-only, real |
-| Buy chips | 🚫 | Payments v1: Profile -> Buy Chips, Stripe Checkout, no cashout. See `PAYMENTS_NEXT_PASS.md`. |
+| Buy chips | ⚠️ | Payments v1: Cashier / Profile -> Buy Chips scaffold exists; NOWPayments invoice/webhook wiring is in progress; no cashout. See `PAYMENTS_NEXT_PASS.md`. |
 | Cashout / payout (canonical) | 🚫 | Deferred to Phase 7 cashout readiness |
 
 ### Profile (new destination, partly built from existing pieces)

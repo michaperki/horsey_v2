@@ -72,6 +72,8 @@ const state = {
   focusSquare: null,
   pendingPromotion: null,
   resignConfirmOpen: false,
+  cashierOpen: false,
+  cashierError: null,
   gameError: null,
   actionError: null,
   accountError: null,
@@ -776,7 +778,10 @@ function closeScout(shouldRender = true) {
 
 function scoutAnchorFor(element) {
   const rect = element.getBoundingClientRect();
-  const width = 340;
+  // Clamp width to viewport so the popover fits on 320-class phones; the
+  // mobile sheet variant in styles.css overrides positioning entirely under
+  // 720px, but this still guards desktop browsers resized narrow.
+  const width = Math.min(340, window.innerWidth - 24);
   const gap = 10;
   const left = Math.min(
     Math.max(12, rect.left),
@@ -1707,6 +1712,13 @@ window.addEventListener("keydown", (event) => {
     closeScout();
     return;
   }
+  if (state.cashierOpen) {
+    event.preventDefault();
+    state.cashierOpen = false;
+    state.cashierError = null;
+    render();
+    return;
+  }
   if (state.resignConfirmOpen) {
     event.preventDefault();
     state.resignConfirmOpen = false;
@@ -1741,6 +1753,116 @@ document.addEventListener("click", (event) => {
 document.addEventListener("click", () => initSound(), { capture: true });
 document.addEventListener("keydown", () => initSound(), { capture: true });
 
+// === Board drag (unified pointer events) ===================================
+// Mouse and touch share one code path here. Native HTML5 DnD doesn't fire on
+// iOS Safari, so we drive everything from pointerdown/move/up. A tap that
+// never moves past DRAG_THRESHOLD pixels falls through to the regular `click`
+// handler (handleSquareIntent); a drag short-circuits clicks via the
+// `boardDrag.moved` flag. Touch drags lift the ghost piece above the finger
+// so the source square stays visible. See docs/MOBILE_NEXT_PASS.md.
+const DRAG_THRESHOLD = 6;
+const DRAG_TOUCH_LIFT = 44;
+let boardDrag = null;
+// Set briefly after a drag that committed a move so the trailing `click`
+// event the browser fires on pointerup doesn't double-route through
+// handleSquareIntent. Cleared on the next animation frame.
+let suppressBoardClickUntil = 0;
+
+function squareAtPoint(x, y) {
+  const el = typeof document.elementFromPoint === "function"
+    ? document.elementFromPoint(x, y)
+    : null;
+  return el?.closest?.("[data-square]")?.dataset.square || null;
+}
+
+function highlightDragTarget(square) {
+  for (const n of document.querySelectorAll(".drop-ready")) {
+    n.classList.remove("drop-ready");
+  }
+  if (!square || !boardDrag) return;
+  if (legalMoveFor(boardDrag.from, square)) {
+    document.querySelector(`[data-square="${square}"]`)?.classList.add("drop-ready");
+  }
+}
+
+function cleanupBoardDrag() {
+  for (const n of document.querySelectorAll(".drop-ready, .dragging")) {
+    n.classList.remove("drop-ready", "dragging");
+  }
+  if (boardDrag?.ghost) {
+    boardDrag.ghost.remove();
+    boardDrag.ghost = null;
+  }
+}
+
+document.addEventListener("pointermove", (event) => {
+  if (!boardDrag || event.pointerId !== boardDrag.pointerId) return;
+  const dx = event.clientX - boardDrag.startX;
+  const dy = event.clientY - boardDrag.startY;
+  if (!boardDrag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+  if (!boardDrag.moved) {
+    boardDrag.moved = true;
+    state.dragFromSquare = boardDrag.from;
+    state.selectedSquare = boardDrag.from;
+    state.gameError = null;
+    try {
+      boardDrag.sourceEl.setPointerCapture(boardDrag.pointerId);
+    } catch (_) { /* element may have re-rendered; tolerate */ }
+    boardDrag.sourceEl.classList.add("dragging");
+    const piece = boardDrag.sourceEl.querySelector(".piece");
+    if (piece) {
+      const rect = piece.getBoundingClientRect();
+      const ghost = piece.cloneNode(true);
+      ghost.classList.add("piece-ghost");
+      ghost.style.width = `${rect.width}px`;
+      ghost.style.height = `${rect.height}px`;
+      document.body.appendChild(ghost);
+      boardDrag.ghost = ghost;
+    }
+  }
+  const lift = event.pointerType === "touch" ? DRAG_TOUCH_LIFT : 0;
+  if (boardDrag.ghost) {
+    boardDrag.ghost.style.transform =
+      `translate(${event.clientX}px, ${event.clientY - lift}px) translate(-50%, -50%)`;
+  }
+  highlightDragTarget(squareAtPoint(event.clientX, event.clientY - lift));
+  // Suppress page scroll once we've committed to a drag on touch.
+  if (event.cancelable && event.pointerType === "touch") event.preventDefault();
+}, { passive: false });
+
+document.addEventListener("pointerup", (event) => {
+  if (!boardDrag || event.pointerId !== boardDrag.pointerId) return;
+  if (!boardDrag.moved) {
+    // Pure tap — let the existing click handler resolve via handleSquareIntent.
+    boardDrag = null;
+    return;
+  }
+  const lift = event.pointerType === "touch" ? DRAG_TOUCH_LIFT : 0;
+  const target = squareAtPoint(event.clientX, event.clientY - lift);
+  const from = boardDrag.from;
+  cleanupBoardDrag();
+  // Browsers fire `click` on pointerup; without this the click would route
+  // through handleSquareIntent and try to re-interpret the gesture as a tap.
+  suppressBoardClickUntil = performance.now() + 400;
+  if (target && legalMoveFor(from, target)) {
+    boardDrag = null;
+    queueOrSubmitMove(from, target);
+  } else {
+    state.dragFromSquare = null;
+    boardDrag = null;
+    render();
+  }
+});
+
+document.addEventListener("pointercancel", (event) => {
+  if (!boardDrag || event.pointerId !== boardDrag.pointerId) return;
+  const wasMoved = boardDrag.moved;
+  cleanupBoardDrag();
+  state.dragFromSquare = null;
+  boardDrag = null;
+  if (wasMoved) render();
+});
+
 function shell(content) {
   const viewer = state.bootstrap.viewer;
   const liveGame = liveGameForShell();
@@ -1762,6 +1884,7 @@ function shell(content) {
           <span>${money(viewer.balanceCents)}</span>
           <small>${money(viewer.escrowCents)} escrow</small>
         </a>
+        <button class="cashier-btn" type="button" data-cashier-open title="Cashier" aria-label="Open cashier">+</button>
         <div class="viewer-id">
           <small>signed in as <strong>${escapeHtml(viewer.handle)}</strong></small>
           <button class="link" data-logout>Log out</button>
@@ -1770,11 +1893,13 @@ function shell(content) {
     </header>
     ${renderVerifyBanner(viewer)}
     <main>${content}</main>
+    ${renderTabBar()}
     ${renderMilestoneStack()}
     ${renderScoutPopover()}
     ${resignConfirmDialog()}
     ${renderOnboardingModal()}
     ${renderTosModal()}
+    ${renderCashierModal()}
   `;
 }
 
@@ -2000,6 +2125,45 @@ function applyNotificationEvent(notification, isCreated) {
   render();
 }
 
+// Mobile-only "Session" panel on Profile. On mobile the topbar drops the
+// connection pill, sound toggle, and "signed in as" — those still need a home,
+// and Profile is where the wallet detail already lives. Hidden via CSS on
+// desktop (where the topbar still carries the same controls).
+function renderProfileSessionCard() {
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer) return "";
+  const m = getSoundMode();
+  const nextMode = m === "full" ? "essentials" : m === "essentials" ? "mute" : "full";
+  const soundLabel = m === "full"
+    ? "Sound: full"
+    : m === "essentials"
+      ? "Sound: essentials only"
+      : "Sound: muted";
+  const soundCta = m === "full"
+    ? "Switch to essentials"
+    : m === "essentials"
+      ? "Mute"
+      : "Enable full sound";
+  return `
+    <article class="card mobile-only profile-session-card">
+      <h2>Session</h2>
+      <div class="profile-session-row">
+        <div>
+          <small class="muted">Signed in as</small>
+          <strong>${escapeHtml(viewer.handle)}</strong>
+        </div>
+        <button type="button" data-logout>Sign out</button>
+      </div>
+      <div class="profile-session-row">
+        <div>
+          <small class="muted">${escapeHtml(soundLabel)}</small>
+        </div>
+        <button type="button" data-sound-mode="${escapeHtml(nextMode)}">${escapeHtml(soundCta)}</button>
+      </div>
+    </article>
+  `;
+}
+
 function renderSoundToggle() {
   const m = getSoundMode();
   const next = m === "full" ? "essentials" : m === "essentials" ? "mute" : "full";
@@ -2130,6 +2294,30 @@ function renderOnboardingModal() {
 function navLink(id, label) {
   const active = state.route === id ? "active" : "";
   return `<a class="${active}" href="#${id}">${label}</a>`;
+}
+
+// Mobile bottom tab bar. Renders the same destinations as the topbar nav so
+// the two stay in lockstep; CSS toggles which one is visible based on the
+// 720px breakpoint (see styles.css § Mobile tab bar). Admin appears only for
+// admin viewers, matching the topbar.
+function renderTabBar() {
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer) return "";
+  const tab = (id, label, glyph) => {
+    const active = state.route === id ? "active" : "";
+    return `<a class="tabbar-link ${active}" href="#${id}" aria-label="${escapeHtml(label)}">
+      <span class="tabbar-glyph" aria-hidden="true">${glyph}</span>
+      <span class="tabbar-label">${escapeHtml(label)}</span>
+    </a>`;
+  };
+  return `
+    <nav class="tabbar" aria-label="Primary">
+      ${tab("play", "Play", "♞")}
+      ${tab("history", "History", "≡")}
+      ${tab("profile", "Profile", "◐")}
+      ${viewer.isAdmin ? tab("admin", "Admin", "★") : ""}
+    </nav>
+  `;
 }
 
 function scoutWinRate(stats) {
@@ -3332,19 +3520,19 @@ function renderGame() {
         `}
       </article>
       <aside class="stack">
-        <article class="felt pot game-panel">
-          <div class="between">
-            <div class="eyebrow">The pot</div>
-            <span class="status-pill">escrowed</span>
-          </div>
-          <h2>${money(game.pot.netPotCents)}</h2>
-          <p>Winner takes after ${money(game.pot.rakeCents)} fake-money rake.</p>
-          <div class="stake-grid">
-            <div><small>${escapeHtml(whiteStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
-            <div><small>${escapeHtml(blackStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
-          </div>
-        </article>
         ${game.state === "finalized" ? finalizedGameSettlementPanel(game) : `
+          <article class="felt pot game-panel">
+            <div class="between">
+              <div class="eyebrow">The pot</div>
+              <span class="status-pill">escrowed</span>
+            </div>
+            <h2>${money(game.pot.netPotCents)}</h2>
+            <p>Winner takes after ${money(game.pot.rakeCents)} fake-money rake.</p>
+            <div class="stake-grid">
+              <div><small>${escapeHtml(whiteStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
+              <div><small>${escapeHtml(blackStakeLabel)}</small><strong>${money(game.pot.stakeCents)}</strong></div>
+            </div>
+          </article>
           <article class="card game-panel live-status">
             <div class="between">
               <h2>Table status</h2>
@@ -3449,7 +3637,7 @@ function playerStrip(game, player, active = false) {
     <span class="player-main">
       <span>
         <strong>${isViewer ? "You" : escapeHtml(player.handle)}${showPresence ? ` <span class="presence-dot ${dotClass}" title="${escapeHtml(onlineLabel)}" aria-label="${escapeHtml(onlineLabel)}"></span>` : ""}${renderTierPip(player)}</strong>
-        <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? ` · ${escapeHtml(onlineLabel)}` : ""}</small>
+        <small>${escapeHtml(player.color)} · ${escapeHtml(player.rating)}${showPresence && !presence.online ? `<span class="player-offline-label"> · ${escapeHtml(onlineLabel)}</span>` : ""}</small>
       </span>
       <span class="player-subline">
         ${capturedPiecesMarkup(game, player.color, "No captures")}
@@ -3630,7 +3818,7 @@ function board(game) {
       showRank ? `<span class="coord rank">${square.square[1]}</span>` : "",
       showFile ? `<span class="coord file">${square.square[0]}</span>` : ""
     ].join("");
-    return `<button type="button" class="${classes}" data-square="${square.square}" draggable="${isSource ? "true" : "false"}" aria-label="${escapeHtml(squareLabel(game, square, pieceColor, target, isSource, isSelected))}" aria-pressed="${isSelected ? "true" : "false"}">${piece}${coords}</button>`;
+    return `<button type="button" class="${classes}" data-square="${square.square}" aria-label="${escapeHtml(squareLabel(game, square, pieceColor, target, isSource, isSelected))}" aria-pressed="${isSelected ? "true" : "false"}">${piece}${coords}</button>`;
   });
   return `<div class="board ${orientation === "black" ? "flipped" : ""}" aria-label="Chess board">${cells.join("")}</div>`;
 }
@@ -4229,8 +4417,7 @@ function renderProfile() {
           ${state.accountError ? `<em class="account-error">${escapeHtml(state.accountError)}</em>` : ""}
         </article>
       </section>
-      ${renderBuyChipsCard()}
-      ${renderCashoutWaitlistCard()}
+      ${renderProfileSessionCard()}
       ${renderLinkedAccountsCard(viewer)}
       <section class="grid one">
         <article class="card ledger-card">
@@ -4252,11 +4439,12 @@ function renderProfile() {
   `;
 }
 
-function renderBuyChipsCard() {
+function renderBuyChipsSection() {
   const payments = state.bootstrap?.payments;
   if (!payments) return "";
   const packages = payments.packages || [];
   const enabled = payments.enabled && !payments.geoBlocked;
+  const busy = actionInFlight("payments-checkout");
   const statusLine = !payments.enabled
     ? `<p class="muted small">Buy Chips opens later. Tiles are locked in this environment.</p>`
     : payments.geoBlocked
@@ -4264,6 +4452,8 @@ function renderBuyChipsCard() {
     : `<p class="muted small">Payment in stablecoins (USDT, USDC). Chips are entertainment credit — no cashout in v1.</p>`;
   const tiles = packages.map((pkg) => {
     const bonusLabel = pkg.bonusPct > 0 ? `<span class="bonus">+${pkg.bonusPct}% bonus</span>` : "";
+    const disabled = !enabled || busy;
+    const label = !enabled ? "Coming soon" : busy ? "Opening…" : "Buy";
     return `
       <article class="chip-tile ${enabled ? "" : "locked"}">
         <header>
@@ -4272,24 +4462,26 @@ function renderBuyChipsCard() {
         </header>
         <div class="chip-tile-price">${money(pkg.priceUsdCents)}</div>
         <div class="chip-tile-chips">→ ${money(pkg.chipsCents)} in chips</div>
-        <button type="button" class="primary" data-buy-package="${escapeHtml(pkg.id)}" ${enabled ? "" : "disabled"}>
-          ${enabled ? "Buy" : "Coming soon"}
+        <button type="button" class="primary" data-buy-package="${escapeHtml(pkg.id)}" ${disabled ? "disabled" : ""}>
+          ${label}
         </button>
       </article>
     `;
   }).join("");
+  const errorLine = state.cashierError
+    ? `<em class="account-error cashier-error">${escapeHtml(state.cashierError)}</em>`
+    : "";
   return `
-    <section class="grid one">
-      <article class="card buy-chips-card">
-        <h2>Buy chips</h2>
-        ${statusLine}
-        <div class="chip-tiles">${tiles}</div>
-      </article>
+    <section class="cashier-section buy-chips-section">
+      <h3>Buy chips</h3>
+      ${statusLine}
+      <div class="chip-tiles">${tiles}</div>
+      ${errorLine}
     </section>
   `;
 }
 
-function renderCashoutWaitlistCard() {
+function renderCashoutWaitlistSection() {
   const payments = state.bootstrap?.payments;
   if (!payments) return "";
   const waitlist = state.cashoutWaitlist || { status: "form", error: null };
@@ -4311,12 +4503,31 @@ function renderCashoutWaitlistCard() {
     `;
   }
   return `
-    <section class="grid one">
-      <article class="card cashout-waitlist-card">
-        <h2>Cashout · coming soon</h2>
-        ${body}
-      </article>
+    <section class="cashier-section cashout-waitlist-section">
+      <h3>Cashout · coming soon</h3>
+      ${body}
     </section>
+  `;
+}
+
+function renderCashierModal() {
+  if (!state.cashierOpen) return "";
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer) return "";
+  return `
+    <div class="modal-backdrop cashier-backdrop" role="presentation" data-cashier-backdrop>
+      <section class="card cashier-modal" role="dialog" aria-modal="true" aria-labelledby="cashier-title">
+        <header class="cashier-header">
+          <div>
+            <span class="eyebrow">Cashier</span>
+            <h2 id="cashier-title">Wallet · ${money(viewer.balanceCents)}</h2>
+          </div>
+          <button type="button" class="cashier-close" data-cashier-close aria-label="Close cashier">×</button>
+        </header>
+        ${renderBuyChipsSection()}
+        ${renderCashoutWaitlistSection()}
+      </section>
+    </div>
   `;
 }
 
@@ -4336,14 +4547,22 @@ async function submitCashoutWaitlist(email) {
 }
 
 async function startChipPurchase(packageId) {
-  // Slice 2 implements this. Today the server returns
-  // payments_not_implemented even when the kill switch is on, so the
-  // surface stays visible-but-non-functional during the scaffold step.
+  if (actionInFlight("payments-checkout")) return;
+  setActionInFlight("payments-checkout", true);
+  state.cashierError = null;
+  render();
   try {
-    await postJson("/api/payments/checkout", { packageId });
+    const resp = await postJson("/api/payments/checkout", { packageId });
+    if (resp?.invoiceUrl) {
+      window.location.assign(resp.invoiceUrl);
+      return;
+    }
+    state.cashierError = "Checkout did not return an invoice URL.";
   } catch (error) {
     if (authGuard(error)) return;
-    state.accountError = error.message;
+    state.cashierError = error.message;
+  } finally {
+    setActionInFlight("payments-checkout", false);
     render();
   }
 }
@@ -4757,7 +4976,7 @@ function adminTable(headers, rows) {
   const body = rows
     .map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`)
     .join("");
-  return `<table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  return `<div class="admin-table-scroll"><table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
 function renderAdminUsers(users) {
@@ -5099,6 +5318,29 @@ function render() {
     b.addEventListener("click", () => acceptTos());
   });
   if (shouldShowTosModal() || state.tosViewerOpen) loadTosBody();
+  document.querySelectorAll("[data-cashier-open]").forEach((b) => {
+    b.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.cashierOpen = true;
+      state.cashierError = null;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-cashier-close]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.cashierOpen = false;
+      state.cashierError = null;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-cashier-backdrop]").forEach((el) => {
+    el.addEventListener("click", (event) => {
+      if (event.target !== el) return;
+      state.cashierOpen = false;
+      state.cashierError = null;
+      render();
+    });
+  });
   document.querySelectorAll("[data-buy-package]").forEach((b) => {
     b.addEventListener("click", () => startChipPurchase(b.dataset.buyPackage));
   });
@@ -5357,58 +5599,25 @@ function render() {
   });
   document.querySelectorAll("[data-square]").forEach((square) => {
     square.addEventListener("click", () => {
+      if (performance.now() < suppressBoardClickUntil) return;
       handleSquareIntent(square.dataset.square);
     });
     square.addEventListener("keydown", (event) => {
       handleSquareKey(event, square.dataset.square);
     });
-    square.addEventListener("dragstart", (event) => {
+    square.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
       const from = square.dataset.square;
-      if (!canMoveFrom(state.activeGame, from)) {
-        event.preventDefault();
-        return;
-      }
-      state.dragFromSquare = from;
-      state.selectedSquare = from;
-      state.gameError = null;
-      square.classList.add("dragging");
-      const piece = square.querySelector(".piece");
-      if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", from);
-        if (piece && event.dataTransfer.setDragImage) {
-          const rect = piece.getBoundingClientRect();
-          event.dataTransfer.setDragImage(piece, rect.width / 2, rect.height / 2);
-        }
-      }
-    });
-    square.addEventListener("dragend", () => {
-      state.dragFromSquare = null;
-      square.classList.remove("dragging", "drop-ready");
-      document.querySelectorAll(".drop-ready").forEach((node) => {
-        node.classList.remove("drop-ready");
-      });
-    });
-    square.addEventListener("dragover", (event) => {
-      const from = state.dragFromSquare;
-      if (from && legalMoveFor(from, square.dataset.square)) {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "move";
-        square.classList.add("drop-ready");
-      }
-    });
-    square.addEventListener("dragleave", () => {
-      square.classList.remove("drop-ready");
-    });
-    square.addEventListener("drop", (event) => {
-      event.preventDefault();
-      const from = event.dataTransfer.getData("text/plain") || state.dragFromSquare;
-      const to = square.dataset.square;
-      state.dragFromSquare = null;
-      document.querySelectorAll(".drop-ready, .dragging").forEach((node) => {
-        node.classList.remove("drop-ready", "dragging");
-      });
-      queueOrSubmitMove(from, to);
+      if (!canMoveFrom(state.activeGame, from)) return;
+      boardDrag = {
+        pointerId: event.pointerId,
+        from,
+        sourceEl: square,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+        ghost: null
+      };
     });
   });
   if (state.focusSquare) {
