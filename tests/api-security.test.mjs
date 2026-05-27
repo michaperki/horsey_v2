@@ -184,14 +184,16 @@ test("signup conflicts use generic messaging", async (t) => {
   const first = await fixture.post(null, "/api/auth/signup", {
     email: "same@example.com",
     handle: "same_one",
-    password: "password123"
+    password: "password123",
+    acceptedTosVersion: 1
   });
   assert.equal(first.status, 201);
 
   const duplicate = await fixture.post(null, "/api/auth/signup", {
     email: "same@example.com",
     handle: "same_two",
-    password: "password123"
+    password: "password123",
+    acceptedTosVersion: 1
   });
   assert.equal(duplicate.status, 409);
   assert.equal(duplicate.body.error, "email_taken");
@@ -204,7 +206,8 @@ test("auth endpoints rate-limit repeated attempts", async (t) => {
     const response = await fixture.post(null, "/api/auth/signup", {
       email: `rate-${i}@example.com`,
       handle: `rate_${i}`,
-      password: "password123"
+      password: "password123",
+      acceptedTosVersion: 1
     });
     assert.equal(response.status, 201);
   }
@@ -212,7 +215,8 @@ test("auth endpoints rate-limit repeated attempts", async (t) => {
   const limited = await fixture.post(null, "/api/auth/signup", {
     email: "rate-limit@example.com",
     handle: "rate_limit",
-    password: "password123"
+    password: "password123",
+    acceptedTosVersion: 1
   });
   assert.equal(limited.status, 429);
   assert.equal(limited.body.error, "rate_limited");
@@ -649,7 +653,8 @@ async function startFixture(t) {
       const response = await request(null, "POST", "/api/auth/signup", {
         email: `${prefix}-${Date.now()}@example.com`,
         handle: `${prefix}_${Math.random().toString(16).slice(2, 8)}`,
-        password: "password123"
+        password: "password123",
+        acceptedTosVersion: 1
       });
       assert.equal(response.status, 201);
       return { cookie: response.cookie, user: response.body.viewer };

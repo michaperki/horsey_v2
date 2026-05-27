@@ -239,17 +239,19 @@ The minimum to let real humans use it unattended.
 - **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
 - **Narrow multiplayer smoke automation.** Moved to **Backlog** (operational): the bustling dev daemon already exercises the pair → finalize loop continuously, which covers the regression case for now. Revisit when CI is gating deploys or when the loop changes shape enough that bustling no longer represents real human flow.
 
-### Bucket C — Payments v1
+### Bucket C — Payments v1 (NOWPayments, stablecoins)
 
-The buy-chips work that lets Horsey charge for entertainment credit while cashout stays closed.
+The buy-chips work that lets Horsey charge for entertainment credit in crypto while cashout stays closed. Provider + currency posture is locked in ADR 0007 — NOWPayments hosted invoice flow, USDT-TRC20 + USDC (Polygon / Solana). Card / fiat acquirer is out: card AUPs broadly disallow wagering on real money even when framed as entertainment credit.
 
-- **Buy Chips panel.** Profile -> Buy Chips package tiles, Stripe Checkout redirect, post-return ledger/receipt state.
-- **Purchase ledger.** `purchases` table plus idempotent Stripe webhook that appends `purchase` ledger entries.
-- **ToS acceptance.** Versioned acceptance at signup and re-acceptance on version bump; no-cashout, no external monetary value, refund posture.
-- **Risk controls.** Geo-block red-line regions before checkout, spend caps, refund path, chargeback logging, `HORSEY_PAYMENTS_ENABLED=0` kill switch.
-- **Cashout waitlist.** Locked "Cashout coming soon" tile and notify-me collection.
+- **ToS acceptance.** Status: **done (slice 1)** — versioned acceptance at signup, re-acceptance modal on version bump (current version: 1). `packages/shared/tos.mjs` is the single source of truth for the body; `tos_acceptances(user_id, tos_version, accepted_at)` records each consent. `GET /api/tos` is public; `POST /api/tos/accept` is authenticated.
+- **Kill switch + catalog.** Status: **done (slice 1)** — `HORSEY_PAYMENTS_ENABLED=0` default; chip-package + currency catalog lives in `packages/shared/payments.mjs`; geo-block constant + `isGeoBlocked()` helper exist (no edge geo lookup yet — that lands when needed).
+- **Buy Chips panel.** Status: **done (slice 1)** — Profile -> Buy Chips renders the package tiles. Tiles are locked when the kill switch is off or the viewer is geo-blocked. Buy button hits `POST /api/payments/checkout`, which currently 503s (kill switch) or 501s (slice 2 not wired yet).
+- **Cashout waitlist.** Status: **done (slice 1)** — Profile -> "Cashout coming soon" card collects email; `cashout_waitlist` table; `POST /api/cashout-waitlist`.
+- **Purchase ledger.** Status: **partial (slice 1 ships the table; slice 2 populates it)** — `purchases` table tracks `provider_session_id`, `provider_payment_id`, package, USD amount, chips credited (with bonus), status, pay currency, ledger entry id, raw IPN payload for audit.
+- **NOWPayments wire-up.** Status: **pending (slice 2)** — `POST /api/payments/checkout` will create a NOWPayments invoice via `POST https://api.nowpayments.io/v1/invoice` and return the hosted `invoice_url`. `POST /api/payments/webhook` will verify HMAC-SHA512 IPN signatures against the merchant IPN secret and idempotently credit chips when status reaches `finished`. Needs `NOWPAYMENTS_API_KEY` + `NOWPAYMENTS_IPN_SECRET` via `fly secrets set`.
+- **Risk controls (deferred follow-on).** Real geo-block at the edge (Cloudflare or request layer), per-session / per-day spend caps, refund flow (admin-only via compensating ledger entries through the admin slice), chargeback / IPN-replay logging.
 
-Status: **pending**. Canonical detail lives in `PAYMENTS_NEXT_PASS.md`.
+Status: **partial** — slice 1 scaffold shipped. Canonical detail lives in `PAYMENTS_NEXT_PASS.md` and ADR 0007.
 
 ### Bucket D — Cashout discovery (non-code)
 

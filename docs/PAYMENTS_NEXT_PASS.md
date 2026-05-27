@@ -1,15 +1,17 @@
 # Payments Next Pass
 
-**Posture set 2026-05-27.** Horsey ships with a real payments panel. Users buy chips with real money via Stripe. Cashout is deferred behind a "coming soon" wall — that's the legal model. The ToS at signup makes it explicit: chips are entertainment credit, no cashout, no expectation of cashout, no monetary value outside the platform.
+**Posture set 2026-05-27, provider locked 2026-05-27.** Horsey ships with a real payments panel. Users buy chips in crypto (stablecoins only, v1) via **NOWPayments**. Cashout is deferred behind a "coming soon" wall — that's the legal model. The ToS at signup makes it explicit: chips are entertainment credit, no cashout, no expectation of cashout, no monetary value outside the platform.
 
 This is a deliberate posture, not a missed step. The old blanket block on money code is narrowed: *cashout* still requires the Bucket D work (payout providers, KYC, AML, jurisdictional opinions). *Inbound* purchases of entertainment chips do not, given a clear ToS and a no-cashout disclaimer.
+
+Card / fiat acquirers (Stripe et al.) are out for v1 — their AUPs broadly disallow wagering on real money even when framed as entertainment credit. Hosted crypto processors that accept wagering merchants are in. See ADR 0007.
 
 ## What ships
 
 ### Buy Chips panel
 - Lives under Profile → Buy Chips (and likely earns a topbar pill once it has traffic).
 - Tiered chip packages with mild volume discount, prices forward, casino-grade visual treatment (felt, chip stack, no euphemism — see `PROJECT_SOUL.md` § Intentional casino energy).
-- Stripe Checkout redirect; webhook credits the ledger with a `type='purchase'` entry on the existing `play_tokens_cents` column. Same chip the fake-money loop already uses. The chip is the chip; what changes is *how it got there*.
+- NOWPayments hosted invoice flow: create invoice via `POST https://api.nowpayments.io/v1/invoice`, redirect to the returned `invoice_url`, user picks USDT-TRC20 / USDC-Polygon / USDC-Solana, sends from any wallet, NOWPayments fires a signed IPN. Webhook verifies HMAC-SHA512 against `NOWPAYMENTS_IPN_SECRET` and idempotently credits chips with a `type='purchase'` ledger entry on the existing balance column. Same chip the fake-money loop already uses. The chip is the chip; what changes is *how it got there*.
 - Receipts visible in the Profile ledger; a `purchases` table backs refund/dispute audit.
 
 Initial package shape (tune as data comes in):
@@ -49,19 +51,30 @@ Phase 7 isn't deleted — it narrows. It's *cashout* and the AML/payout stack, n
 
 ## Implementation order
 
-1. Stripe account + product/price setup; sandbox keys; `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` via `fly secrets set`.
-2. `purchases` schema: `id, user_id, stripe_session_id, stripe_payment_intent_id, amount_usd_cents, chips_credited_cents, status, created_at, completed_at`.
-3. `POST /api/payments/checkout` — creates a Stripe Checkout Session for a chosen package; returns redirect URL.
-4. `POST /api/payments/webhook` — verifies signature, idempotently credits chips via a ledger entry, marks `purchases.status='completed'`. Idempotency keyed on `stripe_session_id`.
-5. Profile → Buy Chips UI with package tiles + Stripe redirect + post-redirect success page that polls/reads ledger.
-6. ToS acceptance flow at signup (and re-acceptance on version bump). Schema migration to add columns.
-7. Geo-block at edge.
-8. Kill-switch flag + a tiny admin readout (rolls into Bucket B #1 admin slice).
-9. Cashout-coming-soon tile + waitlist email collection.
+**Slice 1 — scaffold (shipped):**
+
+1. ToS module + versioned acceptance at signup (`packages/shared/tos.mjs`, `tos_acceptances` table). Re-acceptance modal on version bump.
+2. `purchases` schema: `id, user_id, provider, provider_session_id, provider_payment_id, package_id, amount_usd_cents, chips_credited_cents, status, pay_currency, pay_amount, ledger_entry_id, raw_provider_json, created_at, updated_at`.
+3. `cashout_waitlist` schema + `POST /api/cashout-waitlist`.
+4. `HORSEY_PAYMENTS_ENABLED=0` kill switch.
+5. Chip-package + currency catalog in `packages/shared/payments.mjs`.
+6. Geo-block constant + helper (`isGeoBlocked({ country, region })`) — no edge geo lookup wired yet.
+7. Profile → Buy Chips panel (locked tiles when killswitch off) + "Cashout coming soon" waitlist card.
+8. Route stubs: `GET /api/tos` (public), `POST /api/tos/accept`, `POST /api/payments/checkout` (503 when disabled, 501 until slice 2), `POST /api/payments/webhook` (501), `GET /api/payments/purchases`.
+
+**Slice 2 — NOWPayments wire-up (pending):**
+
+1. NOWPayments merchant account + IPN secret; `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` / `HORSEY_APP_URL` via `fly secrets set`.
+2. `apps/api/payments.mjs` — thin HTTP client (no SDK, see ADR 0007). `createInvoice({ packageId, payCurrency, userId })` and `verifyIpnSignature(rawBody, header)`.
+3. `POST /api/payments/checkout` creates a `purchases` row, calls `createInvoice`, persists `provider_session_id`, returns `invoice_url`.
+4. `POST /api/payments/webhook` reads raw body, HMAC-SHA512 verifies against `NOWPAYMENTS_IPN_SECRET`, looks up `purchases` row by `provider_session_id`, transitions status via `mapNowPaymentsStatus`. On `finished` (and only once per row), inserts a `purchase` ledger entry inside a transaction that also sets `purchases.ledger_entry_id`.
+5. Profile → Buy Chips: unlock tiles, click → `POST /api/payments/checkout` → redirect to `invoice_url`. Success page polls `GET /api/payments/purchases` until the relevant row is `finished`.
+6. Edge geo-block check fires before invoice creation.
+7. Admin read-out for in-flight + recent purchases (rolls into the admin slice that already shipped).
 
 ## Open questions
 
-- Stripe vs. another acquirer. Default: Stripe. Revisit if their AUP flags chess-wagering chips.
-- Refund flow: self-serve or admin-only initially? Default: admin-only via compensating ledger entries through the Bucket B #1 read-only admin slice.
-- Disputes/chargebacks: log into a `chargebacks` table behind the webhook so we can see patterns.
-- Whether to charge platform fees on chip purchases at all, or rely entirely on rake. Default: chip purchases are 1:1 floor with bonus chips on tiers; revenue is rake on play.
+- Refund flow: self-serve or admin-only initially? Default: admin-only via compensating ledger entries through the Bucket B #1 read-only admin slice. **Decided 2026-05-27.**
+- Disputes / IPN replays: log into a `payment_events` table behind the webhook so we can see patterns. Slice 2 follow-on.
+- Whether to charge platform fees on chip purchases at all, or rely entirely on rake. Default: chip purchases are 1:1 floor with bonus chips on tiers; revenue is rake on play. **Decided 2026-05-27.**
+- BTC / ETH / multi-chain support beyond stablecoins: deferred until v1 loop is proven. ADR 0007 names this as a follow-on.

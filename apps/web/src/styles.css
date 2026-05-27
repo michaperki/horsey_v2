@@ -3691,3 +3691,94 @@ p {
   letter-spacing: 0.04em;
   font-weight: 600;
 }
+
+/* ---- Buy Chips + cashout waitlist + ToS modal ---------------------------- */
+.buy-chips-card .chip-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.chip-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.chip-tile.locked {
+  opacity: 0.55;
+  filter: saturate(0.7);
+}
+.chip-tile header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chip-tile .bonus {
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 600;
+}
+.chip-tile-price {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.chip-tile-chips {
+  font-size: 12px;
+  color: var(--muted);
+}
+.cashout-waitlist-card { color: var(--ink); }
+.cashout-waitlist-card .compact-form { margin-top: 12px; }
+
+.tos-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 24, 21, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+}
+.tos-modal {
+  max-width: 640px;
+  max-height: 86vh;
+  overflow-y: auto;
+  color: var(--ink);
+}
+.tos-modal h2 { margin-top: 0; }
+.tos-body { margin: 12px 0 18px; }
+.tos-section { margin-bottom: 14px; }
+.tos-section h4 { margin: 0 0 4px; color: var(--ink); }
+.tos-section p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.tos-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 16px;
+}
+.tos-checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--ink);
+}
+.tos-checkbox input[type="checkbox"] {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+.tos-checkbox .link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: var(--gold);
+  text-decoration: underline;
+  cursor: pointer;
+}

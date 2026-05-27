@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -171,6 +171,47 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_notifications_user_updated ON notifications(user_id, updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at);
+
+  -- Payments v1 scaffold (ADR 0007). Slice 1 ships the table + the gate; the
+  -- NOWPayments wire-up that actually populates it lands in slice 2.
+  CREATE TABLE IF NOT EXISTS purchases (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    provider TEXT NOT NULL,             -- 'nowpayments' for v1
+    provider_session_id TEXT,           -- NOWPayments invoice id; nullable until invoice created
+    provider_payment_id TEXT,           -- NOWPayments payment id once the user picks a currency
+    package_id TEXT NOT NULL,           -- 'starter' | 'standard' | 'roller' | 'whale'
+    amount_usd_cents INTEGER NOT NULL,  -- the package price in USD cents
+    chips_credited_cents INTEGER NOT NULL,  -- what we credit on finished, includes bonus
+    status TEXT NOT NULL,               -- 'pending' | 'confirming' | 'confirmed' | 'finished' | 'failed' | 'expired' | 'refunded'
+    pay_currency TEXT,                  -- 'usdttrc20' | 'usdcpolygon' | etc.; null until user picks
+    pay_amount TEXT,                    -- string to avoid float drift; the crypto amount expected
+    ledger_entry_id TEXT,               -- set once chips have been credited
+    raw_provider_json TEXT,             -- last IPN payload for audit
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_purchases_user ON purchases(user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_purchases_provider_session ON purchases(provider, provider_session_id);
+
+  -- Versioned ToS acceptance. Re-acceptance is required on version bump.
+  CREATE TABLE IF NOT EXISTS tos_acceptances (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    tos_version INTEGER NOT NULL,
+    accepted_at TEXT NOT NULL,
+    UNIQUE(user_id, tos_version)
+  );
+  CREATE INDEX IF NOT EXISTS idx_tos_acceptances_user ON tos_acceptances(user_id);
+
+  -- Cashout waitlist — emails collected while cashout is deferred to Phase 7.
+  CREATE TABLE IF NOT EXISTS cashout_waitlist (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,             -- null if the email submitter isn't logged in
+    email TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(email)
+  );
 `;
 
 function rowToPublicUser(row) {
@@ -270,6 +311,37 @@ function rowToExternalAccount(row) {
     verifiedBy: row.verified_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function rowToPurchase(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    provider: row.provider,
+    providerSessionId: row.provider_session_id ?? null,
+    providerPaymentId: row.provider_payment_id ?? null,
+    packageId: row.package_id,
+    amountUsdCents: row.amount_usd_cents,
+    chipsCreditedCents: row.chips_credited_cents,
+    status: row.status,
+    payCurrency: row.pay_currency ?? null,
+    payAmount: row.pay_amount ?? null,
+    ledgerEntryId: row.ledger_entry_id ?? null,
+    rawProvider: row.raw_provider_json ? JSON.parse(row.raw_provider_json) : null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function rowToTosAcceptance(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    tosVersion: row.tos_version,
+    acceptedAt: row.accepted_at
   };
 }
 
@@ -402,6 +474,11 @@ function migrateSchema(db) {
       }
     }
   }
+  // v12 → v13: payments scaffold (ADR 0007). Adds purchases / tos_acceptances /
+  // cashout_waitlist tables. No backfill — these are forward-looking. Slice 1
+  // wires the tables and the gate; NOWPayments invoice creation + webhook
+  // crediting lands in slice 2.
+
   // v11 → v12: notifications table is created by the SCHEMA exec on the next
   // line. UNIQUE(user_id, entity_type, entity_id) enforces one row per
   // logical thread so async-resolution events (pot_state, payment_state,
@@ -680,6 +757,49 @@ function makeApi(db) {
       SELECT COUNT(*) AS n FROM email_tokens
       WHERE user_id = ? AND type = ? AND created_at > ?
     `),
+
+    insertPurchase: db.prepare(`
+      INSERT INTO purchases
+        (id, user_id, provider, provider_session_id, provider_payment_id, package_id,
+         amount_usd_cents, chips_credited_cents, status, pay_currency, pay_amount,
+         ledger_entry_id, raw_provider_json, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    updatePurchase: db.prepare(`
+      UPDATE purchases SET
+        provider_session_id = ?, provider_payment_id = ?, status = ?,
+        pay_currency = ?, pay_amount = ?, ledger_entry_id = ?,
+        raw_provider_json = ?, updated_at = ?
+      WHERE id = ?
+    `),
+    findPurchase: db.prepare("SELECT * FROM purchases WHERE id = ?"),
+    findPurchaseByProviderSession: db.prepare(`
+      SELECT * FROM purchases WHERE provider = ? AND provider_session_id = ?
+    `),
+    listPurchasesForUser: db.prepare(`
+      SELECT * FROM purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
+    `),
+
+    insertTosAcceptance: db.prepare(`
+      INSERT OR IGNORE INTO tos_acceptances (id, user_id, tos_version, accepted_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    findTosAcceptance: db.prepare(`
+      SELECT * FROM tos_acceptances WHERE user_id = ? AND tos_version = ?
+    `),
+    listTosAcceptancesForUser: db.prepare(`
+      SELECT * FROM tos_acceptances WHERE user_id = ? ORDER BY tos_version DESC
+    `),
+    latestTosAcceptanceForUser: db.prepare(`
+      SELECT * FROM tos_acceptances WHERE user_id = ?
+      ORDER BY tos_version DESC LIMIT 1
+    `),
+
+    insertCashoutWaitlist: db.prepare(`
+      INSERT OR IGNORE INTO cashout_waitlist (id, user_id, email, created_at)
+      VALUES (?, ?, ?, ?)
+    `),
+    countCashoutWaitlist: db.prepare(`SELECT COUNT(*) AS n FROM cashout_waitlist`),
 
     findNotification: db.prepare(`
       SELECT * FROM notifications WHERE id = ?
@@ -1097,6 +1217,85 @@ function makeApi(db) {
     },
     findNotificationForEntity(userId, entityType, entityId) {
       return rowToNotification(stmts.findNotificationByEntity.get(userId, entityType, entityId));
+    },
+
+    // Purchases (payments scaffold).
+    insertPurchase(p) {
+      const now = new Date().toISOString();
+      stmts.insertPurchase.run(
+        p.id,
+        p.userId,
+        p.provider,
+        p.providerSessionId ?? null,
+        p.providerPaymentId ?? null,
+        p.packageId,
+        p.amountUsdCents,
+        p.chipsCreditedCents,
+        p.status,
+        p.payCurrency ?? null,
+        p.payAmount ?? null,
+        p.ledgerEntryId ?? null,
+        p.rawProvider ? JSON.stringify(p.rawProvider) : null,
+        now,
+        now
+      );
+      return rowToPurchase(stmts.findPurchase.get(p.id));
+    },
+    updatePurchase(id, fields) {
+      const existing = stmts.findPurchase.get(id);
+      if (!existing) return null;
+      const merged = {
+        provider_session_id: fields.providerSessionId ?? existing.provider_session_id,
+        provider_payment_id: fields.providerPaymentId ?? existing.provider_payment_id,
+        status: fields.status ?? existing.status,
+        pay_currency: fields.payCurrency ?? existing.pay_currency,
+        pay_amount: fields.payAmount ?? existing.pay_amount,
+        ledger_entry_id: fields.ledgerEntryId ?? existing.ledger_entry_id,
+        raw_provider_json: fields.rawProvider
+          ? JSON.stringify(fields.rawProvider)
+          : existing.raw_provider_json
+      };
+      stmts.updatePurchase.run(
+        merged.provider_session_id,
+        merged.provider_payment_id,
+        merged.status,
+        merged.pay_currency,
+        merged.pay_amount,
+        merged.ledger_entry_id,
+        merged.raw_provider_json,
+        new Date().toISOString(),
+        id
+      );
+      return rowToPurchase(stmts.findPurchase.get(id));
+    },
+    getPurchase(id) { return rowToPurchase(stmts.findPurchase.get(id)); },
+    findPurchaseByProviderSession(provider, sessionId) {
+      return rowToPurchase(stmts.findPurchaseByProviderSession.get(provider, sessionId));
+    },
+    listPurchasesForUser(userId, limit = 50) {
+      return stmts.listPurchasesForUser.all(userId, limit).map(rowToPurchase);
+    },
+
+    // ToS acceptances. The active version lives in shared code, not in the DB.
+    recordTosAcceptance({ userId, tosVersion, acceptedAt = new Date().toISOString() }) {
+      const id = `tos_${userId}_v${tosVersion}`;
+      stmts.insertTosAcceptance.run(id, userId, tosVersion, acceptedAt);
+      return rowToTosAcceptance(stmts.findTosAcceptance.get(userId, tosVersion));
+    },
+    getLatestTosAcceptance(userId) {
+      return rowToTosAcceptance(stmts.latestTosAcceptanceForUser.get(userId));
+    },
+    hasAcceptedTosVersion(userId, tosVersion) {
+      return !!stmts.findTosAcceptance.get(userId, tosVersion);
+    },
+
+    // Cashout waitlist.
+    addCashoutWaitlistEntry({ userId = null, email }) {
+      const id = `cw_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.insertCashoutWaitlist.run(id, userId, email, new Date().toISOString());
+    },
+    countCashoutWaitlist() {
+      return Number(stmts.countCashoutWaitlist.get()?.n ?? 0);
     },
 
     transaction(fn) { return db.transaction(fn); },

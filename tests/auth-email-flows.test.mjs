@@ -192,7 +192,8 @@ async function startFixture(t) {
       const inputs = {
         email: `${prefix}-${Date.now()}@example.com`,
         handle: `${prefix}_${Math.random().toString(16).slice(2, 8)}`,
-        password: "password123"
+        password: "password123",
+        acceptedTosVersion: 1
       };
       const response = await request(null, "POST", "/api/auth/signup", inputs);
       assert.equal(response.status, 201);

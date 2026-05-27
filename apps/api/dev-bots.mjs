@@ -390,7 +390,8 @@ async function seedBotPool({ db, services, log }) {
       const { user } = await services.signupAccount({
         email: bot.email,
         handle: bot.handle,
-        password: "bot-pool-password"
+        password: "bot-pool-password",
+        acceptedTosVersion: 1
       });
       db.updateUserRating(user.id, bot.rating);
       db.markEmailVerified(user.id);

@@ -13,6 +13,12 @@ Promise.resolve().then(() => render());
 
 const ROUTE_ALIASES = { "": "play", lobby: "play", wallet: "profile" };
 
+// Bump alongside packages/shared/tos.mjs TOS_VERSION. The signup form
+// needs this at submit time, before there's an authenticated bootstrap
+// payload to read it from. For re-acceptance after a version bump, we
+// read viewer.tos.currentVersion from the bootstrap instead.
+const TOS_VERSION = 1;
+
 // Curated-avatar renderer. Each user has an equipped avatar id (from the
 // catalog in packages/shared/avatars.mjs) and a trust tier; we render a
 // tier-bordered frame with the avatar PNG and an initial-letter fallback
@@ -469,10 +475,10 @@ async function submitPasswordResetConfirm({ token, newPassword }) {
   }
 }
 
-async function submitSignup({ email, handle, password }) {
+async function submitSignup({ email, handle, password, acceptedTosVersion }) {
   state.authError = null;
   try {
-    await postJson("/api/auth/signup", { email, handle, password });
+    await postJson("/api/auth/signup", { email, handle, password, acceptedTosVersion });
     await load();
   } catch (error) {
     state.authError = error.message;
@@ -1768,6 +1774,7 @@ function shell(content) {
     ${renderScoutPopover()}
     ${resignConfirmDialog()}
     ${renderOnboardingModal()}
+    ${renderTosModal()}
   `;
 }
 
@@ -2009,7 +2016,78 @@ function shouldShowOnboardingModal() {
   const viewer = state.bootstrap?.viewer;
   if (!viewer) return false;
   if (viewer.onboardingCompletedAt) return false;
+  // Don't stack modals: ToS re-acceptance takes priority over onboarding.
+  if (shouldShowTosModal()) return false;
   return state.route === "play";
+}
+
+function shouldShowTosModal() {
+  const viewer = state.bootstrap?.viewer;
+  if (!viewer) return false;
+  // Show only when an *existing* user needs to re-accept a bumped version.
+  // Fresh signups have already accepted via the signup form.
+  return viewer.tos?.needsAcceptance === true;
+}
+
+function renderTosModal() {
+  if (!shouldShowTosModal() && !state.tosViewerOpen) return "";
+  const tos = state.tosBody || null;
+  const busy = actionInFlight("tos-accept");
+  const isReadOnly = !shouldShowTosModal();
+  const sections = tos
+    ? tos.sections.map((s) => `
+      <section class="tos-section">
+        <h4>${escapeHtml(s.heading)}</h4>
+        <p>${escapeHtml(s.body)}</p>
+      </section>
+    `).join("")
+    : `<p class="muted">Loading…</p>`;
+  return `
+    <div class="modal-backdrop tos-backdrop" role="presentation">
+      <section class="card tos-modal" role="dialog" aria-modal="true" aria-labelledby="tos-title">
+        <h2 id="tos-title">${escapeHtml(tos?.title || "Horsey Terms")}</h2>
+        <p class="muted small">Version ${tos?.version ?? TOS_VERSION}.</p>
+        <div class="tos-body">${sections}</div>
+        <div class="tos-actions">
+          ${isReadOnly
+            ? `<button type="button" class="primary" data-tos-close>Close</button>`
+            : `
+              <button type="button" class="primary" data-tos-accept ${busy ? "disabled" : ""}>
+                ${busy ? "Saving…" : "I have read and accept"}
+              </button>
+              <button type="button" class="link" data-logout>Log out</button>
+            `}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+async function loadTosBody() {
+  if (state.tosBody) return;
+  try {
+    state.tosBody = await getJson("/api/tos");
+    render();
+  } catch (error) {
+    if (authGuard(error)) return;
+  }
+}
+
+async function acceptTos() {
+  setActionInFlight("tos-accept", true);
+  render();
+  try {
+    const version = state.tosBody?.version || TOS_VERSION;
+    const resp = await postJson("/api/tos/accept", { tosVersion: version });
+    if (state.bootstrap) state.bootstrap.viewer = resp.viewer;
+    state.tosViewerOpen = false;
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.actionError = error.message;
+  } finally {
+    setActionInFlight("tos-accept", false);
+    render();
+  }
 }
 
 function renderOnboardingModal() {
@@ -4151,6 +4229,8 @@ function renderProfile() {
           ${state.accountError ? `<em class="account-error">${escapeHtml(state.accountError)}</em>` : ""}
         </article>
       </section>
+      ${renderBuyChipsCard()}
+      ${renderCashoutWaitlistCard()}
       ${renderLinkedAccountsCard(viewer)}
       <section class="grid one">
         <article class="card ledger-card">
@@ -4170,6 +4250,102 @@ function renderProfile() {
       </section>
     </section>
   `;
+}
+
+function renderBuyChipsCard() {
+  const payments = state.bootstrap?.payments;
+  if (!payments) return "";
+  const packages = payments.packages || [];
+  const enabled = payments.enabled && !payments.geoBlocked;
+  const statusLine = !payments.enabled
+    ? `<p class="muted small">Buy Chips opens later. Tiles are locked in this environment.</p>`
+    : payments.geoBlocked
+    ? `<p class="muted small">Chip purchases aren't available in your region.</p>`
+    : `<p class="muted small">Payment in stablecoins (USDT, USDC). Chips are entertainment credit — no cashout in v1.</p>`;
+  const tiles = packages.map((pkg) => {
+    const bonusLabel = pkg.bonusPct > 0 ? `<span class="bonus">+${pkg.bonusPct}% bonus</span>` : "";
+    return `
+      <article class="chip-tile ${enabled ? "" : "locked"}">
+        <header>
+          <strong>${escapeHtml(pkg.label)}</strong>
+          ${bonusLabel}
+        </header>
+        <div class="chip-tile-price">${money(pkg.priceUsdCents)}</div>
+        <div class="chip-tile-chips">→ ${money(pkg.chipsCents)} in chips</div>
+        <button type="button" class="primary" data-buy-package="${escapeHtml(pkg.id)}" ${enabled ? "" : "disabled"}>
+          ${enabled ? "Buy" : "Coming soon"}
+        </button>
+      </article>
+    `;
+  }).join("");
+  return `
+    <section class="grid one">
+      <article class="card buy-chips-card">
+        <h2>Buy chips</h2>
+        ${statusLine}
+        <div class="chip-tiles">${tiles}</div>
+      </article>
+    </section>
+  `;
+}
+
+function renderCashoutWaitlistCard() {
+  const payments = state.bootstrap?.payments;
+  if (!payments) return "";
+  const waitlist = state.cashoutWaitlist || { status: "form", error: null };
+  const viewer = state.bootstrap.viewer;
+  let body;
+  if (waitlist.status === "submitted") {
+    body = `<p class="muted">You're on the list. We'll email you if cashout opens in your region.</p>`;
+  } else {
+    const busy = waitlist.status === "submitting";
+    body = `
+      <form class="stack compact-form" data-cashout-waitlist>
+        <p class="muted small">Cashout is deferred to a later phase. Join the waitlist to be notified if and when it opens in your region.</p>
+        <label>Email
+          <input name="email" type="email" value="${escapeHtml(viewer?.email || "")}" required />
+        </label>
+        ${waitlist.error ? `<em class="account-error">${escapeHtml(waitlist.error)}</em>` : ""}
+        <button type="submit" ${busy ? "disabled" : ""}>${busy ? "Submitting…" : "Notify me when cashout opens"}</button>
+      </form>
+    `;
+  }
+  return `
+    <section class="grid one">
+      <article class="card cashout-waitlist-card">
+        <h2>Cashout · coming soon</h2>
+        ${body}
+      </article>
+    </section>
+  `;
+}
+
+async function submitCashoutWaitlist(email) {
+  if (!state.cashoutWaitlist) state.cashoutWaitlist = {};
+  state.cashoutWaitlist = { status: "submitting", error: null };
+  render();
+  try {
+    await postJson("/api/cashout-waitlist", { email });
+    state.cashoutWaitlist = { status: "submitted", error: null };
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.cashoutWaitlist = { status: "form", error: error.message };
+  } finally {
+    render();
+  }
+}
+
+async function startChipPurchase(packageId) {
+  // Slice 2 implements this. Today the server returns
+  // payments_not_implemented even when the kill switch is on, so the
+  // surface stays visible-but-non-functional during the scaffold step.
+  try {
+    await postJson("/api/payments/checkout", { packageId });
+  } catch (error) {
+    if (authGuard(error)) return;
+    state.accountError = error.message;
+    render();
+  }
 }
 
 function ledgerRowsWithBalances(entries) {
@@ -4211,6 +4387,12 @@ function renderAuth() {
             <input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" minlength="${isSignup ? 8 : 1}" required />
             ${isSignup ? `<small class="muted">8+ characters</small>` : ""}
           </label>
+          ${isSignup ? `
+            <label class="tos-checkbox">
+              <input type="checkbox" name="tos" required />
+              <span>I have read and accept the Horsey Terms — chips are entertainment credit, no cashout in v1. <button type="button" class="link" data-tos-show>Read</button></span>
+            </label>
+          ` : ""}
           <button class="primary" type="submit">${isSignup ? "Create account" : "Log in"}</button>
           ${state.authError ? `<em class="action-error">${escapeHtml(state.authError)}</em>` : ""}
         </form>
@@ -4842,7 +5024,12 @@ function render() {
         const email = fd.get("email");
         const password = fd.get("password");
         if (state.authMode === "signup") {
-          submitSignup({ email, handle: fd.get("handle"), password });
+          submitSignup({
+            email,
+            handle: fd.get("handle"),
+            password,
+            acceptedTosVersion: TOS_VERSION
+          });
         } else {
           submitLogin({ email, password });
         }
@@ -4895,6 +5082,34 @@ function render() {
       toggleBellDropdown();
     });
   });
+  document.querySelectorAll("[data-tos-show]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.tosViewerOpen = true;
+      loadTosBody();
+      render();
+    });
+  });
+  document.querySelectorAll("[data-tos-close]").forEach((b) => {
+    b.addEventListener("click", () => {
+      state.tosViewerOpen = false;
+      render();
+    });
+  });
+  document.querySelectorAll("[data-tos-accept]").forEach((b) => {
+    b.addEventListener("click", () => acceptTos());
+  });
+  if (shouldShowTosModal() || state.tosViewerOpen) loadTosBody();
+  document.querySelectorAll("[data-buy-package]").forEach((b) => {
+    b.addEventListener("click", () => startChipPurchase(b.dataset.buyPackage));
+  });
+  const cashoutForm = document.querySelector("[data-cashout-waitlist]");
+  if (cashoutForm) {
+    cashoutForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const fd = new FormData(cashoutForm);
+      submitCashoutWaitlist(fd.get("email"));
+    });
+  }
   document.querySelectorAll("[data-notification-link]").forEach((a) => {
     a.addEventListener("click", () => {
       const id = a.dataset.notificationId;

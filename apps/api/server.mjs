@@ -86,6 +86,17 @@ import {
   offerDraw
 } from "../../packages/shared/draw-offers.mjs";
 import { logger, nextRequestId } from "./logger.mjs";
+import {
+  TOS_VERSION,
+  TOS_TITLE,
+  TOS_SECTIONS,
+  needsTosAcceptance
+} from "../../packages/shared/tos.mjs";
+import {
+  CHIP_PACKAGES,
+  PAYMENT_PROVIDER,
+  SUPPORTED_PAY_CURRENCIES
+} from "../../packages/shared/payments.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -99,6 +110,9 @@ const broker = createBroker();
 const presence = createPresenceRegistry();
 const enableDevFinalize = process.env.HORSEY_ENABLE_DEV_FINALIZE === "1";
 const enableDevAccountPicker = process.env.HORSEY_ENABLE_DEV_ACCOUNT_PICKER === "1";
+// Payments v1 kill switch (ADR 0007). Default 0 so chip purchases stay
+// dark until ops explicitly flips them on per-environment.
+const paymentsEnabled = process.env.HORSEY_PAYMENTS_ENABLED === "1";
 const devAccountPassword = process.env.HORSEY_DEV_ACCOUNT_PASSWORD || "password123";
 const enableDevBots =
   process.env.HORSEY_ENABLE_DEV_BOTS === "1" && process.env.NODE_ENV !== "production";
@@ -558,13 +572,20 @@ function viewerPayload(viewerId) {
   const user = db.getUser(viewerId);
   const games = db.listFinalizedGamesForUser(viewerId, 50);
   const milestones = db.listUserMilestones(viewerId).map(publicMilestonePayload);
+  const latestTos = db.getLatestTosAcceptance(viewerId);
   return {
     ...user,
     ...walletSummary(db.listLedger(), viewerId),
     ...trustChipsForUser(viewerId),
     stats: aggregateUserStats(viewerId, games),
     milestones,
-    ownedAvatarIds: db.listUserAvatarsForUser(viewerId).map((a) => a.avatarId)
+    ownedAvatarIds: db.listUserAvatarsForUser(viewerId).map((a) => a.avatarId),
+    tos: {
+      currentVersion: TOS_VERSION,
+      latestAcceptedVersion: latestTos?.tosVersion ?? null,
+      latestAcceptedAt: latestTos?.acceptedAt ?? null,
+      needsAcceptance: needsTosAcceptance(latestTos?.tosVersion ?? null)
+    }
   };
 }
 
@@ -916,6 +937,12 @@ function handleDomainError(error, res) {
     external_account_not_found: 404,
     external_handle_not_found: 404,
     admin_only: 403,
+    tos_required: 400,
+    tos_version_stale: 409,
+    payments_disabled: 503,
+    payments_geo_blocked: 451,
+    payments_not_implemented: 501,
+    waitlist_email_required: 400,
     external_rate_limited: 502,
     external_fetch_timeout: 504,
     external_fetch_failed: 502,
@@ -1624,8 +1651,16 @@ function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
   return { matched: !!matchedGame, game: matchedGame, ticket: db.getTicket(viewer.id), cleanedChallenges };
 }
 
-async function signupAccount({ email, handle, password }) {
+async function signupAccount({ email, handle, password, acceptedTosVersion }) {
   const clean = validateSignupInput({ email, handle, password });
+  // ToS acceptance is required at signup. The client passes the active
+  // version number it rendered; we accept that number for the new user.
+  // If the version doesn't match the live one (rare race during a bump),
+  // the next session will prompt for the new version.
+  if (acceptedTosVersion == null) {
+    const e = new RangeError("You must accept the Horsey Terms to create an account.");
+    e.code = "tos_required"; throw e;
+  }
   if (db.getUserByEmail(clean.email)) {
     const e = new RangeError("We couldn't create that account. Try another email or handle.");
     e.code = "email_taken"; throw e;
@@ -1658,6 +1693,11 @@ async function signupAccount({ email, handle, password }) {
       note: "Welcome fake-money grant",
       createdAt: now
     }]);
+    db.recordTosAcceptance({
+      userId,
+      tosVersion: Number(acceptedTosVersion),
+      acceptedAt: now
+    });
     session = startSession(userId, now);
   })();
   const user = db.getUser(userId);
@@ -1884,7 +1924,21 @@ function bootstrapPayload(viewer) {
     notifications: {
       unreadCount: db.countUnreadNotificationsForUser(viewer.id),
       recent: db.listNotificationsForUser(viewer.id, 20)
-    }
+    },
+    payments: paymentsBootstrap(viewer.id)
+  };
+}
+
+function paymentsBootstrap(_viewerId) {
+  // Slice 1: kill switch + catalog only. Slice 2 will add real checkout
+  // sessions and surface in-flight purchase state.
+  return {
+    enabled: paymentsEnabled,
+    provider: PAYMENT_PROVIDER,
+    geoBlocked: false, // wired in a follow-on when we add edge geo lookup
+    packages: CHIP_PACKAGES,
+    currencies: SUPPORTED_PAY_CURRENCIES,
+    cashoutOpen: false // Phase 7
   };
 }
 
@@ -2053,6 +2107,16 @@ async function routeApi(req, res) {
       })();
       return json(res, 200, { ok: true });
     } catch (error) { return handleDomainError(error, res); }
+  }
+
+  // Public ToS read — the signup form's "Read" link needs this before
+  // there's a session. Acceptance still requires auth (see /api/tos/accept).
+  if (req.method === "GET" && pathname === "/api/tos") {
+    return json(res, 200, {
+      version: TOS_VERSION,
+      title: TOS_TITLE,
+      sections: TOS_SECTIONS
+    });
   }
 
   let viewer;
@@ -2528,6 +2592,73 @@ async function routeApi(req, res) {
         seededTo: result.seededTo,
         viewer: viewerPayload(viewer.id)
       });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  // ---- ToS (accept) ----------------------------------------------------------
+
+  if (req.method === "POST" && pathname === "/api/tos/accept") {
+    try {
+      const body = await readJson(req);
+      const acceptedVersion = Number(body.tosVersion);
+      if (!Number.isInteger(acceptedVersion) || acceptedVersion < 1) {
+        const e = new RangeError("tosVersion is required");
+        e.code = "tos_required"; throw e;
+      }
+      if (acceptedVersion !== TOS_VERSION) {
+        const e = new RangeError(`Stale ToS version. Current: ${TOS_VERSION}.`);
+        e.code = "tos_version_stale"; throw e;
+      }
+      db.recordTosAcceptance({ userId: viewer.id, tosVersion: acceptedVersion });
+      return json(res, 200, { viewer: viewerPayload(viewer.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  // ---- Payments (scaffold — slice 1) -----------------------------------------
+  // Slice 1 ships routes that gate on the kill switch and ToS; slice 2 fills
+  // in the NOWPayments invoice + IPN webhook against the same surface.
+
+  if (req.method === "POST" && pathname === "/api/payments/checkout") {
+    try {
+      if (!paymentsEnabled) {
+        const e = new RangeError("Payments are not enabled in this environment.");
+        e.code = "payments_disabled"; throw e;
+      }
+      const latestTos = db.getLatestTosAcceptance(viewer.id);
+      if (needsTosAcceptance(latestTos?.tosVersion ?? null)) {
+        const e = new RangeError("You must accept the current Horsey Terms first.");
+        e.code = "tos_required"; throw e;
+      }
+      // Slice 2 lands here. Until then, 501.
+      const e = new RangeError("Checkout is wired in slice 2.");
+      e.code = "payments_not_implemented"; throw e;
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/payments/webhook") {
+    // Slice 2 verifies the NOWPayments HMAC-SHA512 signature and idempotently
+    // credits chips on `finished` status. Until then, drop on the floor with
+    // a 501 so misconfigured webhooks fail loudly instead of silently.
+    return json(res, 501, { error: "payments_not_implemented" });
+  }
+
+  if (req.method === "GET" && pathname === "/api/payments/purchases") {
+    try {
+      const purchases = db.listPurchasesForUser(viewer.id, 50);
+      return json(res, 200, { purchases });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/cashout-waitlist") {
+    try {
+      const body = await readJson(req);
+      const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+      if (!email || !email.includes("@")) {
+        const e = new RangeError("A valid email is required to join the cashout waitlist.");
+        e.code = "waitlist_email_required"; throw e;
+      }
+      db.addCashoutWaitlistEntry({ userId: viewer.id, email });
+      return json(res, 200, { ok: true });
     } catch (error) { return handleDomainError(error, res); }
   }
 
