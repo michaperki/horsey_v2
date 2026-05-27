@@ -181,6 +181,30 @@ function playMilestoneToast() {
   osc.stop(now + 0.6);
 }
 
+// Two-note rising chime — tier-2 ambient. Soft enough not to startle,
+// distinct enough that the user notices something arrived. Different
+// from the milestone toast (slower, lower pair) so the two cues don't
+// blur together for users running with full sound.
+function playNotificationArrived() {
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  [
+    { freq: 740, start: 0,    dur: 0.12 },
+    { freq: 990, start: 0.08, dur: 0.22 }
+  ].forEach(({ freq, start, dur }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, now + start);
+    g.gain.linearRampToValueAtTime(TIER_GAIN.ambient, now + start + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+    osc.connect(g).connect(masterGain);
+    osc.start(now + start);
+    osc.stop(now + start + dur);
+  });
+}
+
 // Resolving two-note tone — tier-2 milestone callout.
 function playMilestoneCallout() {
   if (!ctx) return;
@@ -466,6 +490,8 @@ export function playSound(eventKey, opts = {}) {
       return playCheckChime();
     case "mate_chime":
       return playMateChime();
+    case "notification_arrived":
+      return playNotificationArrived();
     case "game_start":
       return playGameStart();
     case "game_end_win":

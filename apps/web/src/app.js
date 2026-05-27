@@ -360,6 +360,11 @@ async function watchLiveGame(gameId) {
 async function loadBootstrap() {
   const data = await getJson("/api/bootstrap");
   state.bootstrap = data;
+  state.notifications = {
+    unreadCount: data.notifications?.unreadCount ?? 0,
+    recent: data.notifications?.recent ?? [],
+    dropdownOpen: state.notifications?.dropdownOpen ?? false
+  };
   state.liveGame = data.activeGame?.state === "live" ? data.activeGame : null;
   const viewingHistoryDetail = state.route === "history" && state.routeParam;
   if (!viewingHistoryDetail) {
@@ -1038,6 +1043,14 @@ async function handleRealtimeMessage(msg) {
       if (liveGamesChanged) updateLiveGamesFeedDom();
       return;
     }
+    case "notification.created": {
+      applyNotificationEvent(msg.notification, true);
+      return;
+    }
+    case "notification.updated": {
+      applyNotificationEvent(msg.notification, false);
+      return;
+    }
     case "challenge.created":
     case "challenge.updated":
     case "matchmaking.matched": {
@@ -1707,6 +1720,14 @@ document.addEventListener("click", (event) => {
   closeScout();
 });
 
+document.addEventListener("click", (event) => {
+  if (!state.notifications?.dropdownOpen) return;
+  const target = event.target;
+  if (target.closest?.(".bell-wrap")) return;
+  state.notifications.dropdownOpen = false;
+  render();
+});
+
 // Initialize the WebAudio context on the first user gesture. The browser
 // blocks audio playback until a user gesture has occurred; this captures
 // the first click and resumes/creates the context for subsequent
@@ -1729,6 +1750,7 @@ function shell(content) {
       <div class="topbar-actions">
         ${connectionPill()}
         ${renderSoundToggle()}
+        ${renderBell()}
         ${liveGame ? `<a class="resume-pill" href="#game"><span class="dot"></span>Resume game</a>` : ""}
         <a class="wallet-pill" href="#profile" title="Wallet detail in Profile">
           <span>${money(viewer.balanceCents)}</span>
@@ -1841,6 +1863,136 @@ function renderMilestoneCard(milestone) {
 
 // Sound-mode toggle in the topbar. Cycles full → essentials → mute on
 // click. See docs/SOUNDSCAPE_NEXT_PASS.md § Reduced sensory intensity.
+function renderBell() {
+  const n = state.notifications || { unreadCount: 0, recent: [], dropdownOpen: false };
+  const count = n.unreadCount || 0;
+  const badge = count > 0 ? `<span class="bell-badge">${count > 99 ? "99+" : count}</span>` : "";
+  const dropdown = n.dropdownOpen ? renderBellDropdown(n.recent) : "";
+  return `
+    <div class="bell-wrap">
+      <button class="bell" data-bell-toggle title="Notifications" aria-label="Notifications (${count} unread)">
+        🔔${badge}
+      </button>
+      ${dropdown}
+    </div>
+  `;
+}
+
+function renderBellDropdown(items) {
+  if (!items.length) {
+    return `<div class="bell-dropdown">
+      <header><strong>Notifications</strong></header>
+      <p class="muted small">No notifications yet.</p>
+    </div>`;
+  }
+  const rows = items.slice(0, 12).map(notificationRow).join("");
+  const readAllDisabled = (state.notifications?.unreadCount ?? 0) === 0;
+  return `
+    <div class="bell-dropdown">
+      <header>
+        <strong>Notifications</strong>
+        <button class="link" data-notifications-read-all ${readAllDisabled ? "disabled" : ""}>Mark all read</button>
+      </header>
+      <ul class="notification-list">${rows}</ul>
+    </div>
+  `;
+}
+
+function notificationRow(n) {
+  const route = n.data?.route ? `#${escapeHtml(n.data.route)}` : "#play";
+  const unreadCls = n.readAt ? "" : "unread";
+  const statusCls = `status-${escapeHtml(n.status || "pending")}`;
+  return `
+    <li class="notification-item ${unreadCls} ${statusCls}">
+      <a href="${route}" data-notification-link data-notification-id="${escapeHtml(n.id)}">
+        <div class="notification-title">${escapeHtml(n.title)}</div>
+        <div class="notification-meta">
+          <span class="notification-status">${escapeHtml(n.status)}</span>
+          <span class="notification-time muted small">${formatRelativeTimestamp(n.updatedAt)}</span>
+        </div>
+      </a>
+    </li>
+  `;
+}
+
+function formatRelativeTimestamp(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const seconds = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+  return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function toggleBellDropdown() {
+  if (!state.notifications) state.notifications = { unreadCount: 0, recent: [], dropdownOpen: false };
+  state.notifications.dropdownOpen = !state.notifications.dropdownOpen;
+  render();
+}
+
+async function markNotificationRead(id) {
+  if (!state.notifications) return;
+  const row = state.notifications.recent.find((n) => n.id === id);
+  if (row && !row.readAt) {
+    row.readAt = new Date().toISOString();
+    state.notifications.unreadCount = Math.max(0, state.notifications.unreadCount - 1);
+    render();
+  }
+  try {
+    await postJson(`/api/notifications/${encodeURIComponent(id)}/read`);
+  } catch (error) {
+    if (authGuard(error)) return;
+  }
+}
+
+async function markAllNotificationsRead() {
+  if (!state.notifications) return;
+  for (const n of state.notifications.recent) {
+    if (!n.readAt) n.readAt = new Date().toISOString();
+  }
+  state.notifications.unreadCount = 0;
+  render();
+  try {
+    await postJson("/api/notifications/read-all");
+  } catch (error) {
+    if (authGuard(error)) return;
+  }
+}
+
+function applyNotificationEvent(notification, isCreated) {
+  if (!notification) return;
+  if (!state.notifications) {
+    state.notifications = { unreadCount: 0, recent: [], dropdownOpen: false };
+  }
+  const list = state.notifications.recent;
+  const idx = list.findIndex((n) => n.id === notification.id);
+  const wasUnread = idx >= 0 ? !list[idx].readAt : false;
+  const nowUnread = !notification.readAt;
+  if (idx >= 0) list.splice(idx, 1);
+  list.unshift(notification);
+  if (list.length > 20) list.length = 20;
+  // Recompute unread count: easiest correct way is to ask the server, but
+  // for the common case we can derive locally — server is the source of
+  // truth on reload.
+  if (isCreated && nowUnread) {
+    state.notifications.unreadCount += 1;
+  } else if (idx >= 0) {
+    // Update: row may have flipped unread state.
+    if (!wasUnread && nowUnread) state.notifications.unreadCount += 1;
+    else if (wasUnread && !nowUnread) {
+      state.notifications.unreadCount = Math.max(0, state.notifications.unreadCount - 1);
+    }
+  }
+  if (isCreated && nowUnread) {
+    playSound("notification_arrived");
+  }
+  // If the bell isn't open we still want the badge to update — render does
+  // both. Cost is low (small DOM) and avoids a stale topbar.
+  render();
+}
+
 function renderSoundToggle() {
   const m = getSoundMode();
   const next = m === "full" ? "essentials" : m === "essentials" ? "mute" : "full";
@@ -4735,6 +4887,24 @@ function render() {
   });
   document.querySelectorAll("[data-admin-tab]").forEach((b) => {
     b.addEventListener("click", () => switchAdminTab(b.dataset.adminTab));
+  });
+  document.querySelectorAll("[data-bell-toggle]").forEach((b) => {
+    b.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleBellDropdown();
+    });
+  });
+  document.querySelectorAll("[data-notification-link]").forEach((a) => {
+    a.addEventListener("click", () => {
+      const id = a.dataset.notificationId;
+      // Best-effort mark-read; navigation continues via the href.
+      if (id) markNotificationRead(id);
+      if (state.notifications) state.notifications.dropdownOpen = false;
+    });
+  });
+  document.querySelectorAll("[data-notifications-read-all]").forEach((b) => {
+    b.addEventListener("click", () => markAllNotificationsRead());
   });
   document.querySelectorAll("[data-logout]").forEach((b) => {
     b.addEventListener("click", () => logout());

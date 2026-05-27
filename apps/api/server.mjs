@@ -339,6 +339,112 @@ function publishGameFinalized(game) {
   publishLobbyHeartbeat();
 }
 
+function emitNotification(args) {
+  const { inserted, notification } = db.upsertNotification(args);
+  broker.publish(CHANNELS.user(notification.userId), {
+    type: inserted ? "notification.created" : "notification.updated",
+    notification
+  });
+  return notification;
+}
+
+function moneyShort(cents) {
+  if (typeof cents !== "number") return "";
+  return `$${Math.round(cents / 100)}`;
+}
+
+// Drive challenge notifications off of the challenge state machine. Open-table
+// (recipient-less) challenges don't notify — they'd fan out to every viewer
+// and drown the bell.
+function upsertChallengeNotifications(challenge) {
+  if (!challenge.recipientId) return;
+  const challenger = db.getUser(challenge.challengerId);
+  const recipient = db.getUser(challenge.recipientId);
+  if (!challenger || !recipient) return;
+  const stake = moneyShort(challenge.stakeCents);
+  const tc = challenge.timeControl;
+  const baseData = {
+    challengeId: challenge.id,
+    stakeCents: challenge.stakeCents,
+    timeControl: challenge.timeControl,
+    route: `wager/${challenge.id}`
+  };
+
+  if (challenge.state === "incoming") {
+    emitNotification({
+      userId: challenge.recipientId,
+      type: "challenge_received",
+      entityType: "challenge",
+      entityId: challenge.id,
+      status: "pending",
+      title: `${challenger.handle} challenged you · ${stake} · ${tc}`,
+      data: baseData
+    });
+    return;
+  }
+
+  if (challenge.state === "countered") {
+    emitNotification({
+      userId: challenge.challengerId,
+      type: "challenge_countered",
+      entityType: "challenge",
+      entityId: challenge.id,
+      status: "pending",
+      title: `${recipient.handle} countered · ${stake} · ${tc}`,
+      data: baseData
+    });
+    return;
+  }
+
+  // Terminal states: only update existing rows (don't create new ones — the
+  // party who never had a pending row doesn't need a "this thing they weren't
+  // tracking is now resolved" entry).
+  if (["accepted", "declined", "expired"].includes(challenge.state)) {
+    for (const userId of [challenge.recipientId, challenge.challengerId]) {
+      const existing = db.findNotificationForEntity(userId, "challenge", challenge.id);
+      if (!existing) continue;
+      const isSelfActor = pickTerminalActor(challenge) === userId;
+      // If the user was the actor (they accepted/declined themselves), don't
+      // re-flag the row unread — they know. Preserve read_at by re-upserting
+      // with the same status no-op... actually status changed, so we need to
+      // mark-read after the upsert if the actor.
+      const other = userId === challenge.recipientId ? challenger : recipient;
+      const verbForOther = {
+        accepted: `${other.handle} accepted your challenge`,
+        declined: `${other.handle} declined your challenge`,
+        expired: `Challenge with ${other.handle} expired`
+      }[challenge.state];
+      const verbForSelf = {
+        accepted: `Accepted ${other.handle}'s challenge`,
+        declined: `Declined ${other.handle}'s challenge`,
+        expired: `Your challenge with ${other.handle} expired`
+      }[challenge.state];
+      const note = emitNotification({
+        userId,
+        type: existing.type,
+        entityType: "challenge",
+        entityId: challenge.id,
+        status: challenge.state,
+        title: isSelfActor ? verbForSelf : verbForOther,
+        data: existing.data || baseData
+      });
+      if (isSelfActor && note && !note.readAt) {
+        db.markNotificationRead(userId, note.id);
+      }
+    }
+  }
+}
+
+function pickTerminalActor(challenge) {
+  // Inferred from prior responder: if the challenge was 'incoming', the
+  // responder was the recipient; if it was 'countered', the responder was
+  // the challenger. We can't query history reliably, but for accepted /
+  // declined the actor's user-id is who performed the action. We approximate:
+  // when the metadata is set by transitionChallenge it carries hints.
+  // Fallback: assume recipient is the actor (the common path).
+  return challenge.acceptedBy || challenge.declinedBy || challenge.recipientId;
+}
+
 function publishChallengeCreated(challenge) {
   if (challenge.recipientId) {
     broker.publish(CHANNELS.user(challenge.recipientId), {
@@ -350,6 +456,7 @@ function publishChallengeCreated(challenge) {
     type: "challenge.created",
     challenge: challengePayload(challenge, challenge.challengerId)
   });
+  upsertChallengeNotifications(challenge);
 }
 
 function publishChallengeUpdated(challenge) {
@@ -361,6 +468,7 @@ function publishChallengeUpdated(challenge) {
       challenge: challengePayload(challenge, userId)
     });
   }
+  upsertChallengeNotifications(challenge);
 }
 
 function publishPresenceChanged(userId) {
@@ -1772,7 +1880,11 @@ function bootstrapPayload(viewer) {
     activeGame: enrichGame(liveGame),
     recentGame: enrichGame(recentGame),
     recentSettlement: recentGame ? settlementPayload(recentGame, viewer.id) : null,
-    matchmakingTicket: ticket
+    matchmakingTicket: ticket,
+    notifications: {
+      unreadCount: db.countUnreadNotificationsForUser(viewer.id),
+      recent: db.listNotificationsForUser(viewer.id, 20)
+    }
   };
 }
 
@@ -2416,6 +2528,40 @@ async function routeApi(req, res) {
         seededTo: result.seededTo,
         viewer: viewerPayload(viewer.id)
       });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  // ---- Notifications ---------------------------------------------------------
+
+  if (req.method === "GET" && pathname === "/api/notifications") {
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 50, 1, 200);
+      const notifications = db.listNotificationsForUser(viewer.id, limit);
+      const unreadCount = db.countUnreadNotificationsForUser(viewer.id);
+      return json(res, 200, { notifications, unreadCount });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/notifications/unread-count") {
+    try {
+      return json(res, 200, { unreadCount: db.countUnreadNotificationsForUser(viewer.id) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/notifications\/([^/]+)\/read$/))) {
+    try {
+      db.markNotificationRead(viewer.id, m[1]);
+      return json(res, 200, {
+        unreadCount: db.countUnreadNotificationsForUser(viewer.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && pathname === "/api/notifications/read-all") {
+    try {
+      const changed = db.markAllNotificationsRead(viewer.id);
+      return json(res, 200, { marked: changed, unreadCount: 0 });
     } catch (error) { return handleDomainError(error, res); }
   }
 

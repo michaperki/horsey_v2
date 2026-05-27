@@ -3597,3 +3597,87 @@ p {
 }
 .admin-table th { font-weight: 600; opacity: 0.7; }
 .admin-table td.muted { opacity: 0.6; }
+
+/* ---- Notification bell --------------------------------------------------- */
+.bell-wrap { position: relative; }
+.bell {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: inherit;
+  position: relative;
+}
+.bell:hover { background: rgba(255, 255, 255, 0.04); }
+.bell-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--gold, #d3a441);
+  color: #1a1208;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.bell-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 320px;
+  max-width: 380px;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--bg-elevated, #1a1611);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  z-index: 50;
+  padding: 8px 0;
+}
+.bell-dropdown header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 14px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.bell-dropdown header strong { font-size: 13px; }
+.bell-dropdown .link {
+  background: transparent;
+  border: none;
+  color: var(--gold, #d3a441);
+  font-size: 12px;
+  cursor: pointer;
+}
+.bell-dropdown .link:disabled { opacity: 0.3; cursor: default; }
+.notification-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.notification-item a {
+  display: block;
+  padding: 8px 14px;
+  text-decoration: none;
+  color: inherit;
+  border-left: 3px solid transparent;
+}
+.notification-item a:hover { background: rgba(255, 255, 255, 0.04); }
+.notification-item.unread a { border-left-color: var(--gold, #d3a441); }
+.notification-item.status-declined .notification-status,
+.notification-item.status-expired .notification-status { opacity: 0.5; }
+.notification-title { font-size: 13px; margin-bottom: 2px; }
+.notification-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  opacity: 0.7;
+}

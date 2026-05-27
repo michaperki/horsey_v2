@@ -127,4 +127,4 @@ The data model is doing the future-proofing here. The visible surface is small.
 - Pagination: cursor by `updated_at` or `created_at`? Probably `updated_at` so an entity that just moved to "awarded" lifts back to the top.
 - Whether `account_action_required` should also mirror to email when the address is verified. Default: yes once email is configured (Resend is already wired).
 - How long to keep terminal rows. Default: forever for money-related events (audit trail), 90 days for resolved social events.
-- Whether the bell should render a soft sound on `notification.created` (consistent with the existing soundscape layer) or stay silent. Default: silent until proven needed; the unread badge is enough.
+- ~~Whether the bell should render a soft sound on `notification.created`.~~ **Decided 2026-05-27:** yes. A soft two-note rising chime (`notification_arrived`, tier-2 ambient) plays when a new row arrives in real time. Honors the existing sound-mode setting — silenced under `essentials` and `mute`. Distinct timbre from milestone and check chimes.

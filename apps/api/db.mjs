@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -153,6 +153,24 @@ const SCHEMA = `
     occurred_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_user_milestones_user ON user_milestones(user_id, event_key, occurred_at);
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT,
+    data_json TEXT,
+    read_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(user_id, entity_type, entity_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_updated ON notifications(user_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at);
 `;
 
 function rowToPublicUser(row) {
@@ -250,6 +268,24 @@ function rowToExternalAccount(row) {
     lastSyncedAt: row.last_synced_at,
     verifiedAt: row.verified_at,
     verifiedBy: row.verified_by,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function rowToNotification(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    status: row.status,
+    title: row.title,
+    body: row.body ?? null,
+    data: row.data_json ? JSON.parse(row.data_json) : null,
+    readAt: row.read_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -366,6 +402,12 @@ function migrateSchema(db) {
       }
     }
   }
+  // v11 → v12: notifications table is created by the SCHEMA exec on the next
+  // line. UNIQUE(user_id, entity_type, entity_id) enforces one row per
+  // logical thread so async-resolution events (pot_state, payment_state,
+  // cashout_state) can update in place rather than double-write. See
+  // docs/NOTIFICATIONS_NEXT_PASS.md.
+
   // v10 → v11: add users.is_admin (default 0). Admins are hand-set in the DB
   // (`UPDATE users SET is_admin=1 WHERE handle='...'`); there is no
   // admin-creates-admin UI in this slice. The flag gates the read-only
@@ -637,6 +679,39 @@ function makeApi(db) {
     countRecentEmailTokensForUser: db.prepare(`
       SELECT COUNT(*) AS n FROM email_tokens
       WHERE user_id = ? AND type = ? AND created_at > ?
+    `),
+
+    findNotification: db.prepare(`
+      SELECT * FROM notifications WHERE id = ?
+    `),
+    findNotificationByEntity: db.prepare(`
+      SELECT * FROM notifications
+      WHERE user_id = ? AND entity_type = ? AND entity_id = ?
+    `),
+    insertNotification: db.prepare(`
+      INSERT INTO notifications
+        (id, user_id, type, entity_type, entity_id, status, title, body, data_json, read_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+    `),
+    updateNotification: db.prepare(`
+      UPDATE notifications
+      SET type = ?, status = ?, title = ?, body = ?, data_json = ?, read_at = ?, updated_at = ?
+      WHERE id = ?
+    `),
+    listNotificationsForUser: db.prepare(`
+      SELECT * FROM notifications WHERE user_id = ?
+      ORDER BY updated_at DESC LIMIT ?
+    `),
+    countUnreadNotificationsForUser: db.prepare(`
+      SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND read_at IS NULL
+    `),
+    markNotificationReadIfOwner: db.prepare(`
+      UPDATE notifications SET read_at = ?
+      WHERE id = ? AND user_id = ? AND read_at IS NULL
+    `),
+    markAllNotificationsReadForUser: db.prepare(`
+      UPDATE notifications SET read_at = ?
+      WHERE user_id = ? AND read_at IS NULL
     `)
   };
 
@@ -946,6 +1021,82 @@ function makeApi(db) {
     },
     markEmailVerified(userId, verifiedAt = new Date().toISOString()) {
       return stmts.markEmailVerified.run(verifiedAt, userId).changes > 0;
+    },
+
+    // Notifications: entity-anchored, update-in-place.
+    // See docs/NOTIFICATIONS_NEXT_PASS.md.
+    upsertNotification({
+      userId,
+      type,
+      entityType,
+      entityId,
+      status,
+      title,
+      body = null,
+      data = null,
+      idHint = null
+    }) {
+      const now = new Date().toISOString();
+      const existing = stmts.findNotificationByEntity.get(userId, entityType, entityId);
+      const dataJson = data == null ? null : JSON.stringify(data);
+      if (existing) {
+        const statusChanged = existing.status !== status;
+        const typeChanged = existing.type !== type;
+        // A *new* status (or new type) flips read_at to null so the user
+        // notices the resolution. A no-op upsert (same status, same type)
+        // preserves read_at so we don't spam the badge.
+        const nextReadAt = statusChanged || typeChanged ? null : existing.read_at;
+        stmts.updateNotification.run(
+          type,
+          status,
+          title,
+          body,
+          dataJson,
+          nextReadAt,
+          now,
+          existing.id
+        );
+        return {
+          inserted: false,
+          notification: rowToNotification(stmts.findNotification.get(existing.id))
+        };
+      }
+      const id = idHint || `ntf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.insertNotification.run(
+        id,
+        userId,
+        type,
+        entityType,
+        entityId,
+        status,
+        title,
+        body,
+        dataJson,
+        now,
+        now
+      );
+      return {
+        inserted: true,
+        notification: rowToNotification(stmts.findNotification.get(id))
+      };
+    },
+    listNotificationsForUser(userId, limit = 50) {
+      return stmts.listNotificationsForUser.all(userId, limit).map(rowToNotification);
+    },
+    countUnreadNotificationsForUser(userId) {
+      return Number(stmts.countUnreadNotificationsForUser.get(userId)?.n ?? 0);
+    },
+    markNotificationRead(userId, id, readAt = new Date().toISOString()) {
+      return stmts.markNotificationReadIfOwner.run(readAt, id, userId).changes > 0;
+    },
+    markAllNotificationsRead(userId, readAt = new Date().toISOString()) {
+      return stmts.markAllNotificationsReadForUser.run(readAt, userId).changes;
+    },
+    getNotification(id) {
+      return rowToNotification(stmts.findNotification.get(id));
+    },
+    findNotificationForEntity(userId, entityType, entityId) {
+      return rowToNotification(stmts.findNotificationByEntity.get(userId, entityType, entityId));
     },
 
     transaction(fn) { return db.transaction(fn); },
