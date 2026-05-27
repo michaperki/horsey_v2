@@ -2868,9 +2868,61 @@ function renderCounterPicker(challenge) {
   `;
 }
 
+function spectatorSettlementPanel(game) {
+  const white = game.players.find((p) => p.color === "white");
+  const black = game.players.find((p) => p.color === "black");
+  const winner = game.winnerId
+    ? game.players.find((p) => p.id === game.winnerId)
+    : null;
+  const isDraw = !game.winnerId;
+  const reasonLabel = endReasonLabel(game.endReason);
+  const eyebrowClass = isDraw ? "muted" : "success";
+  const eyebrowText = isDraw ? `Settlement · drawn (${reasonLabel.toLowerCase()})` : `Settlement · ${reasonLabel.toLowerCase()}`;
+  const headline = isDraw
+    ? "The table drew."
+    : `${escapeHtml(winner?.handle ?? "Winner")} took the pot.`;
+  const pot = game.pot ?? {};
+  const grossPot = pot.stakeCents != null ? pot.stakeCents * 2 : null;
+  const rc = game.ratingChange;
+  const ratingRow = rc
+    ? `
+      <div>
+        <small>${escapeHtml(white?.handle ?? "White")}</small>
+        <strong>${formatRatingDelta(rc.whiteDelta)}${rc.whiteAfter != null ? ` <span class="muted">→ ${rc.whiteAfter}</span>` : ""}</strong>
+      </div>
+      <div>
+        <small>${escapeHtml(black?.handle ?? "Black")}</small>
+        <strong>${formatRatingDelta(rc.blackDelta)}${rc.blackAfter != null ? ` <span class="muted">→ ${rc.blackAfter}</span>` : ""}</strong>
+      </div>
+    `
+    : "";
+  const lastMove = game.lastMove?.san ? `<div><small>Last move</small><strong>${escapeHtml(game.lastMove.san)}</strong></div>` : "";
+  const moveCount = game.moves?.length ?? 0;
+
+  return `
+    <article class="felt settlement settlement-${isDraw ? "draw" : "win"} game-panel">
+      <div class="between">
+        <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
+        ${connectionPill()}
+      </div>
+      <h2>${headline}</h2>
+      ${grossPot != null ? `<p>Pot ${money(grossPot)}${pot.rakeCents != null ? ` minus ${money(pot.rakeCents)} fake-money rake` : ""}.</p>` : ""}
+      <div class="metric-grid">
+        <div><small>Moves</small><strong>${moveCount}</strong></div>
+        ${lastMove}
+        ${ratingRow}
+      </div>
+      <div class="settlement-actions">
+        <button data-nav="play">Find a table</button>
+      </div>
+    </article>
+  `;
+}
+
 function finalizedGameSettlementPanel(game) {
   const settlement = state.activeSettlement;
   if (!settlement || settlement.state !== "finalized") {
+    if (!viewerPlayer(game)) return spectatorSettlementPanel(game);
     return `
       <article class="card game-panel live-status">
         <div class="between">
@@ -3779,7 +3831,10 @@ function endReasonLabel(reason) {
     agreement: "Draw by agreement",
     checkmate: "Checkmate",
     resignation: "Resignation",
-    timeout: "Timeout"
+    timeout: "Timeout",
+    stalemate: "Stalemate",
+    threefold_repetition: "Threefold repetition",
+    insufficient_material: "Insufficient material"
   };
   return labels[reason] || reason || "—";
 }

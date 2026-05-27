@@ -6,14 +6,14 @@ Companion docs (not roadmaps): `PROJECT_SOUL.md` (product voice and feel), `ARCH
 
 ## Product Shape
 
-Horsey is a wagered chess product. Two players pick a stake and time control, escrow the wager, play a chess game with server-authoritative state, and the winner takes the pot minus rake. The first milestone is a local fake-money playable loop. Real-money decisions are gated to Phase 7.
+Horsey is a wagered chess product. Two players pick a stake and time control, escrow the wager, play a chess game with server-authoritative state, and the winner takes the pot minus rake. The first milestone is a local fake-money playable loop. The next money step is a real payments panel for buying non-cashout entertainment chips; cashout/payout decisions are gated to Phase 7.
 
-The path from "playable on my laptop" to "real money in production" runs through three buckets in order: (A) **Deploy Readiness** — host the fake-money loop somewhere a closed-beta tester can reach it; (B) **Closed Beta Operations** — minimum admin / smoke / observability so humans can use it unattended; (C) **Real-Money Discovery** — legal, jurisdiction, custody, KYC, payments — a *non-code* phase that decides whether and where Phase 7 ships. Those buckets are described under "Deploy Readiness Bucket" and "Likely Next Steps" below; they sit alongside the numbered phases rather than replacing them.
+The path from "playable on my laptop" to production now has four parallel lanes: (A) **Deploy Readiness** — host the loop somewhere a closed-beta tester can reach it; (B) **Closed Beta Operations** — minimum admin / smoke / observability so humans can use it unattended; (C) **Payments v1** — Stripe-backed chip purchases, ToS acceptance, refunds, spend caps, kill switch, and no cashout; (D) **Cashout Discovery** — jurisdiction, KYC, AML, custody, payouts, and written decisions before redeemable balances ship. These lanes sit alongside the numbered phases rather than replacing them.
 
 ## Working Principles
 
 - Build the real project, not a mockup reproduction.
-- Keep the first playable system fake-money or sandbox-money until compliance, payments, and trust decisions are explicit.
+- Keep cashout and redeemable balances out of v1. Inbound chip purchases are now in scope as non-cashout entertainment credit, with explicit ToS acceptance and a kill switch.
 - Make the server authoritative for chess state, clocks, wagers, escrow, and settlement.
 - Use the designs as product truth for surfaces and interaction intent, but replace demo data and placeholder boards with production data and logic.
 - Record major decisions in docs before importing libraries or creating hard-to-reverse structure.
@@ -29,7 +29,7 @@ These reflect *how* we're working right now, not permanent rules. Update as cond
 - **UI placeholder fields count as mocks.** A field that *looks* real but is hardcoded (opponent rating, country, h2h, momentum, rating delta, rematch button) is as much a mock as any subsystem in the seam list — and arguably more misleading, because it pretends to be product. Track them.
 - **Docs over chat.** When a working session produces a durable direction or preference, the relevant doc (this one, `PROJECT_SOUL`, or an ADR) gets updated in the same change.
 - **Deploy with the dev store; swap stores only when real money forces it.** SQLite-on-a-volume is the prod store through the fake-money closed beta. The Postgres swap is a *named* pre-real-money slice, not a generic next step — it costs an async refactor of every `db.X(...)` call site in the server and earns its place only when concurrent-write safety, point-in-time recovery, and audit-grade backups actually matter (i.e., when funds are real). See mock #1 and the Deploy Readiness Bucket.
-- **Real money is discovery first, code second.** Phase 7 is overwhelmingly legal / jurisdictional / custody / payment-provider / KYC work. Until those answers exist on paper, do not write Phase 7 code.
+- **Payments v1 is buy chips, not cashout.** Build toward Stripe-backed chip purchases with ToS acceptance, refunds, spend caps, and a no-cashout wall. Cashout/payouts remain discovery first, code second. See `PAYMENTS_NEXT_PASS.md`.
 
 ## Where We Are Right Now
 
@@ -69,7 +69,7 @@ Phase: **3** scaffold done; verification + reset done under Deploy Readiness Buc
 ### 3. Manual refresh → realtime push
 
 Today: WebSocket transport landed via the `ws` package (ADR 0004). Server attaches a `WebSocketServer({noServer:true})` to the existing `node:http` server and handles `/ws` upgrades, authenticating via the `horsey_session` cookie (same session seam as the REST surface — see Mock #2 / ADR 0005). Each socket auto-subscribes to `user:<viewerId>`; clients opt into `game:<gameId>`. Live games allow read-only spectator subscriptions; finalized games and settlement remain player-scoped. A transport-agnostic broker in `apps/api/realtime.mjs` owns `Map<channel, Set<client>>` and prunes on close/error. Publishes are co-located with REST mutations: move → `game.updated`; finalize/resign/auto-finalize → `game.finalized` to game and to each player's user channel; challenge create/accept/decline/counter → `challenge.created|updated` to involved users; matchmaking pair → `matchmaking.matched` to both. Client opens one WS on load, reconnects with exponential backoff, subscribes/unsubscribes from `game:<id>` as the route changes, and on `game.finalized` refreshes the finalized game, settlement, wallet, and replay in place for players instead of route-jumping away from the board. The 2s matchmaking poll remains as a belt-and-suspenders fallback. Status: **done** for the transport, channel architecture, and the events listed.
-Real version remaining: replay-last-known-state on reconnect (currently the client re-fetches via `loadBootstrap`); drop the matchmaking poll once reconnect behavior is observed in browser. Future consumers — richer spectator floor, quick chat, and abandonment policy — are **deferred future consumers of this realtime layer, not rejected features** (see ADR 0004).
+Real version remaining: durable notification rows and an inbox/toast surface for direct challenges, bot greetings, counters, draw offers, game finalization, payment receipts, and account notices; replay-last-known-state on reconnect (currently the client re-fetches via `loadBootstrap`); drop the matchmaking poll once reconnect behavior is observed in browser. Future consumers — richer spectator floor, quick chat, and abandonment policy — are **deferred future consumers of this realtime layer, not rejected features** (see ADR 0004 and `NOTIFICATIONS_NEXT_PASS.md`).
 Phase: **4** transport done; consumer features land in their own slices.
 
 ### 4. One seeded challenge → real challenge + matchmaking
@@ -103,11 +103,12 @@ Today: starting balances are hardcoded in the seed; there is no admin view of th
 Real version: admin views over users, ledger entries, escrow holds, settlements, reports, fair-play review. Manual correction is appending compensating ledger entries — the append-only schema already supports it.
 Phase: **6**.
 
-### 9. Fake money → real money
+### 9. Fake money → payments v1 → cashout
 
-Today: every entry is fake-money; "house" is a pseudo-account; no payment integration.
-Real version: jurisdiction + legal review, payment + payout provider, KYC, AML, sanctions, responsible-play controls, security review of wallet and escrow flows. The ledger schema is intentionally shaped to support real money via a `currency` column without domain rewrites.
-Phase: **7** (gated decision).
+Today: every entry is seeded/fake-money; "house" is a pseudo-account; no payment integration.
+Payments v1: users can buy non-cashout entertainment chips through Stripe Checkout. Webhooks append `purchase` ledger entries to the existing play-token balance; Profile shows receipts; ToS acceptance, refunds, spend caps, geo-blocks, and `HORSEY_PAYMENTS_ENABLED=0` are part of the slice. See `PAYMENTS_NEXT_PASS.md`.
+Cashout version: jurisdiction + legal review, payout provider, KYC, AML, sanctions, responsible-play controls, tax/reporting plan, and security review of wallet/escrow/settlement flows. The ledger schema is intentionally shaped to support future cashout/redeemable balances via a `currency` column without domain rewrites.
+Phase: **Payments v1 before Phase 7; cashout gated to Phase 7**.
 
 ## Trust Tiers
 
@@ -239,17 +240,29 @@ The minimum to let real humans use it unattended.
 - **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
 - **Narrow multiplayer smoke automation.** The one already named in `DEV_QA_WORKFLOW.md` § 5 — pair → checkmate → settle. Not a test pyramid, just the most-repeated path.
 
-### Bucket C — Real-money discovery (non-code)
+### Bucket C — Payments v1
 
-The work that decides whether Phase 7 ships, and where.
+The buy-chips work that lets Horsey charge for entertainment credit while cashout stays closed.
+
+- **Buy Chips panel.** Profile -> Buy Chips package tiles, Stripe Checkout redirect, post-return ledger/receipt state.
+- **Purchase ledger.** `purchases` table plus idempotent Stripe webhook that appends `purchase` ledger entries.
+- **ToS acceptance.** Versioned acceptance at signup and re-acceptance on version bump; no-cashout, no external monetary value, refund posture.
+- **Risk controls.** Geo-block red-line regions before checkout, spend caps, refund path, chargeback logging, `HORSEY_PAYMENTS_ENABLED=0` kill switch.
+- **Cashout waitlist.** Locked "Cashout coming soon" tile and notify-me collection.
+
+Status: **pending**. Canonical detail lives in `PAYMENTS_NEXT_PASS.md`.
+
+### Bucket D — Cashout discovery (non-code)
+
+The work that decides whether redeemable/cashout Phase 7 ships, and where.
 
 - **Gaming attorney conversation.** Costs money. Unblocks everything downstream.
 - **Jurisdiction shortlist + regulatory framing per region.** Skill-gaming vs. sweepstakes vs. licensed sportsbook. The dual-currency model documented under Trust Tiers is one of the answer shapes; others remain open.
 - **Custody model.** Do we hold funds, or does the payment provider? PFML-style escrow? This decision constrains the provider list.
 - **KYC vendor evaluation.**
-- **Payment + payout provider evaluation** — narrow shortlist of providers willing to touch a chess-wagering product in the chosen jurisdictions.
+- **Payout provider evaluation** — narrow shortlist of providers willing to touch a chess-wagering product in the chosen jurisdictions.
 
-Status: **pending** across the board. Bucket C inputs the *code* spec for Phase 7. Without Bucket C, Phase 7 code is premature.
+Status: **pending** across the board. Bucket D inputs the *cashout* code spec for Phase 7. Without Bucket D, cashout code is premature.
 
 ## Phased Plan
 
@@ -386,15 +399,15 @@ Exit criteria:
 - Operators can inspect and resolve stuck games, reports, and fake-money settlement issues.
 - Trust/safety is represented in the system, not just the UI.
 
-### Phase 7 — Real-Money Readiness Gate
+### Phase 7 — Cashout Readiness Gate
 
-Goal: decide if and how Horsey can become real-money in specific jurisdictions.
+Goal: decide if and how Horsey can let users cash out/redeem balances in specific jurisdictions.
 
-**Phase 7 is discovery first, code second.** The Deploy Readiness Bucket § C names the discovery items that block this phase's code work. The deliverables below presuppose that discovery has produced answers. Do not begin Phase 7 *code* (KYC integration, payment integration, Postgres swap, AML pipeline) until Bucket C has named the jurisdiction(s), the custody model, the provider shortlist, and a written legal opinion.
+**Phase 7 is cashout discovery first, code second.** Payments v1 already covers inbound chip purchases with no cashout. The Deploy Readiness Bucket § D names the discovery items that block redeemable-balance and payout work. Do not begin cashout code (KYC integration, payout integration, AML pipeline, redeemable balance rules) until Bucket D has named the jurisdiction(s), the custody model, the provider shortlist, and a written decision.
 
-Deliverables (gated on Bucket C answers):
+Deliverables (gated on Bucket D answers):
 - Jurisdiction and legal/compliance review *complete*.
-- Payment and payout provider integrated.
+- Payout provider integrated.
 - KYC/age verification approach implemented.
 - AML/fraud/chargeback/sanctions plan implemented.
 - Responsible-play controls.
@@ -402,15 +415,15 @@ Deliverables (gated on Bucket C answers):
 - Security review of wallet, escrow, settlement flows.
 - Postgres swap (mock #1) lands here — concurrent-write safety, point-in-time recovery, and audit-grade backups become required, not optional.
 
-Status: **pending** — mock #9. Bucket C discovery has not started.
+Status: **pending** — cashout side of mock #9. Bucket D discovery has not started.
 
-Key decisions (Bucket C):
+Key decisions (Bucket D):
 - Launch geography.
 - Whether Horsey is skill gaming, gambling, sweepstakes, or another regulated model in each target region.
 - Custody model and provider responsibilities.
 
 Exit criteria:
-- A written go/no-go decision exists before any production real-money integration.
+- A written go/no-go decision exists before any production cashout integration.
 
 ## Cross-Cutting Workstreams
 
@@ -442,13 +455,15 @@ The MVP playable loop is functionally complete. The highest-leverage near-term w
 1. **Finish Bucket A (pre-deploy hardening).** Fly.io deploy plumbing + Secure-cookie wiring are now in tree (this session); the remaining items are: email verification + password reset (mock #2 follow-on), structured logs + an external error tracker, and a documented backup/restore for the SQLite-on-volume store. None of these are big slices individually.
 2. **Bucket B item #1: read-only admin slice.** Inspect users / games / ledger / settlements / external account claims / stuck states. Append-only compensating entries for corrections. This is your only answer when something goes wrong with a real tester.
 3. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
-4. **Open Bucket C (real-money discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision. Non-code work, but blocks all Phase 7 code.
-5. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
-6. **Finish trust visibility on inspection surfaces.** Tier borders and compact pips are present on many identity surfaces; Scout Card and full Profile should explain the tier/evidence relationship more clearly without inventing fake trust badges.
-7. **Open Tables tier filtering.** Quick Match already supports tier floors; the Open Tables rail should get a lightweight filter once table volume justifies it.
-8. **Phase 5 retention layer.** Rivalry threads, richer History/Profile stats, and rematch/double-or-nothing/auto-requeue decisions. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
+4. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
+5. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
+6. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
+7. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
+8. **Finish trust visibility on inspection surfaces.** Tier borders and compact pips are present on many identity surfaces; Scout Card and full Profile should explain the tier/evidence relationship more clearly without inventing fake trust badges.
+9. **Open Tables tier filtering.** Quick Match already supports tier floors; the Open Tables rail should get a lightweight filter once table volume justifies it.
+10. **Phase 5 retention layer.** Rivalry threads, richer History/Profile stats, and rematch/double-or-nothing/auto-requeue decisions. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
 
-Notable de-prioritization: more atmosphere / cosmetics cycles, broad E2E investment, and any Phase 7 code work are intentionally below the items above. The first two don't gate deploy; Phase 7 code is gated on Bucket C answers we don't have.
+Notable de-prioritization: more atmosphere / cosmetics cycles, broad E2E investment, and any cashout code work are intentionally below the items above. The first two don't gate deploy; cashout code is gated on Bucket D answers we don't have.
 
 ## First Build Milestone — Local Fake-Money Playable Loop
 
@@ -461,7 +476,7 @@ Scope:
 - Basic post-game settlement/rematch page. **Done** — settlement is real; rematch now issues a real `POST /api/challenges` against the prior opponent at the same stake + time control.
 
 Out of scope for this milestone:
-- Real payments.
+- Cashout / redeemable balances.
 - Full anti-cheat.
 - Production KYC/compliance.
 - Native mobile app.

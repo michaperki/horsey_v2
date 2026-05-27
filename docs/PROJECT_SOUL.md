@@ -48,7 +48,8 @@ Do not capture:
 - Decision update: use BSD-2-Clause `chess.js` for chess rules through Horsey's wrapper package, while keeping board UI custom for now.
 - Current board UI is the accepted custom baseline for this milestone: server-backed rules, legal hints, drag/drop, keyboard navigation, edge coordinates, captured trays, promotion, and mobile-safe tap behavior. Future board work should be scoped as named features rather than reopening a generic "crude board" cleanup loop.
 - The fake-money playable loop is functionally done. The next workstream is **deploy readiness**, not more product surface area — host the loop somewhere a closed-beta tester can reach. SQLite-on-a-volume is the prod store through closed beta; the Postgres swap is a *named pre-real-money slice* (mock #1), not a generic next step. See `IMPLEMENTATION_PLAN.md` § Deploy Readiness Bucket.
-- **Real money is discovery first, code second.** Phase 7 is overwhelmingly legal / jurisdictional / custody / payment-provider / KYC work. Do not write Phase 7 code until that discovery has produced answers on paper.
+- **Payments posture update, 2026-05-27.** Horsey now treats inbound chip purchases as a near-term product slice: users can buy non-cashout entertainment chips, with explicit ToS acceptance and no cashout in v1. Cashout/payouts remain the gated Phase 7 workstream. See `docs/PAYMENTS_NEXT_PASS.md`.
+- **Notifications are product infrastructure, not polish.** A bot or player can initiate a direct challenge only if the recipient has a first-class way to notice, inspect, and act on it. Challenge delivery needs an inbox/toast/badge model backed by durable notification rows, not just transient websocket events. See `docs/NOTIFICATIONS_NEXT_PASS.md`.
 - Keep this first pass high level.
 - Establish a clean working relationship between the user and future coding agents so agents retain the big picture and do not become overly narrow.
 - Working context such as WSL vs Windows PowerShell is valid project memory when it helps future agents operate smoothly.
@@ -68,5 +69,7 @@ Related focused notes:
 - `docs/SOUNDSCAPE_NEXT_PASS.md` records the three-layer sound model (core chess interaction, economic, lobby/social), the tactile/material design principles, the reduced-sensory setting, and the mixing hierarchy that keeps blitz from becoming chaos.
 - `docs/SCOUTING_TRUST_NEXT_PASS.md` records the next-pass product direction for Open Tables hierarchy, Scout Card reveal, trust metrics, narrative labels, and external chess-account onboarding.
 - `docs/LIVENESS_NEXT_PASS.md` records the next-pass priorities for making the lobby feel live: heartbeat-over-WS, live challenge timers, in-progress games feed, and the real rating system that the entire identity layer is currently faking.
+- `docs/PAYMENTS_NEXT_PASS.md` records the buy-chips product posture: Stripe-backed chip purchases now, no cashout in v1, ToS acceptance, refunds, spend caps, kill switch, and cashout waitlist.
+- `docs/NOTIFICATIONS_NEXT_PASS.md` records the durable notification/inbox system needed for direct challenges, bot greetings, turn/draw events, cashout waitlists, and future operational notices.
 - `docs/DEV_QA_WORKFLOW.md` records the current manual two-browser smoke test and the preferred lightweight dev tooling path: scenario fixtures, disposable DBs, and narrow multiplayer smoke automation rather than a sprawling dev panel.
 - `docs/marketing/IMAGE_AD_PROMPTS.md` records reusable image-generation prompts and guardrails for Horsey advertising concepts.

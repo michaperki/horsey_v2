@@ -42,7 +42,7 @@ This is intentionally scoped to *visible* product issues and immediate code hygi
 
 - [x] **`endReason` is rendered raw** in history rows ("checkmate", "resignation", "timeout", "agreement"). Added friendly labels.
 - [x] **History list has no filters/grouping.** Added Wins / Losses / Draws result counts without aggregate net-loss money.
-- [ ] **Spectator settlement shows "Loading…" indefinitely.** When a watched game finalizes, the spectator's right rail says "Table settled · Loading pot settlement…" forever — because `state.activeSettlement` only fills from `/api/games/:id/settlement`, which is player-scoped. The game record itself already carries everything a spectator should see: winner handle, end reason, pot, players + ratings, move count. The fix is a spectator-flavored panel rendered from `game` directly (no settlement fetch) — third-person headline like "alice won by checkmate", end-reason chip, pot stake, optional rating deltas if `game.ratingChange` is populated, and a CTA back to Play. Privacy guardrail per `project_no_loss_advertising`: winner-centric or neutral copy only, no "Y lost $X" framing. (`app.js:finalizedGameSettlementPanel`)
+- [x] **Spectator settlement shows "Loading…" indefinitely.** `finalizedGameSettlementPanel` now branches to a new `spectatorSettlementPanel(game)` when the viewer isn't a player; renders from `game` directly (winner handle + end reason, pot/rake, both sides' rating deltas, move count) with winner-centric copy. End-reason labels extended for `stalemate` / `threefold_repetition` / `insufficient_material`. (`app.js:finalizedGameSettlementPanel`, `app.js:spectatorSettlementPanel`)
 
 ## Profile
 

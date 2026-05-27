@@ -34,7 +34,7 @@ Three primary destinations now, with named slots ready for canonical destination
 
 **Topbar utilities** (right side):
 - **Resume game pill** — only appears when a live game exists; one click returns to the board. Replaces the conditional `Game` nav link with something that's clearly an *action*, not a destination.
-- **Wallet pill** — current `$balance | $escrow` chip; click opens Profile → Wallet section (deferred: also a deposit CTA once Phase 7 lands).
+- **Wallet pill** — current `$balance | $escrow` chip; click opens Profile → Wallet section. Near-term: also exposes Buy Chips once Payments v1 lands. Cashout remains deferred to Phase 7.
 - **Avatar / handle** — logout, settings; eventually links to Profile.
 
 **Flow-stop screens (Wager / Game / Settlement) leave the nav entirely:**
@@ -120,7 +120,8 @@ Play-screen internal IA (hero state machine, shared picker for Find vs Host, rig
 | Balance | ✅ | |
 | Escrow held | ✅ | |
 | Ledger entries | ✅ | Append-only, real |
-| Deposit / payout (canonical) | 🚫 | Deferred to Phase 7 (real money) |
+| Buy chips | 🚫 | Payments v1: Profile -> Buy Chips, Stripe Checkout, no cashout. See `PAYMENTS_NEXT_PASS.md`. |
+| Cashout / payout (canonical) | 🚫 | Deferred to Phase 7 cashout readiness |
 
 ### Profile (new destination, partly built from existing pieces)
 | Surface | Status | Notes |
