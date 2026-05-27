@@ -222,14 +222,13 @@ Three buckets, in order:
 
 ### Bucket A — Pre-deploy hardening (real-money-agnostic)
 
-The minimum to host the fake-money loop somewhere external.
+The minimum to host the fake-money loop somewhere external. **Status: code-side done.** Trailing items that depend on an external account (error tracker, object-storage backup, uptime monitor) are parked in the Backlog below; flip them on when you're ready to pay for the service.
 
 - **Deploy target picked + plumbing in repo.** Status: **done** — Fly.io with a persistent volume for SQLite. See `docs/adr/0006-deploy-target.md`, `fly.toml`, `Dockerfile`.
 - **Production-safe cookies.** Status: **done** for the seam — `Set-Cookie` emits the `Secure` attribute when running behind TLS (`HORSEY_TRUST_PROXY=1` or `NODE_ENV=production`).
 - **Email verification + password reset.** Status: **done** — mock #2 follow-on. Resend HTTP client (no SDK), hashed-token table, four endpoints, soft-verify (account works pre-verification but every privileged surface can later gate on `emailVerifiedAt`), persistent shell banner, `#verify-email/:token` and `#password-reset/:token` routes work even when unauthenticated, password reset deletes every session for the user in the same transaction. Deploy needs `fly secrets set RESEND_API_KEY=re_... EMAIL_FROM='Horsey <onboarding@resend.dev>' HORSEY_APP_URL=https://horsey.fly.dev`.
-- **Observability minimum.** Status: **partial** — structured server logger landed (`apps/api/logger.mjs`, JSON in prod / pretty in dev, per-request `requestId`, health-endpoint silenced, levels via `HORSEY_LOG_LEVEL`, format via `HORSEY_LOG_FORMAT`). External error tracker (Sentry-equivalent) still pending.
-- **Backup + restore story.** Status: **pending** — for SQLite-on-volume, a periodic snapshot of `/data/horsey.db` to object storage with a documented restore command. Replaces "production backups" until the Postgres swap lands.
-- **Health endpoint smoke check from outside.** Status: **partial** — `/api/health` exists; an external uptime check pointing at it is pending.
+- **Structured server logger.** Status: **done** — `apps/api/logger.mjs`. JSON-per-line under `NODE_ENV=production` or `HORSEY_LOG_FORMAT=json`, pretty otherwise. Per-request `requestId`, method, path, status, durationMs. `/api/health` silenced on 2xx so uptime checks don't drown the feed. Levels via `HORSEY_LOG_LEVEL`. The error tracker (Bucket A backlog) plugs into this logger's error path when it lands.
+- **Health endpoint exists.** Status: **done** — `/api/health` returns 200; external uptime monitoring is in the Backlog.
 
 ### Bucket B — Closed-beta operations
 
@@ -263,6 +262,31 @@ The work that decides whether redeemable/cashout Phase 7 ships, and where.
 - **Payout provider evaluation** — narrow shortlist of providers willing to touch a chess-wagering product in the chosen jurisdictions.
 
 Status: **pending** across the board. Bucket D inputs the *cashout* code spec for Phase 7. Without Bucket D, cashout code is premature.
+
+## Backlog
+
+Items that are scoped, named, and acknowledged — but intentionally not the next thing we touch. Most live here because they need an external account, a paid service, or a real human user to justify the work. Don't confuse "in the backlog" with "small": these are deferred, not trivial. Promote into the active buckets / phases when the gating condition is met.
+
+### Operational backlog (Bucket A trailing items)
+
+- **External error tracker.** Sentry (or equivalent). Plugs into `apps/api/logger.mjs`'s error path — when a `level=error` record fires, mirror it to the tracker with the same `requestId` and field shape. Needs: account, DSN, `fly secrets set SENTRY_DSN=...`. Unblocks remote debugging once a closed-beta tester finds something we can't reproduce locally. Until then, the structured logger + `fly logs` is sufficient.
+- **SQLite backup + restore.** Periodic `sqlite3 /data/horsey.db ".backup"` snapshot uploaded to object storage on a cron, with a documented restore command. Needs: an object-storage bucket (e.g. R2, B2, or a free tier S3). Required *before* opening the closed beta to people whose data we don't want to lose; not required to host the loop for ourselves.
+- **External uptime monitoring.** A check hitting `/api/health` from outside the box (UptimeRobot / Better Stack / Pingdom). Pages on outage. Needs: an account.
+
+### Product backlog (named-but-deferred features)
+
+These are tracked in their own docs and the per-screen IA matrix; this list is just a single place to scan what's named but not the active focus.
+
+- **Open Tables tier filtering.** Quick Match already supports tier floors. Open Tables rail gets a lightweight filter once table volume justifies it.
+- **Trust visibility explanation on Scout Card / Profile.** Tier borders and pips are present everywhere — Scout Card and full Profile should narrate the tier/evidence relationship without inventing fake badges. See `docs/SCOUTING_TRUST_NEXT_PASS.md`.
+- **Chess.com verification path.** Lichess bio-claim shipped; Chess.com needs a different mechanism (OAuth, club-name claim, or alternative) since their API has no reliably user-editable text field.
+- **Lichess OAuth/PKCE.** Higher-confidence verified channel than bio-claim.
+- **Per-time-control placement tracking + `placed` tier.** Enables per-surface sweeps eligibility under the dual-currency model.
+- **Per-tab clock visibility throttling.** Mock #5 trailing gap. Real users with backgrounded tabs will find it within a day of being onboarded.
+- **Replay-last-known-state on WS reconnect.** Currently the client re-fetches via `loadBootstrap`. Functional, just chatty.
+- **Drop the matchmaking 2s poll.** Belt-and-suspenders behind the realtime broker. Remove once we trust reconnect behavior in the wild.
+- **Phase 5 retention loops.** Rivalry threads, richer History/Profile stats, double-or-nothing, auto-requeue. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
+- **Postgres swap (mock #1).** Async-ifies every `db.X(...)` call site (~190 in `server.mjs`). Lands at the real-money gate, not before.
 
 ## Phased Plan
 
@@ -450,18 +474,16 @@ Run alongside the phases, not after them:
 
 ## Likely Next Steps
 
-The MVP playable loop is functionally complete. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
+The MVP playable loop is functionally complete; Bucket A is code-side done. The highest-leverage near-term work is no longer about the chess product — it's the operational layer that turns a working laptop demo into something a closed-beta tester can use. Ordered by leverage:
 
-1. **Finish Bucket A (pre-deploy hardening).** Fly.io deploy plumbing, Secure-cookie wiring, email verification + password reset, and the structured server logger are in tree; the remaining items are an external error tracker (Sentry-equivalent) plugged into the logger's error path, and a documented backup/restore for the SQLite-on-volume store. None of these are big slices individually.
-2. **Bucket B item #1: read-only admin slice.** Inspect users / games / ledger / settlements / external account claims / stuck states. Append-only compensating entries for corrections. This is your only answer when something goes wrong with a real tester.
-3. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
-4. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
-5. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
-6. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
-7. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
-8. **Finish trust visibility on inspection surfaces.** Tier borders and compact pips are present on many identity surfaces; Scout Card and full Profile should explain the tier/evidence relationship more clearly without inventing fake trust badges.
-9. **Open Tables tier filtering.** Quick Match already supports tier floors; the Open Tables rail should get a lightweight filter once table volume justifies it.
-10. **Phase 5 retention layer.** Rivalry threads, richer History/Profile stats, and rematch/double-or-nothing/auto-requeue decisions. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
+1. **Bucket B item #1: read-only admin slice.** Inspect users / games / ledger / settlements / external account claims / stuck states. Append-only compensating entries for corrections. This is the only answer when something goes wrong with a real tester.
+2. **Bucket B item #2: narrow multiplayer smoke automation.** Two isolated sessions, pair a game, play the quick checkmate script, assert settlement/history/replay. Smoke harness, not a test pyramid.
+3. **Notification center for challenges.** Durable notification rows, topbar inbox/unread count, online toast, and deep links so bot greetings and human direct challenges are actually receivable. See `NOTIFICATIONS_NEXT_PASS.md`.
+4. **Bucket C payments v1.** Buy Chips panel, Stripe Checkout/webhook, ToS acceptance, purchase receipts, spend caps, refunds, geo-block, kill switch, and cashout waitlist. See `PAYMENTS_NEXT_PASS.md`.
+5. **Open Bucket D (cashout discovery) in parallel.** Gaming-attorney conversation, jurisdiction shortlist, custody-model decision, payout/KYC shortlist. Non-code work, but blocks cashout code.
+6. **Dev scenario runner + trust fixtures.** Shipped already for the `trust-matrix` scenario; continue to expand as new tier-coverage gaps appear.
+
+Everything else named-but-deferred — external error tracker, SQLite backup/restore, uptime monitoring, Open Tables tier filtering, Scout/Profile trust narration, Chess.com verification, Lichess OAuth, `placed` tier, per-tab clock throttling, WS reconnect replay, dropping the matchmaking poll, Phase 5 retention loops, the Postgres swap — lives in **Backlog** above. Items move out of the backlog when their gating condition (external account, real tester traffic, real-money gate, etc.) is met.
 
 Notable de-prioritization: more atmosphere / cosmetics cycles, broad E2E investment, and any cashout code work are intentionally below the items above. The first two don't gate deploy; cashout code is gated on Bucket D answers we don't have.
 
