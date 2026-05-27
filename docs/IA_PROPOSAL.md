@@ -48,7 +48,7 @@ We intentionally name these so they have a slot reserved, not so they ship now:
 
 - **Live** (canonical) — a dedicated spectator floor. The first minimal slice now exists inside Play via the `Live now` feed's `Watch` button and read-only `#game/:id`; a full Live destination can land once there is enough density to warrant its own nav.
 - **Friends / Rivals** (canonical) — relationship features. Add with Phase 5 rivalry/head-to-head work.
-- **Admin** — Phase 6.
+- **Admin** — read-only first cut shipped at `#admin`; gated on `users.is_admin`. Six tabs (Users / Games / Stuck / Ledger / Challenges / External). Phase 6 still owns the mutation/correction tooling and richer fair-play review.
 
 ### Layered user identity (accepted; in flight)
 
