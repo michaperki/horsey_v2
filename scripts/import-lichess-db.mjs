@@ -25,7 +25,6 @@ import { hashPassword } from "../apps/api/auth.mjs";
 const IMPORT_SOURCE = "lichess-import";
 const HANDLE_RE = /^[a-zA-Z0-9_-]{3,20}$/;
 const MIN_PLIES = 10;
-const STARTING_FEN = new Chess().fen();
 
 function parseArgs(args) {
   const out = { pgn: null, limit: 500 };
@@ -68,7 +67,7 @@ function syntheticEmail(lichessHandle) {
 // Strip Lichess move comments + annotations + variations + result markers.
 // Result is a clean SAN token stream.
 function tokenizeMoves(moveText) {
-  let cleaned = moveText
+  const cleaned = moveText
     .replace(/\{[^}]*\}/g, " ")     // {comments}
     .replace(/\([^)]*\)/g, " ")     // (variations) — Lichess DB doesn't normally have these
     .replace(/\$\d+/g, " ")          // $NAGs

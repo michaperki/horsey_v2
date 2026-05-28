@@ -96,6 +96,18 @@ test("summarizeMoveAnalyses excludes book plies from ACPL and top-move match", (
   assert.equal(summary.black.topMoveMatchPct, 50);
 });
 
+test("summarizeMoveAnalyses caps individual cp_loss at 1000 so mate evals don't dominate ACPL", () => {
+  // One mating sequence shouldn't push ACPL into the tens of thousands.
+  // Raw cp_loss values stay uncapped on move_analysis; only the ACPL math caps.
+  const moves = [
+    { side: "white", playedSan: "e4", bestSan: "e4", cpLoss: 0, classification: "best", isBook: false },
+    { side: "white", playedSan: "??", bestSan: "Nf3", cpLoss: 30000, classification: "blunder", isBook: false }
+  ];
+  const summary = summarizeMoveAnalyses(moves);
+  // (0 + 1000) / 2 = 500. Without the cap it would be ~15000.
+  assert.equal(summary.white.acpl, 500);
+});
+
 test("summarizeMoveAnalyses tolerates empty/all-book input", () => {
   assert.deepEqual(summarizeMoveAnalyses([]).white, {
     acpl: 0,

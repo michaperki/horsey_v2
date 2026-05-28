@@ -326,6 +326,13 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_analysis_jobs_pending ON analysis_jobs(status, created_at);
 `;
 
+// Dev-only convenience: when HORSEY_DEV_AUTO_ADMIN=1 outside production,
+// every user reads as admin. Lets a single-developer dev DB skip the manual
+// `UPDATE users SET is_admin=1 WHERE handle='...'` step after every fresh
+// signup. Production explicitly cannot opt into this.
+const DEV_AUTO_ADMIN =
+  process.env.HORSEY_DEV_AUTO_ADMIN === "1" && process.env.NODE_ENV !== "production";
+
 function rowToPublicUser(row) {
   if (!row) return null;
   return {
@@ -337,7 +344,7 @@ function rowToPublicUser(row) {
     onboardingCompletedAt: row.onboarding_completed_at ?? null,
     equippedAvatar: row.equipped_avatar ?? null,
     emailVerifiedAt: row.email_verified_at ?? null,
-    isAdmin: Number(row.is_admin ?? 0) === 1
+    isAdmin: DEV_AUTO_ADMIN || Number(row.is_admin ?? 0) === 1
   };
 }
 

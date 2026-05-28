@@ -17,6 +17,13 @@ export const CLASSIFICATION_THRESHOLDS = {
 // top-move match pct otherwise. Refine when admin review surfaces noise.
 export const DEFAULT_BOOK_PLIES = 8;
 
+// Per-move cp_loss cap used in ACPL aggregation. Once a position is lost,
+// "more lost" doesn't say anything more about move quality — and mate evals
+// (~±30000) would otherwise dominate the average. Lichess uses a similar cap.
+// Raw cp_loss values are still persisted uncapped on move_analysis so the
+// per-ply UI keeps the underlying signal.
+export const ACPL_CAP_CP = 1000;
+
 export function classifyCpLoss(cpLoss, { isTopMove = false } = {}) {
   if (cpLoss == null || Number.isNaN(cpLoss)) return null;
   const loss = Math.max(0, Math.round(cpLoss));
@@ -74,7 +81,7 @@ export function summarizeMoveAnalyses(moveAnalyses) {
     const bucket = sides[m.side];
     if (!bucket) continue;
     bucket.nonBookCount += 1;
-    bucket.totalCpLoss += m.cpLoss ?? 0;
+    bucket.totalCpLoss += Math.min(m.cpLoss ?? 0, ACPL_CAP_CP);
     if (m.bestSan && m.playedSan === m.bestSan) bucket.topMoveMatches += 1;
     if (m.classification === "blunder") bucket.blunders += 1;
     else if (m.classification === "mistake") bucket.mistakes += 1;
