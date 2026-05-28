@@ -23,6 +23,13 @@ ENV HOST=0.0.0.0
 ENV PORT=8787
 ENV HORSEY_DB_PATH=/data/horsey.db
 ENV HORSEY_TRUST_PROXY=1
+ENV STOCKFISH_PATH=/usr/games/stockfish
+
+## Stockfish for offline game analysis (ADR 0008). Server-side execution as a
+## hosted service; we do not redistribute the binary to clients.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends stockfish \
+  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app /app
 

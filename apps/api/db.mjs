@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -268,6 +268,62 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_user_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_user_id, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_reports_game ON reports(game_id);
+
+  -- FAIR_PLAY slice 1 (ADR 0008). Offline game analysis: per-game summary,
+  -- per-ply detail, and a job queue the worker pulls from. Append-mostly —
+  -- a re-analysis writes a new game_analysis row with a higher engine_version
+  -- rather than mutating.
+  CREATE TABLE IF NOT EXISTS game_analysis (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    engine_version TEXT NOT NULL,
+    depth INTEGER NOT NULL,
+    multipv INTEGER NOT NULL,
+    white_acpl INTEGER NOT NULL,
+    black_acpl INTEGER NOT NULL,
+    white_blunders INTEGER NOT NULL,
+    black_blunders INTEGER NOT NULL,
+    white_mistakes INTEGER NOT NULL,
+    black_mistakes INTEGER NOT NULL,
+    white_inaccuracies INTEGER NOT NULL,
+    black_inaccuracies INTEGER NOT NULL,
+    white_top_move_match_pct INTEGER NOT NULL,
+    black_top_move_match_pct INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_game_analysis_game ON game_analysis(game_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS move_analysis (
+    id TEXT PRIMARY KEY,
+    game_analysis_id TEXT NOT NULL,
+    ply INTEGER NOT NULL,
+    side TEXT NOT NULL,
+    played_san TEXT NOT NULL,
+    best_san TEXT,
+    played_eval_cp INTEGER,
+    best_eval_cp INTEGER,
+    cp_loss INTEGER,
+    classification TEXT,
+    is_book INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_move_analysis_game ON move_analysis(game_analysis_id, ply);
+
+  CREATE TABLE IF NOT EXISTS analysis_jobs (
+    id TEXT PRIMARY KEY,
+    game_id TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_analysis_jobs_pending ON analysis_jobs(status, created_at);
 `;
 
 function rowToPublicUser(row) {
@@ -418,6 +474,64 @@ function rowToReport(row) {
     resolvedAt: row.resolved_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
+  };
+}
+
+function rowToGameAnalysis(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    source: row.source,
+    engineVersion: row.engine_version,
+    depth: row.depth,
+    multipv: row.multipv,
+    whiteAcpl: row.white_acpl,
+    blackAcpl: row.black_acpl,
+    whiteBlunders: row.white_blunders,
+    blackBlunders: row.black_blunders,
+    whiteMistakes: row.white_mistakes,
+    blackMistakes: row.black_mistakes,
+    whiteInaccuracies: row.white_inaccuracies,
+    blackInaccuracies: row.black_inaccuracies,
+    whiteTopMoveMatchPct: row.white_top_move_match_pct,
+    blackTopMoveMatchPct: row.black_top_move_match_pct,
+    status: row.status,
+    error: row.error ?? null,
+    createdAt: row.created_at,
+    completedAt: row.completed_at ?? null
+  };
+}
+
+function rowToMoveAnalysis(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    gameAnalysisId: row.game_analysis_id,
+    ply: row.ply,
+    side: row.side,
+    playedSan: row.played_san,
+    bestSan: row.best_san ?? null,
+    playedEvalCp: row.played_eval_cp ?? null,
+    bestEvalCp: row.best_eval_cp ?? null,
+    cpLoss: row.cp_loss ?? null,
+    classification: row.classification ?? null,
+    isBook: !!row.is_book,
+    createdAt: row.created_at
+  };
+}
+
+function rowToAnalysisJob(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    status: row.status,
+    attempts: row.attempts,
+    lastError: row.last_error ?? null,
+    createdAt: row.created_at,
+    startedAt: row.started_at ?? null,
+    completedAt: row.completed_at ?? null
   };
 }
 
@@ -956,6 +1070,59 @@ function makeApi(db) {
       WHERE id = ?
     `),
 
+    // Analysis (ADR 0008).
+    insertAnalysisJob: db.prepare(`
+      INSERT OR IGNORE INTO analysis_jobs (id, game_id, status, attempts, created_at)
+      VALUES (?, ?, 'pending', 0, ?)
+    `),
+    findAnalysisJobByGame: db.prepare("SELECT * FROM analysis_jobs WHERE game_id = ?"),
+    findAnalysisJobById: db.prepare("SELECT * FROM analysis_jobs WHERE id = ?"),
+    claimAnalysisJob: db.prepare(`
+      UPDATE analysis_jobs
+      SET status = 'running', attempts = attempts + 1, started_at = ?
+      WHERE id = (
+        SELECT id FROM analysis_jobs WHERE status = 'pending'
+        ORDER BY created_at LIMIT 1
+      )
+      RETURNING *
+    `),
+    completeAnalysisJob: db.prepare(`
+      UPDATE analysis_jobs
+      SET status = ?, last_error = ?, completed_at = ?
+      WHERE id = ?
+    `),
+    requeueAnalysisJob: db.prepare(`
+      UPDATE analysis_jobs
+      SET status = 'pending', last_error = ?, started_at = NULL
+      WHERE id = ?
+    `),
+    insertGameAnalysis: db.prepare(`
+      INSERT INTO game_analysis
+        (id, game_id, source, engine_version, depth, multipv,
+         white_acpl, black_acpl,
+         white_blunders, black_blunders,
+         white_mistakes, black_mistakes,
+         white_inaccuracies, black_inaccuracies,
+         white_top_move_match_pct, black_top_move_match_pct,
+         status, error, created_at, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    findLatestGameAnalysis: db.prepare(`
+      SELECT * FROM game_analysis WHERE game_id = ?
+      ORDER BY created_at DESC LIMIT 1
+    `),
+    findGameAnalysisById: db.prepare("SELECT * FROM game_analysis WHERE id = ?"),
+    insertMoveAnalysis: db.prepare(`
+      INSERT INTO move_analysis
+        (id, game_analysis_id, ply, side, played_san, best_san,
+         played_eval_cp, best_eval_cp, cp_loss, classification, is_book, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listMoveAnalysisFor: db.prepare(`
+      SELECT * FROM move_analysis WHERE game_analysis_id = ?
+      ORDER BY ply
+    `),
+
     findNotification: db.prepare(`
       SELECT * FROM notifications WHERE id = ?
     `),
@@ -1404,6 +1571,84 @@ function makeApi(db) {
       const now = new Date().toISOString();
       stmts.updateReportStatus.run(status, adminNote, resolvedBy, resolvedAt, now, id);
       return rowToReport(stmts.findReport.get(id));
+    },
+
+    // Analysis (ADR 0008).
+    enqueueAnalysisJob({ id, gameId }) {
+      stmts.insertAnalysisJob.run(id, gameId, new Date().toISOString());
+      return rowToAnalysisJob(stmts.findAnalysisJobByGame.get(gameId));
+    },
+    findAnalysisJobByGame(gameId) {
+      return rowToAnalysisJob(stmts.findAnalysisJobByGame.get(gameId));
+    },
+    findAnalysisJobById(id) {
+      return rowToAnalysisJob(stmts.findAnalysisJobById.get(id));
+    },
+    claimNextAnalysisJob() {
+      const row = stmts.claimAnalysisJob.get(new Date().toISOString());
+      return rowToAnalysisJob(row);
+    },
+    completeAnalysisJob(id, { status, error = null }) {
+      stmts.completeAnalysisJob.run(status, error, new Date().toISOString(), id);
+      return rowToAnalysisJob(stmts.findAnalysisJobById.get(id));
+    },
+    requeueAnalysisJob(id, { error = null } = {}) {
+      stmts.requeueAnalysisJob.run(error, id);
+      return rowToAnalysisJob(stmts.findAnalysisJobById.get(id));
+    },
+    insertGameAnalysis(record) {
+      const now = new Date().toISOString();
+      stmts.insertGameAnalysis.run(
+        record.id,
+        record.gameId,
+        record.source,
+        record.engineVersion,
+        record.depth,
+        record.multipv,
+        record.whiteAcpl,
+        record.blackAcpl,
+        record.whiteBlunders,
+        record.blackBlunders,
+        record.whiteMistakes,
+        record.blackMistakes,
+        record.whiteInaccuracies,
+        record.blackInaccuracies,
+        record.whiteTopMoveMatchPct,
+        record.blackTopMoveMatchPct,
+        record.status ?? "complete",
+        record.error ?? null,
+        record.createdAt ?? now,
+        record.completedAt ?? now
+      );
+      return rowToGameAnalysis(stmts.findGameAnalysisById.get(record.id));
+    },
+    insertMoveAnalyses(rows) {
+      const now = new Date().toISOString();
+      const insertMany = db.transaction((batch) => {
+        for (const row of batch) {
+          stmts.insertMoveAnalysis.run(
+            row.id,
+            row.gameAnalysisId,
+            row.ply,
+            row.side,
+            row.playedSan,
+            row.bestSan ?? null,
+            row.playedEvalCp ?? null,
+            row.bestEvalCp ?? null,
+            row.cpLoss ?? null,
+            row.classification ?? null,
+            row.isBook ? 1 : 0,
+            row.createdAt ?? now
+          );
+        }
+      });
+      insertMany(rows);
+    },
+    findLatestGameAnalysisForGame(gameId) {
+      return rowToGameAnalysis(stmts.findLatestGameAnalysis.get(gameId));
+    },
+    listMoveAnalysisForAnalysis(gameAnalysisId) {
+      return stmts.listMoveAnalysisFor.all(gameAnalysisId).map(rowToMoveAnalysis);
     },
 
     // Purchases.

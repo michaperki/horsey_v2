@@ -4988,6 +4988,7 @@ function renderAdmin() {
     : state.adminError
     ? `<p class="error">${escapeHtml(state.adminError)}</p>`
     : renderAdminBody(activeTab);
+  const analysisPanel = state.adminAnalysisFor ? renderAdminAnalysisPanel() : "";
   return `
     <article class="card admin-panel">
       <header>
@@ -4997,7 +4998,95 @@ function renderAdmin() {
       <nav class="admin-tabs">${tabBar}</nav>
       <div class="admin-body">${body}</div>
     </article>
+    ${analysisPanel}
   `;
+}
+
+function renderAdminAnalysisPanel() {
+  const gameId = state.adminAnalysisFor;
+  const data = state.adminAnalysisData || {};
+  const job = data.job;
+  const analysis = data.analysis;
+  const moves = data.moves || [];
+  const header = `
+    <header class="analysis-header">
+      <h3>Game ${escapeHtml(gameId.slice(0, 16))} · analysis</h3>
+      <button class="mini-button" data-admin-analysis-close>Close</button>
+    </header>`;
+
+  const body = (() => {
+    if (state.adminAnalysisLoading) return `<p class="muted">Loading…</p>`;
+    if (state.adminAnalysisError) return `<p class="error">${escapeHtml(state.adminAnalysisError)}</p>`;
+    if (!job && !analysis) {
+      return `
+        <p class="muted">No analysis run yet for this game.</p>
+        <button class="primary" data-admin-game-analyze="${escapeHtml(gameId)}">Enqueue analysis</button>
+      `;
+    }
+    const jobLine = job
+      ? `<p class="muted small">Job: <strong>${escapeHtml(job.status)}</strong> · attempts ${job.attempts}${job.lastError ? ` · ${escapeHtml(job.lastError)}` : ""}</p>`
+      : "";
+    if (!analysis) {
+      return `
+        ${jobLine}
+        <p class="muted">Analysis pending.</p>
+        <button class="mini-button" data-admin-game-analyze="${escapeHtml(gameId)}">Re-enqueue</button>
+      `;
+    }
+    return `
+      ${jobLine}
+      <p class="muted small">${escapeHtml(analysis.engineVersion)} · depth ${analysis.depth} · ${escapeHtml(analysis.source)}</p>
+      ${renderAdminAnalysisSummary(analysis)}
+      ${renderAdminAnalysisMoves(moves)}
+      <button class="mini-button" data-admin-game-analyze="${escapeHtml(gameId)}">Re-analyze</button>
+    `;
+  })();
+
+  return `<article class="card admin-analysis-panel">${header}${body}</article>`;
+}
+
+function renderAdminAnalysisSummary(a) {
+  const row = (label, white, black) =>
+    `<tr><th>${escapeHtml(label)}</th><td>${escapeHtml(String(white))}</td><td>${escapeHtml(String(black))}</td></tr>`;
+  return `
+    <table class="admin-analysis-summary">
+      <thead><tr><th></th><th>White</th><th>Black</th></tr></thead>
+      <tbody>
+        ${row("ACPL", a.whiteAcpl, a.blackAcpl)}
+        ${row("Blunders", a.whiteBlunders, a.blackBlunders)}
+        ${row("Mistakes", a.whiteMistakes, a.blackMistakes)}
+        ${row("Inaccuracies", a.whiteInaccuracies, a.blackInaccuracies)}
+        ${row("Top-move match", `${a.whiteTopMoveMatchPct}%`, `${a.blackTopMoveMatchPct}%`)}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderAdminAnalysisMoves(moves) {
+  if (!moves.length) return `<p class="muted small">No move-level rows.</p>`;
+  const rows = moves.map((m) => `
+    <tr class="analysis-move analysis-${escapeHtml(m.classification || (m.isBook ? "book" : "good"))}">
+      <td>${m.ply}</td>
+      <td>${escapeHtml(m.side[0].toUpperCase())}</td>
+      <td>${escapeHtml(m.playedSan)}</td>
+      <td>${escapeHtml(m.bestSan || "—")}</td>
+      <td>${m.playedEvalCp != null ? formatEvalCp(m.playedEvalCp) : "—"}</td>
+      <td>${m.cpLoss != null ? m.cpLoss : "—"}</td>
+      <td>${escapeHtml(m.isBook ? "book" : (m.classification || ""))}</td>
+    </tr>
+  `).join("");
+  return `
+    <table class="admin-analysis-moves">
+      <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Class</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+function formatEvalCp(cp) {
+  if (Math.abs(cp) >= 29000) return cp > 0 ? "+M" : "-M";
+  const sign = cp >= 0 ? "+" : "";
+  return `${sign}${(cp / 100).toFixed(2)}`;
 }
 
 function renderAdminBody(tabId) {
@@ -5112,7 +5201,10 @@ function adminGameActionsCell(g) {
   const adjustButton = g.state === "finalized"
     ? `<button class="mini-button" data-admin-game-adjust="${escapeHtml(g.id)}">Adjust</button>`
     : "";
-  return `<div class="admin-actions">${voidButton}${adjustButton}</div>`;
+  const analyzeButton = g.state === "finalized"
+    ? `<button class="mini-button" data-admin-game-analysis="${escapeHtml(g.id)}">Analysis</button>`
+    : "";
+  return `<div class="admin-actions">${voidButton}${adjustButton}${analyzeButton}</div>`;
 }
 
 function adminRestrictionsCell(u) {
@@ -5255,6 +5347,44 @@ async function adminVoidGame(gameId) {
     state.adminError = error.message;
   } finally {
     state.adminLoading = false;
+    render();
+  }
+}
+
+async function adminOpenAnalysis(gameId) {
+  state.adminAnalysisFor = gameId;
+  state.adminAnalysisLoading = true;
+  state.adminAnalysisError = null;
+  render();
+  try {
+    const data = await getJson(`/api/admin/games/${encodeURIComponent(gameId)}/analysis`);
+    state.adminAnalysisData = data;
+  } catch (error) {
+    state.adminAnalysisError = error.message;
+  } finally {
+    state.adminAnalysisLoading = false;
+    render();
+  }
+}
+
+function adminCloseAnalysis() {
+  state.adminAnalysisFor = null;
+  state.adminAnalysisData = null;
+  state.adminAnalysisError = null;
+  render();
+}
+
+async function adminEnqueueAnalysis(gameId) {
+  state.adminAnalysisLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/games/${encodeURIComponent(gameId)}/analyze`, {});
+    const data = await getJson(`/api/admin/games/${encodeURIComponent(gameId)}/analysis`);
+    state.adminAnalysisData = data;
+  } catch (error) {
+    state.adminAnalysisError = error.message;
+  } finally {
+    state.adminAnalysisLoading = false;
     render();
   }
 }
@@ -5548,6 +5678,15 @@ function render() {
   });
   document.querySelectorAll("[data-admin-game-adjust]").forEach((b) => {
     b.addEventListener("click", () => adminAdjustGame(b.dataset.adminGameAdjust));
+  });
+  document.querySelectorAll("[data-admin-game-analysis]").forEach((b) => {
+    b.addEventListener("click", () => adminOpenAnalysis(b.dataset.adminGameAnalysis));
+  });
+  document.querySelectorAll("[data-admin-game-analyze]").forEach((b) => {
+    b.addEventListener("click", () => adminEnqueueAnalysis(b.dataset.adminGameAnalyze));
+  });
+  document.querySelectorAll("[data-admin-analysis-close]").forEach((b) => {
+    b.addEventListener("click", () => adminCloseAnalysis());
   });
   document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
     b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));

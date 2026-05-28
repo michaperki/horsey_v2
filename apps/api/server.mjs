@@ -128,6 +128,9 @@ const devAccountPassword = process.env.HORSEY_DEV_ACCOUNT_PASSWORD || "password1
 const enableDevBots =
   process.env.HORSEY_ENABLE_DEV_BOTS === "1" && process.env.NODE_ENV !== "production";
 let botDaemon = null;
+const analysisEnabled =
+  process.env.HORSEY_ANALYSIS_ENABLED === "1" && !!process.env.STOCKFISH_PATH;
+let analysisWorker = null;
 const rateLimits = new Map();
 
 const RATE_LIMITS = {
@@ -1544,6 +1547,27 @@ function finalizeGame(game, { result, reason }) {
   })();
   clearClockTimeout(game.id);
   for (const m of unlockedMilestones) publishMilestoneUnlocked(m);
+  enqueueAnalysisJobIfNeeded(game.id);
+}
+
+// Idempotent — the `analysis_jobs.game_id` UNIQUE index + INSERT OR IGNORE
+// guards against double-enqueue, but we also guard the call site so the
+// worker doesn't spin on dead jobs. Aborted games skip the worker entirely.
+function enqueueAnalysisJobIfNeeded(gameId) {
+  try {
+    const existing = db.findAnalysisJobByGame(gameId);
+    if (existing) return;
+    const finalized = db.getGame(gameId);
+    if (!finalized || finalized.state !== "finalized") return;
+    if (!(finalized.moves?.length > 0)) return;
+    db.enqueueAnalysisJob({ id: newId("anj"), gameId });
+  } catch (err) {
+    logger.warn("failed to enqueue analysis job", {
+      event: "analysis.enqueue_failed",
+      gameId,
+      err
+    });
+  }
 }
 
 function publishMilestoneUnlocked(milestone) {
@@ -3430,6 +3454,44 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
+  if (req.method === "GET" && (m = pathname.match(/^\/api\/admin\/games\/([^/]+)\/analysis$/))) {
+    try {
+      requireAdmin(viewer);
+      const gameId = m[1];
+      const job = db.findAnalysisJobByGame(gameId);
+      const analysis = db.findLatestGameAnalysisForGame(gameId);
+      const moves = analysis ? db.listMoveAnalysisForAnalysis(analysis.id) : [];
+      return json(res, 200, { job, analysis, moves });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/games\/([^/]+)\/analyze$/))) {
+    try {
+      requireAdmin(viewer);
+      const gameId = m[1];
+      const game = db.getGame(gameId);
+      if (!game) {
+        const e = new RangeError("game not found");
+        e.code = "game_not_found"; throw e;
+      }
+      if (game.state !== "finalized") {
+        const e = new RangeError("only finalized games are analyzable");
+        e.code = "game_not_finalized"; throw e;
+      }
+      const existing = db.findAnalysisJobByGame(gameId);
+      if (existing && existing.status === "running") {
+        return json(res, 200, { job: existing, requeued: false });
+      }
+      if (existing && existing.status === "failed") {
+        const requeued = db.requeueAnalysisJob(existing.id, { error: null });
+        return json(res, 200, { job: requeued, requeued: true });
+      }
+      if (existing) return json(res, 200, { job: existing, requeued: false });
+      const job = db.enqueueAnalysisJob({ id: newId("anj"), gameId });
+      return json(res, 201, { job, requeued: false });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   if (req.method === "GET" && pathname === "/api/admin/purchases") {
     try {
       requireAdmin(viewer);
@@ -3711,6 +3773,10 @@ export async function closeServerResources() {
     await botDaemon.stop();
     botDaemon = null;
   }
+  if (analysisWorker) {
+    await analysisWorker.stop();
+    analysisWorker = null;
+  }
   wss.close();
   db.close();
 }
@@ -3733,6 +3799,21 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       );
     }
     rehydrateClockTimeouts();
+    if (analysisEnabled) {
+      try {
+        const { startAnalysisWorker } = await import("./analysis-worker.mjs");
+        analysisWorker = startAnalysisWorker({
+          db,
+          logger: logger.child({ component: "analysis" }),
+          enginePath: process.env.STOCKFISH_PATH
+        });
+      } catch (err) {
+        logger.warn("analysis worker failed to start", {
+          event: "startup.analysis_worker_failed",
+          err
+        });
+      }
+    }
     if (enableDevBots) {
       try {
         const { startBotDaemon } = await import("./dev-bots.mjs");
