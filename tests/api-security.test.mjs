@@ -41,6 +41,13 @@ test("API allows live spectators but protects settlement and finalized game read
   assert.equal(acceptedChallengeRead.status, 403);
   assert.equal(acceptedChallengeRead.body.error, "not_your_challenge");
 
+  // Play a move first so resign produces a true finalize (loss), not the
+  // pre-move abort path introduced for OPERATIONAL_POLICY.md § 1.10.
+  const whitePlayer = game.players.find((p) => p.color === "white");
+  const whiteClient = whitePlayer.id === alice.user.id ? alice : bob;
+  const firstMove = await fixture.post(whiteClient, `/api/games/${game.id}/moves`, { from: "e2", to: "e4" });
+  assert.equal(firstMove.status, 200);
+
   const resigningClient = game.players[0].id === alice.user.id ? alice : bob;
   const resigned = await fixture.post(resigningClient, `/api/games/${game.id}/resign`);
   assert.equal(resigned.status, 200);
@@ -50,9 +57,10 @@ test("API allows live spectators but protects settlement and finalized game read
   assert.equal(outsiderFinalizedGame.status, 403);
   assert.equal(outsiderFinalizedGame.body.error, "not_a_player");
 
-  const currentTurnClient = game.turn === game.players.find((p) => p.id === alice.user.id).color ? alice : bob;
-  const move = game.turn === "white" ? { from: "e2", to: "e4" } : { from: "e7", to: "e5" };
-  const moveAfterFinalized = await fixture.post(currentTurnClient, `/api/games/${game.id}/moves`, move);
+  const opponentClient = resigningClient === alice ? bob : alice;
+  const opponentColor = game.players.find((p) => p.id === opponentClient.user.id).color;
+  const move = opponentColor === "white" ? { from: "e2", to: "e4" } : { from: "e7", to: "e5" };
+  const moveAfterFinalized = await fixture.post(opponentClient, `/api/games/${game.id}/moves`, move);
   assert.equal(moveAfterFinalized.status, 409);
   assert.equal(moveAfterFinalized.body.error, "game_already_finalized");
 });
@@ -282,6 +290,11 @@ test("settlement reports a rating change after a decisive game", async (t) => {
   const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
   const game = accepted.body.game;
 
+  // A decisive game needs at least one move so the resign path finalizes
+  // (post-OPERATIONAL_POLICY.md § 1.10, pre-move resigns abort instead).
+  const whiteClient = game.players.find((p) => p.color === "white").id === alice.user.id ? alice : bob;
+  await fixture.post(whiteClient, `/api/games/${game.id}/moves`, { from: "e2", to: "e4" });
+
   const winningClient = game.players[0].id === alice.user.id ? bob : alice;
   const losingClient = winningClient === alice ? bob : alice;
   const resigned = await fixture.post(losingClient, `/api/games/${game.id}/resign`);
@@ -310,6 +323,10 @@ test("user profile aggregates h2h and suppresses negative viewer dollar totals",
     timeControl: "3+0"
   });
   const firstAccepted = await fixture.post(bob, `/api/challenges/${firstChallenge.body.challenge.id}/accept`);
+  // Need at least one move before resign so the game finalizes (pre-move
+  // resign aborts — see OPERATIONAL_POLICY.md § 1.10).
+  const firstWhite = firstAccepted.body.game.players.find((p) => p.color === "white").id === alice.user.id ? alice : bob;
+  await fixture.post(firstWhite, `/api/games/${firstAccepted.body.game.id}/moves`, { from: "e2", to: "e4" });
   const firstResigned = await fixture.post(alice, `/api/games/${firstAccepted.body.game.id}/resign`);
   assert.equal(firstResigned.status, 200);
 
@@ -318,6 +335,8 @@ test("user profile aggregates h2h and suppresses negative viewer dollar totals",
     timeControl: "3+0"
   });
   const secondAccepted = await fixture.post(bob, `/api/challenges/${secondChallenge.body.challenge.id}/accept`);
+  const secondWhite = secondAccepted.body.game.players.find((p) => p.color === "white").id === alice.user.id ? alice : bob;
+  await fixture.post(secondWhite, `/api/games/${secondAccepted.body.game.id}/moves`, { from: "e2", to: "e4" });
   const secondResigned = await fixture.post(bob, `/api/games/${secondAccepted.body.game.id}/resign`);
   assert.equal(secondResigned.status, 200);
 
@@ -598,7 +617,10 @@ test("flagged players lose before taking live actions", async (t) => {
     ...data.clock,
     whiteMs: 1,
     sideToMove: "white",
-    lastMoveAt: new Date(Date.now() - 1000).toISOString()
+    lastMoveAt: new Date(Date.now() - 1000).toISOString(),
+    // Post-first-moves: the main clock is ticking, so the flag fires. The
+    // first-move pause path is exercised in tests/pre-move-abort.test.mjs.
+    firstMovesMade: 2
   };
   db.prepare("UPDATE games SET data_json = ? WHERE id = ?").run(JSON.stringify(data), game.id);
   db.close();

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  abortGameSettlement,
   calculatePot,
   cents,
   createEscrowHold,
@@ -258,6 +259,78 @@ test("settleGame rejects when winnerId is not in playerIds", () => {
       ledgerEntries: ledger
     }),
     /winnerId/
+  );
+});
+
+test("abortGameSettlement returns both stakes with no rake and no wager entries", () => {
+  const stake = cents(250);
+  const ledger = seededLedger(stake);
+
+  const { newEntries, alreadySettled } = abortGameSettlement({
+    gameId: "game_1",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    ledgerEntries: ledger
+  });
+
+  assert.equal(alreadySettled, false);
+  assert.equal(newEntries.length, 2);
+  for (const entry of newEntries) {
+    assert.equal(entry.type, "escrow_release");
+    assert.equal(entry.availableDeltaCents, stake);
+    assert.equal(entry.escrowDeltaCents, -stake);
+  }
+  // No rake, no wager_win/loss/draw entries written.
+  assert.equal(newEntries.some((e) => e.type === "rake"), false);
+  assert.equal(newEntries.some((e) => e.type.startsWith("wager_")), false);
+
+  // After applying the new entries, both players are made whole.
+  const finalLedger = [...ledger, ...newEntries];
+  assert.equal(walletSummary(finalLedger, "usr_w").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, "usr_l").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, HOUSE_USER_ID === undefined ? "house" : HOUSE_USER_ID).balanceCents, 0);
+});
+
+test("abortGameSettlement is idempotent when escrow already released", () => {
+  const stake = cents(250);
+  const ledger = seededLedger(stake);
+  const first = abortGameSettlement({
+    gameId: "game_1",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    ledgerEntries: ledger
+  });
+  const replayed = abortGameSettlement({
+    gameId: "game_1",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    ledgerEntries: [...ledger, ...first.newEntries]
+  });
+  assert.equal(replayed.alreadySettled, true);
+  assert.equal(replayed.newEntries.length, 0);
+});
+
+test("abortGameSettlement requires an escrow_hold for both players", () => {
+  const ledger = [
+    createLedgerEntry({
+      id: "led_seed",
+      userId: "usr_w",
+      type: "seed_grant",
+      availableDeltaCents: cents(1000)
+    })
+  ];
+  assert.throws(
+    () => abortGameSettlement({
+      gameId: "game_1",
+      challengeId: "chg_1",
+      stakeCents: cents(250),
+      playerIds: ["usr_w", "usr_l"],
+      ledgerEntries: ledger
+    }),
+    /escrow_hold/
   );
 });
 

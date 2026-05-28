@@ -9,6 +9,8 @@ export const SETTLEMENT_ENTRY_TYPES = new Set([
   "rake"
 ]);
 
+export const ABORT_REASONS = new Set(["aborted_pre_move"]);
+
 export function cents(amount) {
   if (!Number.isFinite(amount)) {
     throw new TypeError("amount must be a finite number");
@@ -246,6 +248,48 @@ export function settleGame({
   }
 
   return { newEntries, entries: newEntries, alreadySettled: false, pot };
+}
+
+export function abortGameSettlement({
+  gameId,
+  challengeId,
+  stakeCents,
+  playerIds,
+  ledgerEntries,
+  createdAt = new Date().toISOString()
+}) {
+  if (!gameId || !challengeId) {
+    throw new TypeError("abortGameSettlement requires gameId and challengeId");
+  }
+  if (!Array.isArray(playerIds) || playerIds.length !== 2 || playerIds[0] === playerIds[1]) {
+    throw new TypeError("playerIds must be two distinct ids");
+  }
+  if (!Number.isInteger(stakeCents) || stakeCents <= 0) {
+    throw new RangeError("stakeCents must be a positive integer");
+  }
+
+  const existing = findSettlementEntries(ledgerEntries, gameId);
+  if (existing.length > 0) {
+    return { newEntries: [], entries: existing, alreadySettled: true };
+  }
+
+  const hasHold = (userId) => ledgerEntries.some(
+    (entry) =>
+      entry.userId === userId &&
+      entry.type === "escrow_hold" &&
+      entry.refId === challengeId
+  );
+  if (!hasHold(playerIds[0]) || !hasHold(playerIds[1])) {
+    const error = new RangeError("abortGameSettlement requires an escrow_hold for both players");
+    error.code = "missing_escrow_hold";
+    throw error;
+  }
+
+  const newEntries = [
+    releaseEntry({ gameId, userId: playerIds[0], stakeCents, createdAt }),
+    releaseEntry({ gameId, userId: playerIds[1], stakeCents, createdAt })
+  ];
+  return { newEntries, entries: newEntries, alreadySettled: false };
 }
 
 export function transitionChallenge(challenge, nextState, extra = {}) {

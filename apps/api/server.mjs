@@ -33,6 +33,7 @@ import {
 } from "./email.mjs";
 import { applyMove, STARTING_FEN, summarizeGame } from "../../packages/chess/src/board.mjs";
 import {
+  abortGameSettlement,
   calculatePot,
   createEscrowHold,
   findSettlementEntries,
@@ -42,6 +43,7 @@ import {
 } from "../../packages/shared/domain.mjs";
 import {
   applyMoveToClock,
+  FIRST_MOVE_DEADLINE_MS,
   flaggedSide,
   initClockState,
   msUntilFlag,
@@ -998,16 +1000,22 @@ function settlementPayload(game, viewerId) {
 
   const stakeCents = game.pot?.stakeCents ?? 0;
   const pot = stakeCents ? calculatePot({ stakeCents }) : { grossPotCents: 0, rakeCents: 0, netPotCents: 0 };
-  const isDraw = !winEntry && entries.some((e) => e.type === "wager_draw");
+  const isAborted = game.state === "aborted";
+  const isDraw = !isAborted && !winEntry && entries.some((e) => e.type === "wager_draw");
   const winnerId = winEntry?.userId ?? null;
   const viewerWon = winnerId === viewerId;
   let result = "pending";
-  if (finalized) result = isDraw ? "draw" : viewerWon ? "win" : "loss";
+  if (finalized) {
+    if (isAborted) result = "aborted";
+    else if (isDraw) result = "draw";
+    else result = viewerWon ? "win" : "loss";
+  }
 
   let creditedCents = 0;
   if (finalized) {
     const release = releaseEntry?.availableDeltaCents ?? 0;
-    if (isDraw) creditedCents = release + (drawEntry?.availableDeltaCents ?? 0);
+    if (isAborted) creditedCents = release;
+    else if (isDraw) creditedCents = release + (drawEntry?.availableDeltaCents ?? 0);
     else if (viewerWon) creditedCents = release + (winEntry?.availableDeltaCents ?? 0);
   }
 
@@ -1535,9 +1543,16 @@ function publishMilestoneUnlocked(milestone) {
 }
 
 function resignGame(viewer, game) {
-  if (game.state === "finalized") {
+  if (game.state === "finalized" || game.state === "aborted") {
     const e = new RangeError("game already finalized");
     e.code = "game_already_finalized"; throw e;
+  }
+  // Pre-move resign collapses to an abort — no rake, both stakes returned.
+  // Closing the tab and clicking "resign" before any move should feel the same.
+  if ((game.moves || []).length === 0) {
+    recordGameEvent(game.id, "resigned", { byUserId: viewer.id, preMove: true });
+    abortGame(game, { reason: "aborted_pre_move" });
+    return;
   }
   const resigning = game.players.find((p) => p.id === viewer.id);
   const result = resigning.color === "white" ? "black_win" : "white_win";
@@ -1601,8 +1616,86 @@ function rehydrateClockTimeouts() {
       publishGameFinalized(refreshed);
     } else {
       scheduleClockTimeout(game);
+      scheduleFirstMoveTimeout(game);
     }
   }
+}
+
+// First-move abort scheduler (OPERATIONAL_POLICY.md § 1.10).
+// While moves.length < 2, the side-to-move has FIRST_MOVE_DEADLINE_MS from
+// game.clock.lastMoveAt to play their first move; if they miss it, the game
+// aborts and both stakes are returned with no rake.
+// `HORSEY_FIRST_MOVE_DEADLINE_MS` is a test hook for shrinking the window.
+const firstMoveDeadlineMs = Number(process.env.HORSEY_FIRST_MOVE_DEADLINE_MS) || FIRST_MOVE_DEADLINE_MS;
+const firstMoveTimeouts = new Map();
+
+function clearFirstMoveTimeout(gameId) {
+  const handle = firstMoveTimeouts.get(gameId);
+  if (handle) {
+    clearTimeout(handle);
+    firstMoveTimeouts.delete(gameId);
+  }
+}
+
+function firstMoveDeadlineAt(game) {
+  if (!game?.clock || game.state !== "live") return null;
+  if ((game.moves || []).length >= 2) return null;
+  return Date.parse(game.clock.lastMoveAt) + firstMoveDeadlineMs;
+}
+
+function scheduleFirstMoveTimeout(game) {
+  clearFirstMoveTimeout(game.id);
+  const deadlineMs = firstMoveDeadlineAt(game);
+  if (deadlineMs == null) return;
+  const wait = Math.max(0, deadlineMs - Date.now()) + 50;
+  const handle = setTimeout(() => {
+    const fresh = db.getGame(game.id);
+    if (!fresh || fresh.state !== "live") return;
+    if ((fresh.moves || []).length >= 2) return;
+    if (firstMoveDeadlineAt(fresh) > Date.now()) {
+      scheduleFirstMoveTimeout(fresh);
+      return;
+    }
+    abortGame(fresh, { reason: "aborted_pre_move" });
+    const refreshed = db.getGame(fresh.id);
+    publishGameFinalized(refreshed);
+  }, wait);
+  if (typeof handle.unref === "function") handle.unref();
+  firstMoveTimeouts.set(game.id, handle);
+}
+
+function abortGame(game, { reason = "aborted_pre_move" } = {}) {
+  if (game.state !== "live") return;
+  const challenge = db.getChallenge(game.challengeId);
+  if (!challenge || challenge.state !== "accepted") {
+    const e = new RangeError("challenge must be accepted before abort");
+    e.code = "game_not_ready"; throw e;
+  }
+  const [a, b] = game.players;
+  db.transaction(() => {
+    const outcome = abortGameSettlement({
+      gameId: game.id,
+      challengeId: challenge.id,
+      stakeCents: challenge.stakeCents,
+      playerIds: [a.id, b.id],
+      ledgerEntries: db.listLedger(),
+      createdAt: new Date().toISOString()
+    });
+    if (outcome.newEntries.length > 0) {
+      db.appendLedger(outcome.newEntries);
+      const endedAt = new Date().toISOString();
+      db.saveGame({
+        ...game,
+        state: "aborted",
+        winnerId: null,
+        endReason: reason,
+        endedAt
+      });
+      recordGameEvent(game.id, "aborted", { reason });
+    }
+  })();
+  clearClockTimeout(game.id);
+  clearFirstMoveTimeout(game.id);
 }
 
 function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
@@ -2343,6 +2436,7 @@ async function routeApi(req, res) {
       for (const cleaned of accepted.cleanedChallenges) publishChallengeUpdated(cleaned);
       publishMatchmakingMatched(game);
       scheduleClockTimeout(game);
+      scheduleFirstMoveTimeout(game);
       return json(res, 200, {
         challenge: challengePayload(updated, viewer.id),
         viewer: viewerPayload(viewer.id),
@@ -2575,6 +2669,7 @@ async function routeApi(req, res) {
         publishGameFinalized(refreshed);
       } else {
         scheduleClockTimeout(refreshed);
+        scheduleFirstMoveTimeout(refreshed);
         publishGameUpdated(refreshed);
       }
       return json(res, 200, {
@@ -3140,6 +3235,7 @@ function attachWebSocket(ws, viewer) {
 
 export async function closeServerResources() {
   for (const gameId of clockTimeouts.keys()) clearClockTimeout(gameId);
+  for (const gameId of firstMoveTimeouts.keys()) clearFirstMoveTimeout(gameId);
   if (botDaemon) {
     await botDaemon.stop();
     botDaemon = null;

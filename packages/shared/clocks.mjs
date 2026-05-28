@@ -19,6 +19,11 @@
 const TIME_CONTROL_RE = /^(\d+)(s?)\+(\d+)$/;
 const MIN_BASE_MS = 10_000;
 
+// Each side has this many ms to play their first move once it is their turn,
+// or the game aborts pre-move with both stakes returned (no rake).
+// See OPERATIONAL_POLICY.md § 1.10.
+export const FIRST_MOVE_DEADLINE_MS = 15_000;
+
 export function parseTimeControl(timeControl) {
   const m = TIME_CONTROL_RE.exec(String(timeControl ?? "").trim());
   if (!m) {
@@ -53,7 +58,11 @@ export function initClockState(timeControl, now) {
     blackMs: baseMs,
     sideToMove: "white",
     lastMoveAt: toIso(now),
-    incrementMs
+    incrementMs,
+    // Counts first moves played per game (0, 1, or 2). While < 2, the
+    // side-to-move's main clock is paused — they're inside the 15s first-move
+    // window (OPERATIONAL_POLICY.md § 1.10), not playing on their main clock.
+    firstMovesMade: 0
   };
 }
 
@@ -61,8 +70,16 @@ export function remainingForSide(clock, side, now) {
   if (!clock) return null;
   const stored = side === "white" ? clock.whiteMs : clock.blackMs;
   if (clock.sideToMove !== side) return stored;
+  if (mainClockPaused(clock)) return stored;
   const elapsed = msSince(clock.lastMoveAt, now);
   return stored - elapsed;
+}
+
+// The main clock is paused for the side-to-move while either side still owes
+// their first move. Clocks persisted before this concept landed (no field)
+// default to "running" so in-flight games at deploy time keep their behavior.
+function mainClockPaused(clock) {
+  return (clock.firstMovesMade ?? 2) < 2;
 }
 
 export function flaggedSide(clock, now) {
@@ -75,22 +92,32 @@ export function flaggedSide(clock, now) {
 export function applyMoveToClock(clock, now) {
   if (!clock) return null;
   const moving = clock.sideToMove;
-  const elapsed = msSince(clock.lastMoveAt, now);
-  const remaining = (moving === "white" ? clock.whiteMs : clock.blackMs) - elapsed;
-  if (remaining <= 0) {
-    const error = new RangeError(`${moving} flagged before move could be applied`);
-    error.code = "clock_flagged";
-    error.flaggedSide = moving;
-    throw error;
+  const firstMovesMade = clock.firstMovesMade ?? 2;
+  const isFirstMoveForSide = firstMovesMade < 2;
+  const stored = moving === "white" ? clock.whiteMs : clock.blackMs;
+  let next;
+  if (isFirstMoveForSide) {
+    // Their main clock didn't tick — just credit the increment.
+    next = stored + clock.incrementMs;
+  } else {
+    const elapsed = msSince(clock.lastMoveAt, now);
+    const remaining = stored - elapsed;
+    if (remaining <= 0) {
+      const error = new RangeError(`${moving} flagged before move could be applied`);
+      error.code = "clock_flagged";
+      error.flaggedSide = moving;
+      throw error;
+    }
+    next = remaining + clock.incrementMs;
   }
-  const next = remaining + clock.incrementMs;
   const opponent = moving === "white" ? "black" : "white";
   return {
     ...clock,
     whiteMs: moving === "white" ? next : clock.whiteMs,
     blackMs: moving === "black" ? next : clock.blackMs,
     sideToMove: opponent,
-    lastMoveAt: toIso(now)
+    lastMoveAt: toIso(now),
+    firstMovesMade: isFirstMoveForSide ? firstMovesMade + 1 : firstMovesMade
   };
 }
 

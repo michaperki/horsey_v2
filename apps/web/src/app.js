@@ -174,6 +174,7 @@ function captureClockAnchor(clock) {
     sideToMove: clock.sideToMove,
     whiteMs: clock.whiteMs,
     blackMs: clock.blackMs,
+    firstMovesMade: clock.firstMovesMade ?? 2,
     anchoredAtMs: performance.now() - staleMs
   };
 }
@@ -247,6 +248,9 @@ function localRemainingForSide(side) {
   if (!anchor) return null;
   const stored = side === "white" ? anchor.whiteMs : anchor.blackMs;
   if (anchor.sideToMove !== side) return stored;
+  // Mirror the server: while either side still owes their first move, the
+  // side-to-move's main clock is paused.
+  if (anchor.firstMovesMade < 2) return stored;
   return stored - (performance.now() - anchor.anchoredAtMs);
 }
 
@@ -3298,13 +3302,20 @@ function spectatorSettlementPanel(game) {
   const winner = game.winnerId
     ? game.players.find((p) => p.id === game.winnerId)
     : null;
-  const isDraw = !game.winnerId;
+  const isAborted = game.state === "aborted";
+  const isDraw = !isAborted && !game.winnerId;
   const reasonLabel = endReasonLabel(game.endReason);
-  const eyebrowClass = isDraw ? "muted" : "success";
-  const eyebrowText = isDraw ? `Settlement · drawn (${reasonLabel.toLowerCase()})` : `Settlement · ${reasonLabel.toLowerCase()}`;
-  const headline = isDraw
-    ? "The table drew."
-    : `${escapeHtml(winner?.handle ?? "Winner")} took the pot.`;
+  const eyebrowClass = isAborted || isDraw ? "muted" : "success";
+  const eyebrowText = isAborted
+    ? "Aborted · no first move"
+    : isDraw
+      ? `Settlement · drawn (${reasonLabel.toLowerCase()})`
+      : `Settlement · ${reasonLabel.toLowerCase()}`;
+  const headline = isAborted
+    ? "Table aborted before the first move."
+    : isDraw
+      ? "The table drew."
+      : `${escapeHtml(winner?.handle ?? "Winner")} took the pot.`;
   const pot = game.pot ?? {};
   const grossPot = pot.stakeCents != null ? pot.stakeCents * 2 : null;
   const rc = game.ratingChange;
@@ -3361,7 +3372,8 @@ function finalizedGameSettlementPanel(game) {
   const opponentHandle = settlement.rematchChallenge?.opponent || "your opponent";
   const won = settlement.result === "win";
   const drew = settlement.result === "draw";
-  const slideMode = won ? "win" : drew ? "draw" : "loss";
+  const aborted = settlement.result === "aborted";
+  const slideMode = aborted ? "draw" : won ? "win" : drew ? "draw" : "loss";
   let eyebrowClass = "danger";
   let eyebrowText = "Settlement · stake taken";
   let headline = `${escapeHtml(opponentHandle)} took the pot.`;
@@ -3369,7 +3381,14 @@ function finalizedGameSettlementPanel(game) {
   let amountPrefix = "-";
   let amountCents = game?.pot?.stakeCents || 0;
 
-  if (won) {
+  if (aborted) {
+    eyebrowClass = "muted";
+    eyebrowText = "Aborted · stake returned";
+    headline = "No first move. Stakes returned.";
+    amountClass = "money-draw";
+    amountPrefix = "";
+    amountCents = settlement.creditedCents;
+  } else if (won) {
     eyebrowClass = "success";
     eyebrowText = "Settlement · auto-credited";
     headline = `You took ${escapeHtml(opponentHandle)}.`;
@@ -3387,10 +3406,10 @@ function finalizedGameSettlementPanel(game) {
 
   const balanceAfterCents = settlement.balanceAfterCents;
   const stakeCents = game?.pot?.stakeCents ?? 0;
-  const balanceBeforeCents = (won || drew)
+  const balanceBeforeCents = (won || drew || aborted)
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
     : balanceAfterCents + stakeCents;
-  const amountTweenAttr = won || drew
+  const amountTweenAttr = (won || drew || aborted)
     ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}" data-tween-key="amount:${escapeHtml(game?.id ?? settlement.gameId ?? "")}"`
     : "";
   const firstReveal = isFirstSettlementRenderFor(game?.id);
@@ -3405,14 +3424,14 @@ function finalizedGameSettlementPanel(game) {
       </div>
       <h2>${headline}</h2>
       <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
-      <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
+      <p>${aborted ? "Both stakes returned. No rake." : `Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.`}</p>
       <div class="metric-grid">
         <div>
           <small>Balance</small>
           <strong data-bankroll-tween data-from="${balanceBeforeCents}" data-to="${balanceAfterCents}" data-tween-key="balance:${escapeHtml(game?.id ?? settlement.gameId ?? "")}">${money(balanceAfterCents)}</strong>
         </div>
         ${settlement.ratingDelta !== null ? `<div><small>Rating</small><strong${ratingRevealAttr}>${formatRatingDelta(settlement.ratingDelta)}</strong></div>` : ""}
-        <div><small>Last move</small><strong>${escapeHtml(settlement.winningMove || "—")}</strong></div>
+        <div><small>Last move</small><strong>${aborted ? "No moves" : escapeHtml(settlement.winningMove || "—")}</strong></div>
       </div>
       <div class="settlement-actions">
         ${settlement.rematchChallenge ? `<button class="primary${gateClass}" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
@@ -3520,7 +3539,7 @@ function renderGame() {
         `}
       </article>
       <aside class="stack">
-        ${game.state === "finalized" ? finalizedGameSettlementPanel(game) : `
+        ${(game.state === "finalized" || game.state === "aborted") ? finalizedGameSettlementPanel(game) : `
           <article class="felt pot game-panel">
             <div class="between">
               <div class="eyebrow">The pot</div>
@@ -3617,6 +3636,8 @@ function playerStrip(game, player, active = false) {
   const critical = ms != null && ms < 10000 && game.state === "live";
   const isViewer = player.id === viewerId();
   const material = materialDelta(game, player.color);
+  const movesPlayed = (game.moves || []).length;
+  const inFirstMoveWindow = game.state === "live" && active && movesPlayed < 2;
   const activity = game.state !== "live"
     ? game.state
     : active
@@ -3643,6 +3664,7 @@ function playerStrip(game, player, active = false) {
         ${capturedPiecesMarkup(game, player.color, "No captures")}
         <span>${formatMaterialDelta(material)}</span>
         <span>${escapeHtml(activity)}</span>
+        ${inFirstMoveWindow ? `<span class="first-move-pill" title="If no move is made within 15 seconds, the game aborts and both stakes are returned.">first move · 15s</span>` : ""}
       </span>
     </span>
   `;
@@ -4258,7 +4280,8 @@ function endReasonLabel(reason) {
     timeout: "Timeout",
     stalemate: "Stalemate",
     threefold_repetition: "Threefold repetition",
-    insufficient_material: "Insufficient material"
+    insufficient_material: "Insufficient material",
+    aborted_pre_move: "Aborted — no first move"
   };
   return labels[reason] || reason || "—";
 }

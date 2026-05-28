@@ -36,9 +36,9 @@ Match outcomes are settled according to server-authoritative game state, chess r
 
 ### Disconnects
 
-If you disconnect *before making your first move*, the match is aborted and your stake is returned. Nothing was risked yet.
+You have 15 seconds to play your first move once it's your turn. If you don't move in that window — whether you closed the tab, lost connection, or just walked away — the match aborts and both players' stakes are returned. Same for your opponent. Your main game clock (the 3 minutes, 5 minutes, whatever you picked) doesn't start ticking down until you actually play your first move.
 
-If you disconnect *after the game has started*, your clock keeps running while you're away. If your clock expires while you're disconnected, you lose on time. Reconnect quickly.
+After the first moves on both sides, your clock keeps running while you're away. If your clock expires while you're disconnected, you lose on time. Reconnect quickly.
 
 If Horsey itself has a confirmed outage that affects your match, we may void, refund, or manually settle. Platform-side failures are on us; your own internet connection is on you.
 

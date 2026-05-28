@@ -335,11 +335,14 @@ Immediate.
 **Policy (locked 2026-05-28)**
 
 - Chess clocks are server-authoritative.
-- **Pre-first-move abort.** If a player disconnects *before making any move*, the match is aborted and both stakes are returned. Nothing was risked yet, so nothing is taken.
+- **Pre-first-move abort.** Each side has **15 seconds** to play their first move once it's their turn. If white doesn't play move 1 in 15s, the match aborts; same for black after white moves. On abort, both stakes are returned via compensating ledger entries — no rake, no rating change, no winner. Nothing was risked yet, so nothing is taken. Disconnect, AFK, and tab-close all fall under this rule because the trigger is "no move in the window," not "we detected a disconnect."
+- **Main clock is paused during the first-move window.** A player's main game clock (e.g. their 3 minutes on a 3+0) does not start ticking until they play their first move. The only timer the player is racing pre-move-1 is the 15s first-move window. After both sides have made their first move, the main clock runs normally. This prevents a player from being unfairly drained of clock time while the table is just being seated.
+- **Pre-move resign collapses to abort.** If a player clicks "resign" before any move has been played, the game aborts rather than finalizing as a loss. Otherwise closing-the-tab and clicking-resign would have different money consequences, which is a footgun.
 - **Post-first-move: the clock just runs.** Once at least one move has been played, the disconnect is treated like any other clock event. A disconnected player may reconnect and continue; if their clock expires while away, they lose on time. No pause, no grace beyond normal reconnect attempts.
 - If the *server* or platform has a confirmed outage, Horsey may void / refund affected matches.
 - If both players disconnect or the match state becomes unrecoverable, Horsey may void, refund, or manually settle the match.
 - Users are responsible for their own internet connection; platform-side failures are handled fairly.
+- **Repeat-offender escalation.** A pattern of pre-move aborts by the same account is a slice-2 (admin mutation + audit) signal, not a slice-1 concern. The schema captures `state='aborted'` per game; admins can sort/filter on it and escalate through the shadow-restriction ladder (§ 1.14) if a user is using aborts to dodge unfavorable pairings.
 
 **Implementation notes**
 
@@ -357,7 +360,7 @@ Immediate.
 
 **User-facing wording**
 
-If you disconnect before making your first move, the match is aborted and your stake is returned. After the game starts, your clock keeps running while you're away — if it expires, you lose on time. Platform-side outages may be reviewed and refunded or voided at Horsey's discretion.
+You have 15 seconds to play your first move. If you don't move in time, the match aborts and your stake is returned — same for your opponent. After the first moves on both sides, your clock keeps running while you're away — if it expires, you lose on time. Platform-side outages may be reviewed and refunded or voided at Horsey's discretion.
 
 ---
 
