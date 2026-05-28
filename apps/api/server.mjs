@@ -131,6 +131,9 @@ let botDaemon = null;
 const analysisEnabled =
   process.env.HORSEY_ANALYSIS_ENABLED === "1" && !!process.env.STOCKFISH_PATH;
 let analysisWorker = null;
+const enablePgnBustling =
+  process.env.HORSEY_ENABLE_PGN_BUSTLING === "1" && process.env.NODE_ENV !== "production";
+let pgnBustlingDaemon = null;
 const rateLimits = new Map();
 
 const RATE_LIMITS = {
@@ -3773,6 +3776,10 @@ export async function closeServerResources() {
     await botDaemon.stop();
     botDaemon = null;
   }
+  if (pgnBustlingDaemon) {
+    await pgnBustlingDaemon.stop();
+    pgnBustlingDaemon = null;
+  }
   if (analysisWorker) {
     await analysisWorker.stop();
     analysisWorker = null;
@@ -3837,6 +3844,32 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       } catch (err) {
         logger.warn("bot daemon failed to start", {
           event: "startup.bot_daemon_failed",
+          err
+        });
+      }
+    }
+    if (enablePgnBustling) {
+      try {
+        const { startLichessBustling } = await import("./lichess-bustling.mjs");
+        const pgnLog = logger.child({ component: "pgn-bustling" });
+        pgnBustlingDaemon = await startLichessBustling({
+          db,
+          services: {
+            createChallenge,
+            acceptChallenge,
+            finalizeGame,
+            publishChallengeCreated,
+            publishChallengeUpdated,
+            publishGameUpdated,
+            publishGameFinalized,
+            publishMatchmakingMatched,
+            scheduleClockTimeout
+          },
+          log: (...args) => pgnLog.info(args.map(String).join(" "), { event: "pgn_bustling.log" })
+        });
+      } catch (err) {
+        logger.warn("pgn bustling daemon failed to start", {
+          event: "startup.pgn_bustling_failed",
           err
         });
       }

@@ -24,6 +24,14 @@ console.log(`${dryRun ? "DRY RUN against" : "wiping import data from"} ${dbPath}
 const liUsers = db.prepare("SELECT id FROM users WHERE handle LIKE '%\\_li' ESCAPE '\\'").all();
 console.log(`found ${liUsers.length} _li users`);
 
+const liUserIds = liUsers.map((u) => u.id);
+const liUserSet = new Set(liUserIds);
+
+const pgnScripts = liUserIds.length > 0
+  ? db.prepare(`SELECT id FROM pgn_scripts WHERE white_user_id IN (${liUserIds.map(() => "?").join(",")}) OR black_user_id IN (${liUserIds.map(() => "?").join(",")})`).all(...liUserIds, ...liUserIds)
+  : [];
+console.log(`found ${pgnScripts.length} pgn_scripts rows`);
+
 // Games where EVERY player is an _li user. We use a NOT EXISTS check rather
 // than counts so a game gets wiped even if it has 1 or 2 players.
 const importedGames = db.prepare(`
@@ -63,8 +71,13 @@ const wipe = db.transaction(() => {
     db.prepare(`DELETE FROM game_players WHERE game_id IN (${placeholders})`).run(...ids);
     db.prepare(`DELETE FROM games WHERE id IN (${placeholders})`).run(...ids);
   }
+  if (pgnScripts.length > 0) {
+    const ids = pgnScripts.map((s) => s.id);
+    const placeholders = ids.map(() => "?").join(",");
+    db.prepare(`DELETE FROM pgn_scripts WHERE id IN (${placeholders})`).run(...ids);
+  }
   if (liUsers.length > 0) {
-    const ids = liUsers.map((u) => u.id);
+    const ids = liUserIds;
     const placeholders = ids.map(() => "?").join(",");
     // Cascade cleanup for tables that hang off users.
     db.prepare(`DELETE FROM user_avatars WHERE user_id IN (${placeholders})`).run(...ids);
@@ -78,4 +91,6 @@ wipe();
 console.log("done.");
 console.log(`  removed ${gameAnalyses.length} game_analysis (and their move_analysis children)`);
 console.log(`  removed ${importedGames.length} games`);
+console.log(`  removed ${pgnScripts.length} pgn_scripts`);
 console.log(`  removed ${liUsers.length} _li users`);
+void liUserSet;

@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -324,6 +324,26 @@ const SCHEMA = `
     completed_at TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_analysis_jobs_pending ON analysis_jobs(status, created_at);
+
+  -- PGN replay scripts (dev only). Pre-paired users + scripted moves + per-ply
+  -- clock data, consumed one-shot by the lichess-bustling daemon to drive the
+  -- live loop with realistic timing. Not a product feature — see scripts/
+  -- import-lichess-db.mjs.
+  CREATE TABLE IF NOT EXISTS pgn_scripts (
+    id TEXT PRIMARY KEY,
+    white_user_id TEXT NOT NULL,
+    black_user_id TEXT NOT NULL,
+    time_control TEXT NOT NULL,
+    stake_cents INTEGER NOT NULL,
+    moves_json TEXT NOT NULL,
+    clk_after_json TEXT NOT NULL,
+    result TEXT NOT NULL,
+    termination TEXT,
+    source_site_id TEXT,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_pgn_scripts_unconsumed ON pgn_scripts(consumed_at, created_at);
 `;
 
 // Dev-only convenience: when HORSEY_DEV_AUTO_ADMIN=1 outside production,
@@ -524,6 +544,24 @@ function rowToMoveAnalysis(row) {
     cpLoss: row.cp_loss ?? null,
     classification: row.classification ?? null,
     isBook: !!row.is_book,
+    createdAt: row.created_at
+  };
+}
+
+function rowToPgnScript(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    whiteUserId: row.white_user_id,
+    blackUserId: row.black_user_id,
+    timeControl: row.time_control,
+    stakeCents: row.stake_cents,
+    moves: JSON.parse(row.moves_json),
+    clkAfter: JSON.parse(row.clk_after_json),
+    result: row.result,
+    termination: row.termination ?? null,
+    sourceSiteId: row.source_site_id ?? null,
+    consumedAt: row.consumed_at ?? null,
     createdAt: row.created_at
   };
 }
@@ -1130,6 +1168,28 @@ function makeApi(db) {
       ORDER BY ply
     `),
 
+    // PGN scripts (dev only).
+    insertPgnScript: db.prepare(`
+      INSERT INTO pgn_scripts
+        (id, white_user_id, black_user_id, time_control, stake_cents,
+         moves_json, clk_after_json, result, termination, source_site_id,
+         consumed_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+    `),
+    claimPgnScript: db.prepare(`
+      UPDATE pgn_scripts
+      SET consumed_at = ?
+      WHERE id = (
+        SELECT id FROM pgn_scripts WHERE consumed_at IS NULL
+        ORDER BY created_at LIMIT 1
+      )
+      RETURNING *
+    `),
+    countUnconsumedPgnScripts: db.prepare(`
+      SELECT COUNT(*) AS n FROM pgn_scripts WHERE consumed_at IS NULL
+    `),
+    findPgnScriptById: db.prepare("SELECT * FROM pgn_scripts WHERE id = ?"),
+
     findNotification: db.prepare(`
       SELECT * FROM notifications WHERE id = ?
     `),
@@ -1656,6 +1716,30 @@ function makeApi(db) {
     },
     listMoveAnalysisForAnalysis(gameAnalysisId) {
       return stmts.listMoveAnalysisFor.all(gameAnalysisId).map(rowToMoveAnalysis);
+    },
+
+    // PGN scripts.
+    insertPgnScript(script) {
+      stmts.insertPgnScript.run(
+        script.id,
+        script.whiteUserId,
+        script.blackUserId,
+        script.timeControl,
+        script.stakeCents,
+        JSON.stringify(script.moves),
+        JSON.stringify(script.clkAfter),
+        script.result,
+        script.termination ?? null,
+        script.sourceSiteId ?? null,
+        script.createdAt ?? new Date().toISOString()
+      );
+      return rowToPgnScript(stmts.findPgnScriptById.get(script.id));
+    },
+    claimNextPgnScript() {
+      return rowToPgnScript(stmts.claimPgnScript.get(new Date().toISOString()));
+    },
+    countUnconsumedPgnScripts() {
+      return stmts.countUnconsumedPgnScripts.get().n;
     },
 
     // Purchases.
