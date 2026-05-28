@@ -49,6 +49,6 @@ NOWPayments reports status transitions `waiting → confirming → confirmed →
 ## Out of scope
 
 - KYC at purchase. NOWPayments handles its own merchant compliance; chip purchases for entertainment credit do not require KYC under our framing. KYC re-enters scope only at cashout (Phase 7).
-- Refund flow: admin-only via compensating ledger entries through the read-only admin slice. No self-serve refund UI in v1.
+- Refund flow: admin-only via compensating ledger/admin tooling. No self-serve refund UI in v1.
 - Fiat acquirer: not ruled out forever, but not v1. If a card acquirer is added later, the `purchases` table grows a `provider` column.
 - Tax reporting / 1099-equivalents: out of scope until cashout.

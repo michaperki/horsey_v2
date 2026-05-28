@@ -135,6 +135,7 @@ const RATE_LIMITS = {
   challenge: { limit: 30, windowMs: 60_000 },
   matchmaking: { limit: 40, windowMs: 60_000 },
   externalAccounts: { limit: 8, windowMs: 60_000 },
+  report: { limit: 10, windowMs: 60_000 },
   emailLink: { limit: 5, windowMs: 60 * 60_000 }
 };
 
@@ -966,6 +967,8 @@ function handleDomainError(error, res) {
     payments_unknown_package: 400,
     payments_provider_error: 502,
     waitlist_email_required: 400,
+    invalid_report: 400,
+    report_not_found: 404,
     external_rate_limited: 502,
     external_fetch_timeout: 504,
     external_fetch_failed: 502,
@@ -1715,6 +1718,87 @@ function requireAdminReason(reason) {
     throw e;
   }
   return normalized.slice(0, 1000);
+}
+
+const REPORT_CATEGORIES = new Set([
+  "engine_assistance",
+  "stalling_disconnect",
+  "abuse_harassment",
+  "payment_wallet",
+  "bug_settlement",
+  "other"
+]);
+
+const REPORT_STATUSES = new Set(["open", "reviewing", "resolved", "dismissed"]);
+
+function normalizeReportCategory(category) {
+  const value = String(category ?? "").trim();
+  return REPORT_CATEGORIES.has(value) ? value : "other";
+}
+
+function validateReportInput(viewer, body) {
+  const targetUserId = typeof body?.targetUserId === "string" && body.targetUserId.trim()
+    ? body.targetUserId.trim()
+    : null;
+  const gameId = typeof body?.gameId === "string" && body.gameId.trim()
+    ? body.gameId.trim()
+    : null;
+  const note = String(body?.note ?? "").trim();
+  if (!targetUserId && !gameId) {
+    const e = new RangeError("Choose a player or game to report.");
+    e.code = "invalid_report"; throw e;
+  }
+  if (targetUserId === viewer.id) {
+    const e = new RangeError("You cannot report yourself.");
+    e.code = "invalid_report"; throw e;
+  }
+  if (note.length < 5) {
+    const e = new RangeError("Add a short note for support.");
+    e.code = "invalid_report"; throw e;
+  }
+  if (targetUserId && !db.getUser(targetUserId)) {
+    const e = new RangeError("Reported player not found.");
+    e.code = "user_not_found"; throw e;
+  }
+  let targetGame = null;
+  if (gameId) {
+    targetGame = getGameOr404(gameId);
+    if (!isGamePlayer(viewer, targetGame)) {
+      const e = new RangeError("Only a player can report this game.");
+      e.code = "not_a_player"; throw e;
+    }
+    if (targetUserId && !targetGame.players.some((p) => p.id === targetUserId)) {
+      const e = new RangeError("Reported player is not in that game.");
+      e.code = "invalid_report"; throw e;
+    }
+  }
+  return {
+    targetUserId,
+    gameId,
+    category: normalizeReportCategory(body?.category),
+    note: note.slice(0, 2000)
+  };
+}
+
+function reportPayload(report) {
+  const reporter = db.getUser(report.reporterUserId);
+  const target = report.targetUserId ? db.getUser(report.targetUserId) : null;
+  const game = report.gameId ? db.getGame(report.gameId) : null;
+  return {
+    ...report,
+    reporter: reporter ? { id: reporter.id, handle: reporter.handle, email: reporter.email } : null,
+    target: target ? { id: target.id, handle: target.handle, rating: target.rating } : null,
+    game: game ? summarizeGameRow(game) : null
+  };
+}
+
+function normalizeReportStatus(status) {
+  const value = String(status ?? "").trim();
+  if (!REPORT_STATUSES.has(value)) {
+    const e = new RangeError("Invalid report status.");
+    e.code = "invalid_report"; throw e;
+  }
+  return value;
 }
 
 function adminGameSnapshot(game) {
@@ -3046,9 +3130,9 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
-  // ---- Payments (scaffold — slice 1) -----------------------------------------
-  // Slice 1 ships routes that gate on the kill switch and ToS; slice 2 fills
-  // in the NOWPayments invoice + IPN webhook against the same surface.
+  // ---- Payments --------------------------------------------------------------
+  // Operationally dark by default. When enabled, checkout creates a hosted
+  // NOWPayments invoice and the signed webhook credits chips idempotently.
 
   if (req.method === "POST" && pathname === "/api/payments/checkout") {
     try {
@@ -3110,12 +3194,29 @@ async function routeApi(req, res) {
     try {
       const body = await readJson(req);
       const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
-      if (!email || !email.includes("@")) {
+      if (!email?.includes("@")) {
         const e = new RangeError("A valid email is required to join the cashout waitlist.");
         e.code = "waitlist_email_required"; throw e;
       }
       db.addCashoutWaitlistEntry({ userId: viewer.id, email });
       return json(res, 200, { ok: true });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  // ---- Reports ---------------------------------------------------------------
+
+  if (req.method === "POST" && pathname === "/api/reports") {
+    try {
+      checkRateLimit(req, "report");
+      const body = await readJson(req);
+      const input = validateReportInput(viewer, body);
+      const report = db.insertReport({
+        id: newId("rpt"),
+        reporterUserId: viewer.id,
+        ...input,
+        status: "open"
+      });
+      return json(res, 201, { report: reportPayload(report) });
     } catch (error) { return handleDomainError(error, res); }
   }
 
@@ -3162,6 +3263,37 @@ async function routeApi(req, res) {
       const url = new URL(req.url, `http://${req.headers.host}`);
       const limit = clampInt(url.searchParams.get("limit"), 100, 1, 500);
       return json(res, 200, { actions: db.listAdminActions(limit) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/reports") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 100, 1, 500);
+      return json(res, 200, { reports: db.listReports(limit).map(reportPayload) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/reports\/([^/]+)\/status$/))) {
+    try {
+      requireAdmin(viewer);
+      const body = await readJson(req);
+      const report = db.getReport(m[1]);
+      if (!report) {
+        const e = new RangeError("report not found");
+        e.code = "report_not_found"; throw e;
+      }
+      const status = normalizeReportStatus(body.status);
+      const adminNote = typeof body.adminNote === "string" ? body.adminNote.trim().slice(0, 2000) : null;
+      const terminal = status === "resolved" || status === "dismissed";
+      const updated = db.updateReportStatus(report.id, {
+        status,
+        adminNote,
+        resolvedBy: terminal ? viewer.id : null,
+        resolvedAt: terminal ? new Date().toISOString() : null
+      });
+      return json(res, 200, { report: reportPayload(updated) });
     } catch (error) { return handleDomainError(error, res); }
   }
 

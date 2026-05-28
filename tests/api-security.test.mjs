@@ -69,7 +69,7 @@ test("expired open challenges cannot be accepted", async (t) => {
   const fixture = await startFixture(t);
   const alice = await fixture.signup("alice");
   const bob = await fixture.signup("bob");
-  const carol = await fixture.signup("carol");
+  await fixture.signup("carol");
 
   const created = await fixture.post(alice, "/api/challenges", {
     stakeCents: 2500,
@@ -259,6 +259,59 @@ test("admin mutation endpoints void, adjust, restrict, and audit", async (t) => 
   assert.equal(liveAfterBan.state, "voided");
   assert.ok(adjustmentRows.n > 0);
   assert.equal(restrictionRows.n, 1);
+});
+
+test("report intake is player-scoped and admin review is gated", async (t) => {
+  const fixture = await startFixture(t);
+  const admin = await fixture.signup("admin");
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const carol = await fixture.signup("carol");
+  const db = new Database(fixture.dbPath);
+  db.prepare("UPDATE users SET is_admin = 1 WHERE id = ?").run(admin.user.id);
+  db.close();
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  const outsiderReport = await fixture.post(carol, "/api/reports", {
+    targetUserId: bob.user.id,
+    gameId: game.id,
+    category: "engine_assistance",
+    note: "I should not be able to report a game I did not play."
+  });
+  assert.equal(outsiderReport.status, 403);
+  assert.equal(outsiderReport.body.error, "not_a_player");
+
+  const report = await fixture.post(alice, "/api/reports", {
+    targetUserId: bob.user.id,
+    gameId: game.id,
+    category: "engine_assistance",
+    note: "Suspiciously consistent move timing in sharp positions."
+  });
+  assert.equal(report.status, 201);
+  assert.equal(report.body.report.status, "open");
+  assert.equal(report.body.report.target.handle, bob.user.handle);
+
+  const nonAdminInbox = await fixture.get(alice, "/api/admin/reports");
+  assert.equal(nonAdminInbox.status, 403);
+  assert.equal(nonAdminInbox.body.error, "admin_only");
+
+  const inbox = await fixture.get(admin, "/api/admin/reports?limit=20");
+  assert.equal(inbox.status, 200);
+  assert.equal(inbox.body.reports.some((r) => r.id === report.body.report.id), true);
+
+  const updated = await fixture.post(admin, `/api/admin/reports/${report.body.report.id}/status`, {
+    status: "reviewing",
+    adminNote: "Queued for manual review."
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.report.status, "reviewing");
+  assert.equal(updated.body.report.adminNote, "Queued for manual review.");
 });
 
 test("signup conflicts use generic messaging", async (t) => {

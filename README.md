@@ -71,7 +71,7 @@ The first build milestone — a local fake-money playable loop — is functional
 
 Active workstream: **Deploy Readiness Bucket** — host the fake-money loop somewhere closed-beta testers can reach it. See `docs/IMPLEMENTATION_PLAN.md` § Deploy Readiness Bucket.
 
-Real payments, real KYC/compliance, and full anti-cheat remain explicitly out of scope until the real-money readiness gate is passed. Phase 7 is discovery first (legal, jurisdictions, custody, providers), code second.
+Inbound chip purchases are wired behind `HORSEY_PAYMENTS_ENABLED=0` using NOWPayments hosted invoices, but should stay dark until provider secrets, focused tests, and live IPN verification are done. Cashout/redeemable balances, KYC/compliance, and full anti-cheat remain explicitly gated. Phase 7 is cashout discovery first (legal, jurisdictions, custody, providers), code second.
 
 ## Deploy
 

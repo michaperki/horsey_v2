@@ -3436,6 +3436,7 @@ function finalizedGameSettlementPanel(game) {
       <div class="settlement-actions">
         ${settlement.rematchChallenge ? `<button class="primary${gateClass}" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
         <button class="${gateClass.trim()}" data-nav="play">Find new opponent</button>
+        ${settlement.rematchChallenge ? `<button type="button" class="mini-button" data-report-user="${escapeHtml(settlement.rematchChallenge.opponentId)}" data-report-game="${escapeHtml(settlement.gameId)}" data-report-category="bug_settlement">Report this game</button>` : ""}
       </div>
       ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
     </article>
@@ -3449,6 +3450,7 @@ function renderGame() {
   const black = game.players.find((player) => player.color === "black");
   const viewer = viewerPlayer(game);
   const viewerIsPlayer = !!viewer;
+  const opponent = viewerIsPlayer ? game.players.find((player) => player.id !== viewer.id) : null;
   const canResign = viewerIsPlayer && game.state === "live";
   const drawSection = viewerIsPlayer && game.state === "live"
     ? drawControls(game, viewer.color)
@@ -3565,6 +3567,7 @@ function renderGame() {
             </div>
             ${viewerIsPlayer ? "" : `<p class="muted small">Spectator mode is read-only for live games.</p>`}
           </article>
+          ${opponent ? `<button type="button" class="mini-button" data-report-user="${escapeHtml(opponent.id)}" data-report-game="${escapeHtml(game.id)}" data-report-category="engine_assistance">Report ${escapeHtml(opponent.handle)}</button>` : ""}
           ${drawSection}
           ${canResign ? `<button class="danger resign-button" data-open-resign ${actionInFlight("resign", game.id) ? "disabled" : ""}>${actionInFlight("resign", game.id) ? "Resigning..." : `Resign · concede ${money(game.pot.stakeCents)}`}</button>` : ""}
         `}
@@ -4190,6 +4193,7 @@ function renderSettlement() {
         ) : ""}
         ${settlement.rematchChallenge ? `<button class="primary${gateClass}" data-rematch>Rematch ${escapeHtml(settlement.rematchChallenge.opponent)} · ${money(settlement.rematchChallenge.stakeCents)}</button>` : ""}
         <button class="${gateClass.trim()}" data-nav="play">Find new opponent</button>
+        ${settlement.rematchChallenge ? `<button type="button" class="mini-button" data-report-user="${escapeHtml(settlement.rematchChallenge.opponentId)}" data-report-game="${escapeHtml(settlement.gameId)}" data-report-category="bug_settlement">Report this game</button>` : ""}
         ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
     </section>
@@ -4928,6 +4932,7 @@ function renderAvatarPickerCard(viewer) {
 const ADMIN_TABS = [
   { id: "users", label: "Users", endpoint: "/api/admin/users" },
   { id: "games", label: "Games", endpoint: "/api/admin/games" },
+  { id: "reports", label: "Reports", endpoint: "/api/admin/reports?limit=200" },
   { id: "stuck", label: "Stuck", endpoint: "/api/admin/stuck-games" },
   { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200" },
   { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100" },
@@ -4999,12 +5004,38 @@ function renderAdminBody(tabId) {
   if (!data) return `<p class="muted">No data yet.</p>`;
   if (tabId === "users") return renderAdminUsers(data.users || []);
   if (tabId === "games") return renderAdminGames(data);
+  if (tabId === "reports") return renderAdminReports(data.reports || []);
   if (tabId === "stuck") return renderAdminStuck(data.stuck || []);
   if (tabId === "ledger") return renderAdminLedger(data.entries || []);
   if (tabId === "challenges") return renderAdminChallenges(data.challenges || []);
   if (tabId === "externals") return renderAdminExternals(data.accounts || []);
   if (tabId === "audit") return renderAdminAudit(data.actions || []);
   return "";
+}
+
+function renderAdminReports(reports) {
+  return adminTable(
+    ["When", "Status", "Category", "Reporter", "Target", "Game", "Note", "Actions"],
+    reports.map((r) => [
+      escapeHtml(formatShortTimestamp(r.createdAt)),
+      escapeHtml(r.status),
+      escapeHtml(reportCategoryLabel(r.category)),
+      escapeHtml(r.reporter?.handle || r.reporterUserId.slice(0, 12)),
+      r.target
+        ? `<a href="#user/${escapeHtml(r.target.id)}">${escapeHtml(r.target.handle)}</a>`
+        : `<span class="muted">none</span>`,
+      r.gameId ? `<a href="${escapeHtml(r.game?.state === "live" ? `#game/${r.gameId}` : `#history/${r.gameId}`)}">${escapeHtml(r.gameId.slice(0, 12))}</a>` : "",
+      escapeHtml(r.note),
+      adminReportActionsCell(r)
+    ])
+  );
+}
+
+function adminReportActionsCell(r) {
+  const statuses = ["open", "reviewing", "resolved", "dismissed"].filter((s) => s !== r.status);
+  return `<div class="admin-actions">${statuses.map((status) =>
+    `<button class="mini-button" data-admin-report-status="${escapeHtml(r.id)}" data-status="${escapeHtml(status)}">${escapeHtml(status)}</button>`
+  ).join("")}</div>`;
 }
 
 function adminTable(headers, rows) {
@@ -5178,6 +5209,18 @@ function renderAdminAudit(actions) {
   );
 }
 
+function reportCategoryLabel(category) {
+  const labels = {
+    engine_assistance: "Engine assistance",
+    stalling_disconnect: "Stalling / disconnect",
+    abuse_harassment: "Abuse / harassment",
+    payment_wallet: "Payment / wallet",
+    bug_settlement: "Bug / settlement",
+    other: "Other"
+  };
+  return labels[category] || category || "Other";
+}
+
 async function adminVoidGame(gameId) {
   const reason = window.prompt("Reason for voiding this game?");
   if (!reason) return;
@@ -5254,6 +5297,39 @@ async function adminClearRestriction(userId, restriction) {
   }
 }
 
+async function adminUpdateReportStatus(reportId, status) {
+  const adminNote = window.prompt(`Admin note for marking this report ${status}?`) || "";
+  state.adminLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/reports/${encodeURIComponent(reportId)}/status`, { status, adminNote });
+    await loadAdminData("reports");
+    state.adminTab = "reports";
+  } catch (error) {
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+    render();
+  }
+}
+
+async function submitReport({ targetUserId = null, gameId = null, category = "other" } = {}) {
+  if (!targetUserId && !gameId) return;
+  const note = window.prompt("What should support review?");
+  if (!note) return;
+  const key = `report:${targetUserId || ""}:${gameId || ""}`;
+  setActionInFlight(key, true);
+  try {
+    await postJson("/api/reports", { targetUserId, gameId, category, note });
+    state.actionError = "Report sent to support.";
+  } catch (error) {
+    state.actionError = error.message;
+  } finally {
+    setActionInFlight(key, false);
+    render();
+  }
+}
+
 function formatShortTimestamp(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
@@ -5307,6 +5383,8 @@ function renderUserProfile() {
           ${!challengeStake || !challengeTime ? "disabled" : ""}>
           ${h2h?.games ? "Rematch" : "Challenge"} ${escapeHtml(user.handle)}${challengeStake ? ` · ${money(challengeStake)}` : ""}
         </button>
+        ${user.id !== viewerId() ? `<button type="button" class="mini-button" data-report-user="${escapeHtml(user.id)}" data-report-category="other">Report player</button>` : ""}
+        ${state.actionError ? `<em class="action-error">${escapeHtml(state.actionError)}</em>` : ""}
       </aside>
       <article class="card user-profile-main">
         <header>
@@ -5455,6 +5533,16 @@ function render() {
   });
   document.querySelectorAll("[data-admin-clear-restriction]").forEach((b) => {
     b.addEventListener("click", () => adminClearRestriction(b.dataset.adminClearRestriction, b.dataset.restriction));
+  });
+  document.querySelectorAll("[data-admin-report-status]").forEach((b) => {
+    b.addEventListener("click", () => adminUpdateReportStatus(b.dataset.adminReportStatus, b.dataset.status));
+  });
+  document.querySelectorAll("[data-report-user], [data-report-game]").forEach((b) => {
+    b.addEventListener("click", () => submitReport({
+      targetUserId: b.dataset.reportUser || null,
+      gameId: b.dataset.reportGame || null,
+      category: b.dataset.reportCategory || "other"
+    }));
   });
   document.querySelectorAll("[data-bell-toggle]").forEach((b) => {
     b.addEventListener("click", (event) => {

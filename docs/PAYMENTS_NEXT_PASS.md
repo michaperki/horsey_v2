@@ -62,21 +62,27 @@ Phase 7 isn't deleted — it narrows. It's *cashout* and the AML/payout stack, n
 5. Chip-package + currency catalog in `packages/shared/payments.mjs`.
 6. Geo-block constant + helper (`isGeoBlocked({ country, region })`) — no edge geo lookup wired yet.
 7. Profile → Buy Chips panel (locked tiles when killswitch off) + "Cashout coming soon" waitlist card.
-8. Route stubs: `GET /api/tos` (public), `POST /api/tos/accept`, `POST /api/payments/checkout` (503 when disabled, 501 until slice 2), `POST /api/payments/webhook` (501), `GET /api/payments/purchases`.
+8. Initial route surface: `GET /api/tos` (public), `POST /api/tos/accept`, `POST /api/payments/checkout`, `POST /api/payments/webhook`, `GET /api/payments/purchases`.
 
-**Slice 2 — NOWPayments wire-up (pending):**
+**Slice 2 — NOWPayments wire-up (code-side wired, operationally dark):**
 
-1. NOWPayments merchant account + IPN secret; `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` / `HORSEY_APP_URL` via `fly secrets set`.
-2. `apps/api/payments.mjs` — thin HTTP client (no SDK, see ADR 0007). `createInvoice({ packageId, payCurrency, userId })` and `verifyIpnSignature(rawBody, header)`.
-3. `POST /api/payments/checkout` creates a `purchases` row, calls `createInvoice`, persists `provider_session_id`, returns `invoice_url`.
-4. `POST /api/payments/webhook` reads raw body, HMAC-SHA512 verifies against `NOWPAYMENTS_IPN_SECRET`, looks up `purchases` row by `provider_session_id`, transitions status via `mapNowPaymentsStatus`. On `finished` (and only once per row), inserts a `purchase` ledger entry inside a transaction that also sets `purchases.ledger_entry_id`.
-5. Profile → Buy Chips: unlock tiles, click → `POST /api/payments/checkout` → redirect to `invoice_url`. Success page polls `GET /api/payments/purchases` until the relevant row is `finished`.
-6. Edge geo-block check fires before invoice creation.
-7. Admin read-out for in-flight + recent purchases (rolls into the admin slice that already shipped).
+1. `apps/api/payments.mjs` is a thin HTTP client (no SDK, see ADR 0007). It creates hosted invoices and verifies HMAC-SHA512 IPN signatures against `NOWPAYMENTS_IPN_SECRET`.
+2. `POST /api/payments/checkout` gates on `HORSEY_PAYMENTS_ENABLED=1` and current ToS acceptance, creates a `purchases` row, calls NOWPayments, persists `provider_session_id`, and returns `invoice_url`.
+3. `POST /api/payments/webhook` reads raw body, verifies the IPN signature, reconciles by `order_id` or invoice id, transitions status via `mapNowPaymentsStatus`, and on `finished` inserts exactly one `purchase` ledger entry inside the purchase update transaction.
+4. Profile → Buy Chips unlocks tiles when enabled and redirects to the hosted invoice URL.
+5. `GET /api/payments/purchases` returns viewer purchase rows for receipt/status display.
+
+Still required before enabling live purchases:
+
+- NOWPayments merchant account + IPN secret; `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` / `HORSEY_APP_URL` via `fly secrets set`.
+- Focused automated tests for checkout failure modes, IPN signature verification, status mapping, idempotent crediting, and viewer-scoped purchase reads.
+- Live-provider verification with a small invoice and signed IPN payload.
+- Edge/request-layer geo-block before invoice creation.
+- Admin read-out for in-flight + recent purchases beyond raw ledger/purchase rows.
 
 ## Open questions
 
-- Refund flow: self-serve or admin-only initially? Default: admin-only via compensating ledger entries through the Bucket B #1 read-only admin slice. **Decided 2026-05-27.**
-- Disputes / IPN replays: log into a `payment_events` table behind the webhook so we can see patterns. Slice 2 follow-on.
+- Refund flow: self-serve or admin-only initially? Default: admin-only via compensating ledger/admin tooling, never direct balance edits. **Decided 2026-05-27.**
+- Disputes / IPN replays: log into a `payment_events` table behind the webhook so we can see patterns. Follow-on.
 - Whether to charge platform fees on chip purchases at all, or rely entirely on rake. Default: chip purchases are 1:1 floor with bonus chips on tiers; revenue is rake on play. **Decided 2026-05-27.**
 - BTC / ETH / multi-chain support beyond stablecoins: deferred until v1 loop is proven. ADR 0007 names this as a follow-on.

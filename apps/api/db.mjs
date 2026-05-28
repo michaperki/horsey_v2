@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -172,8 +172,8 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_notifications_user_updated ON notifications(user_id, updated_at DESC);
   CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_id, read_at);
 
-  -- Payments v1 scaffold (ADR 0007). Slice 1 ships the table + the gate; the
-  -- NOWPayments wire-up that actually populates it lands in slice 2.
+  -- Payments v1 (ADR 0007). Checkout creates purchase rows; signed
+  -- NOWPayments IPNs update the row and credit chips idempotently.
   CREATE TABLE IF NOT EXISTS purchases (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -247,6 +247,27 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_user_restrictions_active ON user_restrictions(user_id, cleared_at);
   CREATE INDEX IF NOT EXISTS idx_user_restrictions_restriction ON user_restrictions(restriction, cleared_at);
+
+  -- Player reports. Intake is user-facing; review and status changes are
+  -- admin-only. Punitive actions remain separate admin mutations.
+  CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    reporter_user_id TEXT NOT NULL,
+    target_user_id TEXT,
+    game_id TEXT,
+    category TEXT NOT NULL,
+    note TEXT NOT NULL,
+    status TEXT NOT NULL,
+    admin_note TEXT,
+    resolved_by TEXT,
+    resolved_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reports_status_created ON reports(status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_reporter ON reports(reporter_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_target ON reports(target_user_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_reports_game ON reports(game_id);
 `;
 
 function rowToPublicUser(row) {
@@ -382,6 +403,24 @@ function rowToTosAcceptance(row) {
   };
 }
 
+function rowToReport(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    reporterUserId: row.reporter_user_id,
+    targetUserId: row.target_user_id ?? null,
+    gameId: row.game_id ?? null,
+    category: row.category,
+    note: row.note,
+    status: row.status,
+    adminNote: row.admin_note ?? null,
+    resolvedBy: row.resolved_by ?? null,
+    resolvedAt: row.resolved_at ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function rowToNotification(row) {
   if (!row) return null;
   return {
@@ -511,10 +550,13 @@ function migrateSchema(db) {
       }
     }
   }
-  // v12 → v13: payments scaffold (ADR 0007). Adds purchases / tos_acceptances /
-  // cashout_waitlist tables. No backfill — these are forward-looking. Slice 1
-  // wires the tables and the gate; NOWPayments invoice creation + webhook
-  // crediting lands in slice 2.
+  // v14 → v15: player reports. The reports table is created idempotently by
+  // the SCHEMA exec. No backfill.
+
+  // v12 → v13: payments v1 (ADR 0007). Adds purchases / tos_acceptances /
+  // cashout_waitlist tables. Checkout + signed NOWPayments webhook crediting
+  // are wired against the purchases table; live use still depends on secrets
+  // and HORSEY_PAYMENTS_ENABLED=1.
 
   // v13 → v14: admin mutation slice. admin_actions audit log + user_restrictions
   // ladder, both created idempotently by the SCHEMA exec above. No backfill.
@@ -529,8 +571,8 @@ function migrateSchema(db) {
 
   // v10 → v11: add users.is_admin (default 0). Admins are hand-set in the DB
   // (`UPDATE users SET is_admin=1 WHERE handle='...'`); there is no
-  // admin-creates-admin UI in this slice. The flag gates the read-only
-  // /api/admin/* routes and the #admin web page.
+  // admin-creates-admin UI in this slice. The flag gates /api/admin/* routes
+  // and the #admin web page.
   if (currentVersion < 11 && currentVersion >= 1) {
     const cols = db.prepare("PRAGMA table_info('users')").all();
     if (!cols.some((c) => c.name === "is_admin")) {
@@ -883,6 +925,32 @@ function makeApi(db) {
       SELECT * FROM user_restrictions
       WHERE user_id = ?
       ORDER BY applied_at DESC
+    `),
+
+    insertReport: db.prepare(`
+      INSERT INTO reports
+        (id, reporter_user_id, target_user_id, game_id, category, note, status,
+         admin_note, resolved_by, resolved_at, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+    `),
+    findReport: db.prepare("SELECT * FROM reports WHERE id = ?"),
+    listReports: db.prepare(`
+      SELECT * FROM reports
+      ORDER BY
+        CASE status
+          WHEN 'open' THEN 0
+          WHEN 'reviewing' THEN 1
+          WHEN 'resolved' THEN 2
+          WHEN 'dismissed' THEN 3
+          ELSE 4
+        END,
+        created_at DESC
+      LIMIT ?
+    `),
+    updateReportStatus: db.prepare(`
+      UPDATE reports
+      SET status = ?, admin_note = ?, resolved_by = ?, resolved_at = ?, updated_at = ?
+      WHERE id = ?
     `),
 
     findNotification: db.prepare(`
@@ -1307,7 +1375,35 @@ function makeApi(db) {
       return rowToNotification(stmts.findNotificationByEntity.get(userId, entityType, entityId));
     },
 
-    // Purchases (payments scaffold).
+    // Reports.
+    insertReport(report) {
+      const now = new Date().toISOString();
+      stmts.insertReport.run(
+        report.id,
+        report.reporterUserId,
+        report.targetUserId ?? null,
+        report.gameId ?? null,
+        report.category,
+        report.note,
+        report.status ?? "open",
+        now,
+        now
+      );
+      return rowToReport(stmts.findReport.get(report.id));
+    },
+    getReport(id) {
+      return rowToReport(stmts.findReport.get(id));
+    },
+    listReports(limit = 100) {
+      return stmts.listReports.all(limit).map(rowToReport);
+    },
+    updateReportStatus(id, { status, adminNote = null, resolvedBy = null, resolvedAt = null }) {
+      const now = new Date().toISOString();
+      stmts.updateReportStatus.run(status, adminNote, resolvedBy, resolvedAt, now, id);
+      return rowToReport(stmts.findReport.get(id));
+    },
+
+    // Purchases.
     insertPurchase(p) {
       const now = new Date().toISOString();
       stmts.insertPurchase.run(
