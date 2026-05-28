@@ -16,6 +16,7 @@ This repository is the beginning of the real Horsey project. The current JSX and
 
 - The working directory is `/home/michaperki/dev/horsey_v2` under WSL.
 - The user can operate from WSL or Windows PowerShell. Prefer commands and docs that make this dual environment easy to understand.
+- The user runs and inspects the application locally on their end. Agents should not start long-running app/dev servers unless the user explicitly asks for it or a server is strictly required for an automated verification step. Prefer reporting the command or URL the user can use after tests pass.
 - This is a git repository (main branch). This guide and the `docs/` directory are project memory — keep them in sync as decisions change.
 
 ## Documentation Map

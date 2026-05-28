@@ -4931,7 +4931,20 @@ const ADMIN_TABS = [
   { id: "stuck", label: "Stuck", endpoint: "/api/admin/stuck-games" },
   { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200" },
   { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100" },
-  { id: "externals", label: "External", endpoint: "/api/admin/external-accounts" }
+  { id: "externals", label: "External", endpoint: "/api/admin/external-accounts" },
+  { id: "audit", label: "Audit", endpoint: "/api/admin/audit?limit=200" }
+];
+
+const ADMIN_RESTRICTIONS = [
+  "lower_trust_score",
+  "reduced_stake_limits",
+  "delayed_withdrawals",
+  "promotion_ineligibility",
+  "restricted_matchmaking",
+  "manual_review_required",
+  "reduced_visibility",
+  "no_rewards_from_suspicious",
+  "hard_ban"
 ];
 
 async function loadAdminData(tabId) {
@@ -4972,8 +4985,8 @@ function renderAdmin() {
   return `
     <article class="card admin-panel">
       <header>
-        <h2>Admin · read-only</h2>
-        <p class="muted small">No mutations from this surface. Corrections are append-only compensating ledger entries against the DB.</p>
+        <h2>Admin</h2>
+        <p class="muted small">Privileged actions require a reason and write audit rows plus append-only ledger corrections.</p>
       </header>
       <nav class="admin-tabs">${tabBar}</nav>
       <div class="admin-body">${body}</div>
@@ -4990,6 +5003,7 @@ function renderAdminBody(tabId) {
   if (tabId === "ledger") return renderAdminLedger(data.entries || []);
   if (tabId === "challenges") return renderAdminChallenges(data.challenges || []);
   if (tabId === "externals") return renderAdminExternals(data.accounts || []);
+  if (tabId === "audit") return renderAdminAudit(data.actions || []);
   return "";
 }
 
@@ -5004,7 +5018,7 @@ function adminTable(headers, rows) {
 
 function renderAdminUsers(users) {
   return adminTable(
-    ["Handle", "Email", "Rating", "Tier", "Balance", "Escrow", "Games", "Admin", "Verified", "Created"],
+    ["Handle", "Email", "Rating", "Tier", "Balance", "Escrow", "Games", "Restrictions", "Admin", "Created", "Actions"],
     users.map((u) => [
       escapeHtml(u.handle),
       escapeHtml(u.email),
@@ -5013,9 +5027,10 @@ function renderAdminUsers(users) {
       money(u.balanceCents),
       money(u.escrowCents),
       u.finishedGames,
+      adminRestrictionsCell(u),
       u.isAdmin ? "yes" : "",
-      u.emailVerifiedAt ? "yes" : "no",
-      escapeHtml(formatShortTimestamp(u.createdAt))
+      escapeHtml(formatShortTimestamp(u.createdAt)),
+      adminUserActionsCell(u)
     ])
   );
 }
@@ -5026,11 +5041,11 @@ function renderAdminGames(data) {
   return `
     <section>
       <h3>Live (${(data.live || []).length})</h3>
-      ${adminTable(["Id", "Players", "TC", "Moves", "Pot", "Updated"], liveRows)}
+      ${adminTable(["Id", "Players", "TC", "Moves", "Pot", "Updated", "Actions"], liveRows)}
     </section>
     <section>
       <h3>Recent finalized</h3>
-      ${adminTable(["Id", "Players", "TC", "Moves", "End", "Winner", "Ended"], finalizedRows.map((_, i) => {
+      ${adminTable(["Id", "Players", "TC", "Moves", "End", "Winner", "Ended", "Actions"], finalizedRows.map((_, i) => {
         const g = data.recentFinalized[i];
         return [
           escapeHtml(g.id),
@@ -5039,7 +5054,8 @@ function renderAdminGames(data) {
           g.moveCount,
           escapeHtml(g.endReason || ""),
           escapeHtml(playerHandle(g, g.winnerId) || (g.winnerId ? g.winnerId.slice(0, 10) : "draw")),
-          escapeHtml(formatShortTimestamp(g.endedAt || g.updatedAt))
+          escapeHtml(formatShortTimestamp(g.endedAt || g.updatedAt)),
+          adminGameActionsCell(g)
         ];
       }))}
     </section>
@@ -5053,8 +5069,30 @@ function adminGameRow(g) {
     escapeHtml(g.timeControl || ""),
     g.moveCount,
     g.pot?.stakeCents != null ? money(g.pot.stakeCents * 2) : "—",
-    escapeHtml(formatShortTimestamp(g.updatedAt))
+    escapeHtml(formatShortTimestamp(g.updatedAt)),
+    adminGameActionsCell(g)
   ];
+}
+
+function adminGameActionsCell(g) {
+  const voidButton = `<button class="mini-button danger" data-admin-game-void="${escapeHtml(g.id)}">Void</button>`;
+  const adjustButton = g.state === "finalized"
+    ? `<button class="mini-button" data-admin-game-adjust="${escapeHtml(g.id)}">Adjust</button>`
+    : "";
+  return `<div class="admin-actions">${voidButton}${adjustButton}</div>`;
+}
+
+function adminRestrictionsCell(u) {
+  const active = u.restrictions || [];
+  if (!active.length) return `<span class="muted">none</span>`;
+  return active.map((r) => escapeHtml(r.restriction)).join("<br>");
+}
+
+function adminUserActionsCell(u) {
+  const clearButtons = (u.restrictions || []).map((r) =>
+    `<button class="mini-button" data-admin-clear-restriction="${escapeHtml(u.id)}" data-restriction="${escapeHtml(r.restriction)}">Clear ${escapeHtml(r.restriction)}</button>`
+  ).join("");
+  return `<div class="admin-actions"><button class="mini-button" data-admin-restrict-user="${escapeHtml(u.id)}">Restrict</button>${clearButtons}</div>`;
 }
 
 function adminPlayersCell(g) {
@@ -5125,6 +5163,95 @@ function renderAdminExternals(accounts) {
       escapeHtml(formatShortTimestamp(a.createdAt))
     ])
   );
+}
+
+function renderAdminAudit(actions) {
+  return adminTable(
+    ["When", "Actor", "Action", "Target", "Reason"],
+    actions.map((a) => [
+      escapeHtml(formatShortTimestamp(a.createdAt)),
+      escapeHtml(a.actorUserId.slice(0, 14)),
+      escapeHtml(a.action),
+      `${escapeHtml(a.targetType)}:${escapeHtml(a.targetId.slice(0, 14))}`,
+      escapeHtml(a.reason)
+    ])
+  );
+}
+
+async function adminVoidGame(gameId) {
+  const reason = window.prompt("Reason for voiding this game?");
+  if (!reason) return;
+  state.adminLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/games/${encodeURIComponent(gameId)}/void`, { reason });
+    await Promise.all([loadAdminData("games"), loadAdminData("audit")]);
+    state.adminTab = "games";
+  } catch (error) {
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+    render();
+  }
+}
+
+async function adminAdjustGame(gameId) {
+  const result = window.prompt("New result: white_win, black_win, or draw?");
+  if (!result) return;
+  const reason = window.prompt("Reason for adjusting this settlement?");
+  if (!reason) return;
+  state.adminLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/games/${encodeURIComponent(gameId)}/adjust`, { result, reason });
+    await Promise.all([loadAdminData("games"), loadAdminData("ledger"), loadAdminData("audit")]);
+    state.adminTab = "games";
+  } catch (error) {
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+    render();
+  }
+}
+
+async function adminRestrictUser(userId) {
+  const raw = window.prompt(`Restrictions, comma-separated:\n${ADMIN_RESTRICTIONS.join(", ")}`);
+  if (!raw) return;
+  const restrictions = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const reason = window.prompt("Reason for applying restriction(s)?");
+  if (!reason) return;
+  state.adminLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/users/${encodeURIComponent(userId)}/restrictions`, { restrictions, reason });
+    await Promise.all([loadAdminData("users"), loadAdminData("games"), loadAdminData("audit")]);
+    state.adminTab = "users";
+  } catch (error) {
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+    render();
+  }
+}
+
+async function adminClearRestriction(userId, restriction) {
+  const reason = window.prompt(`Reason for clearing ${restriction}?`);
+  if (!reason) return;
+  state.adminLoading = true;
+  render();
+  try {
+    await postJson(
+      `/api/admin/users/${encodeURIComponent(userId)}/restrictions/${encodeURIComponent(restriction)}/clear`,
+      { reason }
+    );
+    await Promise.all([loadAdminData("users"), loadAdminData("audit")]);
+    state.adminTab = "users";
+  } catch (error) {
+    state.adminError = error.message;
+  } finally {
+    state.adminLoading = false;
+    render();
+  }
 }
 
 function formatShortTimestamp(iso) {
@@ -5316,6 +5443,18 @@ function render() {
   });
   document.querySelectorAll("[data-admin-tab]").forEach((b) => {
     b.addEventListener("click", () => switchAdminTab(b.dataset.adminTab));
+  });
+  document.querySelectorAll("[data-admin-game-void]").forEach((b) => {
+    b.addEventListener("click", () => adminVoidGame(b.dataset.adminGameVoid));
+  });
+  document.querySelectorAll("[data-admin-game-adjust]").forEach((b) => {
+    b.addEventListener("click", () => adminAdjustGame(b.dataset.adminGameAdjust));
+  });
+  document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
+    b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));
+  });
+  document.querySelectorAll("[data-admin-clear-restriction]").forEach((b) => {
+    b.addEventListener("click", () => adminClearRestriction(b.dataset.adminClearRestriction, b.dataset.restriction));
   });
   document.querySelectorAll("[data-bell-toggle]").forEach((b) => {
     b.addEventListener("click", (event) => {

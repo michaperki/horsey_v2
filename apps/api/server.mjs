@@ -34,11 +34,13 @@ import {
 import { applyMove, STARTING_FEN, summarizeGame } from "../../packages/chess/src/board.mjs";
 import {
   abortGameSettlement,
+  adjustGameSettlement,
   calculatePot,
   createEscrowHold,
   findSettlementEntries,
   settleGame,
   transitionChallenge,
+  voidGameSettlement,
   walletSummary
 } from "../../packages/shared/domain.mjs";
 import {
@@ -102,6 +104,10 @@ import {
   mapNowPaymentsStatus
 } from "../../packages/shared/payments.mjs";
 import { createInvoice, verifyIpnSignature } from "./payments.mjs";
+import {
+  isValidRestriction,
+  RESTRICTION_LADDER
+} from "../../packages/shared/restrictions.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -948,6 +954,9 @@ function handleDomainError(error, res) {
     external_account_not_found: 404,
     external_handle_not_found: 404,
     admin_only: 403,
+    invalid_admin_action: 400,
+    game_not_finalized: 409,
+    user_not_found: 404,
     tos_required: 400,
     tos_version_stale: 409,
     payments_disabled: 503,
@@ -993,31 +1002,31 @@ function settlementPayload(game, viewerId) {
   const ledger = db.listLedger();
   const entries = findSettlementEntries(ledger, game.id);
   const finalized = entries.length > 0;
-  const winEntry = entries.find((e) => e.type === "wager_win");
-  const rakeEntry = entries.find((e) => e.type === "rake");
-  const releaseEntry = entries.find((e) => e.type === "escrow_release" && e.userId === viewerId);
-  const drawEntry = entries.find((e) => e.type === "wager_draw" && e.userId === viewerId);
 
   const stakeCents = game.pot?.stakeCents ?? 0;
   const pot = stakeCents ? calculatePot({ stakeCents }) : { grossPotCents: 0, rakeCents: 0, netPotCents: 0 };
   const isAborted = game.state === "aborted";
-  const isDraw = !isAborted && !winEntry && entries.some((e) => e.type === "wager_draw");
-  const winnerId = winEntry?.userId ?? null;
+  const isVoided = game.state === "voided";
+  const isDraw = !isAborted && !isVoided && finalized && !game.winnerId;
+  const winnerId = isVoided || isDraw ? null : game.winnerId;
   const viewerWon = winnerId === viewerId;
   let result = "pending";
   if (finalized) {
-    if (isAborted) result = "aborted";
+    if (isVoided) result = "voided";
+    else if (isAborted) result = "aborted";
     else if (isDraw) result = "draw";
     else result = viewerWon ? "win" : "loss";
   }
 
   let creditedCents = 0;
   if (finalized) {
-    const release = releaseEntry?.availableDeltaCents ?? 0;
-    if (isAborted) creditedCents = release;
-    else if (isDraw) creditedCents = release + (drawEntry?.availableDeltaCents ?? 0);
-    else if (viewerWon) creditedCents = release + (winEntry?.availableDeltaCents ?? 0);
+    creditedCents = entries
+      .filter((e) => e.userId === viewerId)
+      .reduce((sum, e) => sum + e.availableDeltaCents, 0);
   }
+  const rakeCents = finalized
+    ? entries.filter((e) => e.userId === "house").reduce((sum, e) => sum + e.availableDeltaCents, 0)
+    : pot.rakeCents;
 
   const lastMove = game.moves[game.moves.length - 1];
   const opponentId = game.players.find((p) => p.id !== viewerId)?.id;
@@ -1051,7 +1060,7 @@ function settlementPayload(game, viewerId) {
     winnerId,
     creditedCents,
     grossPotCents: pot.grossPotCents,
-    rakeCents: rakeEntry?.availableDeltaCents ?? pot.rakeCents,
+    rakeCents,
     netPotCents: pot.netPotCents,
     balanceAfterCents: walletSummary(ledger, viewerId).balanceCents,
     winningMove: lastMove?.san ?? null,
@@ -1696,6 +1705,257 @@ function abortGame(game, { reason = "aborted_pre_move" } = {}) {
   })();
   clearClockTimeout(game.id);
   clearFirstMoveTimeout(game.id);
+}
+
+function requireAdminReason(reason) {
+  const normalized = String(reason ?? "").trim();
+  if (normalized.length < 3) {
+    const e = new RangeError("A reason is required for admin mutations.");
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  return normalized.slice(0, 1000);
+}
+
+function adminGameSnapshot(game) {
+  if (!game) return null;
+  return {
+    id: game.id,
+    state: game.state,
+    winnerId: game.winnerId ?? null,
+    endReason: game.endReason ?? null,
+    endedAt: game.endedAt ?? null,
+    ratingChange: game.ratingChange ?? null,
+    adminAdjustment: game.adminAdjustment ?? null
+  };
+}
+
+function reverseRatingChange(game) {
+  if (!game?.ratingChange) return null;
+  const white = game.players.find((p) => p.color === "white");
+  const black = game.players.find((p) => p.color === "black");
+  if (!white || !black) return null;
+  const whiteUser = db.getUser(white.id);
+  const blackUser = db.getUser(black.id);
+  if (!whiteUser || !blackUser) return null;
+  const whiteAfter = whiteUser.rating - (game.ratingChange.whiteDelta ?? 0);
+  const blackAfter = blackUser.rating - (game.ratingChange.blackDelta ?? 0);
+  db.updateUserRating(white.id, whiteAfter);
+  db.updateUserRating(black.id, blackAfter);
+  return {
+    white: { userId: white.id, before: whiteUser.rating, after: whiteAfter },
+    black: { userId: black.id, before: blackUser.rating, after: blackAfter }
+  };
+}
+
+function resultToWinnerId(game, result) {
+  if (result === "draw") return null;
+  const color = result === "white_win" ? "white" : result === "black_win" ? "black" : null;
+  if (!color) {
+    const e = new RangeError("result must be white_win, black_win, or draw");
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  const player = game.players.find((p) => p.color === color);
+  if (!player) {
+    const e = new RangeError("game is missing the requested player color");
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  return player.id;
+}
+
+function adminVoidGame(actor, game, reason) {
+  const before = adminGameSnapshot(game);
+  if (game.state === "aborted" || game.state === "voided") {
+    db.appendAdminAction({
+      actorUserId: actor.id,
+      targetType: "game",
+      targetId: game.id,
+      action: "void",
+      reason,
+      before,
+      after: before
+    });
+    return { game, alreadyNoop: true };
+  }
+  if (game.state !== "live" && game.state !== "finalized") {
+    const e = new RangeError("Only live, finalized, aborted, or already-voided games can be voided.");
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  const challenge = db.getChallenge(game.challengeId);
+  if (!challenge) {
+    const e = new RangeError("challenge not found");
+    e.code = "challenge_not_found";
+    throw e;
+  }
+  const [a, b] = game.players;
+  const endedAt = new Date().toISOString();
+  let ratingReversal = null;
+  db.transaction(() => {
+    const outcome = voidGameSettlement({
+      gameId: game.id,
+      challengeId: challenge.id,
+      playerIds: [a.id, b.id],
+      ledgerEntries: db.listLedger(),
+      createdAt: endedAt
+    });
+    if (outcome.newEntries.length > 0) db.appendLedger(outcome.newEntries);
+    if (game.state === "finalized") ratingReversal = reverseRatingChange(game);
+    const next = {
+      ...game,
+      state: "voided",
+      winnerId: null,
+      endReason: "admin_void",
+      endedAt,
+      ratingChange: game.ratingChange ?? null,
+      adminVoid: { reason, actorUserId: actor.id, voidedAt: endedAt, ratingReversal }
+    };
+    db.saveGame(next);
+    recordGameEvent(game.id, "admin_voided", { byUserId: actor.id, reason, ratingReversal });
+    db.appendAdminAction({
+      actorUserId: actor.id,
+      targetType: "game",
+      targetId: game.id,
+      action: "void",
+      reason,
+      before,
+      after: adminGameSnapshot(next)
+    });
+  })();
+  clearClockTimeout(game.id);
+  clearFirstMoveTimeout(game.id);
+  return { game: db.getGame(game.id), alreadyNoop: false, ratingReversal };
+}
+
+function adminAdjustGame(actor, game, { result, reason }) {
+  if (game.state !== "finalized") {
+    const e = new RangeError("Only finalized games can be adjusted.");
+    e.code = "game_not_finalized";
+    throw e;
+  }
+  const challenge = db.getChallenge(game.challengeId);
+  if (!challenge) {
+    const e = new RangeError("challenge not found");
+    e.code = "challenge_not_found";
+    throw e;
+  }
+  const winnerId = resultToWinnerId(game, result);
+  const before = adminGameSnapshot(game);
+  const [a, b] = game.players;
+  const adjustedAt = new Date().toISOString();
+  db.transaction(() => {
+    const outcome = adjustGameSettlement({
+      gameId: game.id,
+      challengeId: challenge.id,
+      stakeCents: challenge.stakeCents,
+      playerIds: [a.id, b.id],
+      winnerId,
+      ledgerEntries: db.listLedger(),
+      createdAt: adjustedAt
+    });
+    if (outcome.newEntries.length > 0) db.appendLedger(outcome.newEntries);
+    const next = {
+      ...game,
+      winnerId,
+      endReason: `admin_adjust:${result}`,
+      adminAdjustment: { result, reason, actorUserId: actor.id, adjustedAt }
+    };
+    db.saveGame(next);
+    recordGameEvent(game.id, "admin_adjusted", { byUserId: actor.id, result, reason });
+    db.appendAdminAction({
+      actorUserId: actor.id,
+      targetType: "game",
+      targetId: game.id,
+      action: "adjust",
+      reason,
+      before,
+      after: adminGameSnapshot(next)
+    });
+  })();
+  return { game: db.getGame(game.id) };
+}
+
+function adminSetRestrictions(actor, targetUserId, restrictions, reason) {
+  const user = db.getUser(targetUserId);
+  if (!user) {
+    const e = new RangeError("user not found");
+    e.code = "user_not_found";
+    throw e;
+  }
+  const requested = Array.from(new Set(restrictions ?? []));
+  if (requested.length === 0 || !requested.every(isValidRestriction)) {
+    const e = new RangeError(`restrictions must be one or more of: ${RESTRICTION_LADDER.join(", ")}`);
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  const before = db.listRestrictionsForUser(targetUserId);
+  const autoVoided = [];
+  db.transaction(() => {
+    for (const restriction of requested) {
+      db.applyUserRestriction({
+        userId: targetUserId,
+        restriction,
+        reason,
+        appliedBy: actor.id
+      });
+    }
+    if (requested.includes("hard_ban")) {
+      const live = db.findLiveGameForUser(targetUserId);
+      if (live) {
+        const voided = adminVoidGame(actor, live, `Hard ban auto-void: ${reason}`);
+        autoVoided.push(voided.game.id);
+      }
+    }
+    db.appendAdminAction({
+      actorUserId: actor.id,
+      targetType: "user",
+      targetId: targetUserId,
+      action: "restrict",
+      reason,
+      before,
+      after: db.listRestrictionsForUser(targetUserId)
+    });
+  })();
+  return {
+    user: db.getUser(targetUserId),
+    restrictions: db.listRestrictionsForUser(targetUserId),
+    autoVoided
+  };
+}
+
+function adminClearRestriction(actor, targetUserId, restriction, reason) {
+  if (!isValidRestriction(restriction)) {
+    const e = new RangeError(`restriction must be one of: ${RESTRICTION_LADDER.join(", ")}`);
+    e.code = "invalid_admin_action";
+    throw e;
+  }
+  const user = db.getUser(targetUserId);
+  if (!user) {
+    const e = new RangeError("user not found");
+    e.code = "user_not_found";
+    throw e;
+  }
+  const before = db.listRestrictionsForUser(targetUserId);
+  db.transaction(() => {
+    db.clearUserRestriction({
+      userId: targetUserId,
+      restriction,
+      clearedBy: actor.id,
+      clearedReason: reason
+    });
+    db.appendAdminAction({
+      actorUserId: actor.id,
+      targetType: "user",
+      targetId: targetUserId,
+      action: "clear_restriction",
+      reason,
+      before,
+      after: db.listRestrictionsForUser(targetUserId)
+    });
+  })();
+  return { user: db.getUser(targetUserId), restrictions: db.listRestrictionsForUser(targetUserId) };
 }
 
 function quickMatch(viewer, { stakeCents, timeControl, tierPref }) {
@@ -2893,10 +3153,72 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
-  // ---- Admin (read-only) -----------------------------------------------------
+  // ---- Admin ---------------------------------------------------------------
   // Every /api/admin/* route gates on users.is_admin via requireAdmin.
-  // No mutations: corrections in this slice are append-only compensating
-  // ledger entries issued by hand against the DB, not through this surface.
+
+  if (req.method === "GET" && pathname === "/api/admin/audit") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 100, 1, 500);
+      return json(res, 200, { actions: db.listAdminActions(limit) });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/games\/([^/]+)\/void$/))) {
+    try {
+      requireAdmin(viewer);
+      const body = await readJson(req);
+      const reason = requireAdminReason(body.reason);
+      const game = getGameOr404(m[1]);
+      const result = adminVoidGame(viewer, game, reason);
+      publishGameFinalized(result.game);
+      return json(res, 200, {
+        game: enrichGame(result.game),
+        alreadyNoop: result.alreadyNoop,
+        ratingReversal: result.ratingReversal ?? null,
+        actions: db.listAdminActionsForTarget("game", game.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/games\/([^/]+)\/adjust$/))) {
+    try {
+      requireAdmin(viewer);
+      const body = await readJson(req);
+      const reason = requireAdminReason(body.reason);
+      const game = getGameOr404(m[1]);
+      const result = adminAdjustGame(viewer, game, { result: body.result, reason });
+      publishGameFinalized(result.game);
+      return json(res, 200, {
+        game: enrichGame(result.game),
+        actions: db.listAdminActionsForTarget("game", game.id)
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/users\/([^/]+)\/restrictions$/))) {
+    try {
+      requireAdmin(viewer);
+      const body = await readJson(req);
+      const reason = requireAdminReason(body.reason);
+      const result = adminSetRestrictions(viewer, m[1], body.restrictions, reason);
+      for (const gameId of result.autoVoided) {
+        const game = db.getGame(gameId);
+        if (game) publishGameFinalized(game);
+      }
+      return json(res, 200, result);
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/users\/([^/]+)\/restrictions\/([^/]+)\/clear$/))) {
+    try {
+      requireAdmin(viewer);
+      const body = await readJson(req);
+      const reason = requireAdminReason(body.reason);
+      return json(res, 200, adminClearRestriction(viewer, m[1], m[2], reason));
+    } catch (error) { return handleDomainError(error, res); }
+  }
 
   if (req.method === "GET" && pathname === "/api/admin/users") {
     try {
@@ -2918,7 +3240,8 @@ async function routeApi(req, res) {
           balanceCents: wallet.balanceCents,
           escrowCents: wallet.escrowCents,
           finishedGames,
-          trustTier
+          trustTier,
+          restrictions: db.listActiveRestrictionsForUser(user.id)
         };
       });
       users.sort((a, b) => a.createdAt < b.createdAt ? 1 : -1);

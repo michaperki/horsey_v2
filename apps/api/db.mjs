@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -212,6 +212,41 @@ const SCHEMA = `
     created_at TEXT NOT NULL,
     UNIQUE(email)
   );
+
+  -- Admin audit log. One row per privileged mutation (void / adjust / restrict /
+  -- clear-restriction). The before/after JSON snapshots capture enough to
+  -- reconstruct what changed without joining back to mutable rows.
+  CREATE TABLE IF NOT EXISTS admin_actions (
+    id TEXT PRIMARY KEY,
+    actor_user_id TEXT NOT NULL,
+    target_type TEXT NOT NULL,      -- 'game' | 'user'
+    target_id TEXT NOT NULL,
+    action TEXT NOT NULL,           -- 'void' | 'adjust' | 'restrict' | 'clear_restriction'
+    reason TEXT NOT NULL,
+    before_json TEXT,               -- nullable for actions with no prior state
+    after_json TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_target ON admin_actions(target_type, target_id);
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_actor ON admin_actions(actor_user_id);
+  CREATE INDEX IF NOT EXISTS idx_admin_actions_created ON admin_actions(created_at DESC);
+
+  -- Shadow-restriction ladder per FAIR_PLAY_NEXT_PASS.md § Enforcement Ladder.
+  -- One row per active restriction. Cleared restrictions stay in the table for
+  -- audit; cleared_at is non-null when no longer active.
+  CREATE TABLE IF NOT EXISTS user_restrictions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    restriction TEXT NOT NULL,      -- enum, see RESTRICTION_LADDER below
+    reason TEXT NOT NULL,
+    applied_by TEXT NOT NULL,       -- admin user_id
+    applied_at TEXT NOT NULL,
+    cleared_at TEXT,                -- null = active
+    cleared_by TEXT,
+    cleared_reason TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_restrictions_active ON user_restrictions(user_id, cleared_at);
+  CREATE INDEX IF NOT EXISTS idx_user_restrictions_restriction ON user_restrictions(restriction, cleared_at);
 `;
 
 function rowToPublicUser(row) {
@@ -273,7 +308,9 @@ function rowToGame(row) {
     clock: data.clock ?? null,
     drawOffer: data.drawOffer ?? null,
     ratingChange: data.ratingChange ?? null,
-    timeControl: data.timeControl ?? null
+    timeControl: data.timeControl ?? null,
+    adminVoid: data.adminVoid ?? null,
+    adminAdjustment: data.adminAdjustment ?? null
   };
 }
 
@@ -478,6 +515,11 @@ function migrateSchema(db) {
   // cashout_waitlist tables. No backfill — these are forward-looking. Slice 1
   // wires the tables and the gate; NOWPayments invoice creation + webhook
   // crediting lands in slice 2.
+
+  // v13 → v14: admin mutation slice. admin_actions audit log + user_restrictions
+  // ladder, both created idempotently by the SCHEMA exec above. No backfill.
+  // See OPERATIONAL_POLICY.md § 1.14 and FAIR_PLAY_NEXT_PASS.md § Enforcement
+  // Ladder.
 
   // v11 → v12: notifications table is created by the SCHEMA exec on the next
   // line. UNIQUE(user_id, entity_type, entity_id) enforces one row per
@@ -801,6 +843,48 @@ function makeApi(db) {
     `),
     countCashoutWaitlist: db.prepare(`SELECT COUNT(*) AS n FROM cashout_waitlist`),
 
+    insertAdminAction: db.prepare(`
+      INSERT INTO admin_actions
+        (id, actor_user_id, target_type, target_id, action, reason, before_json, after_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    listAdminActions: db.prepare(`
+      SELECT * FROM admin_actions
+      ORDER BY created_at DESC, rowid DESC
+      LIMIT ?
+    `),
+    listAdminActionsForTarget: db.prepare(`
+      SELECT * FROM admin_actions
+      WHERE target_type = ? AND target_id = ?
+      ORDER BY created_at DESC, rowid DESC
+    `),
+
+    insertUserRestriction: db.prepare(`
+      INSERT INTO user_restrictions
+        (id, user_id, restriction, reason, applied_by, applied_at, cleared_at, cleared_by, cleared_reason)
+      VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+    `),
+    clearUserRestriction: db.prepare(`
+      UPDATE user_restrictions
+      SET cleared_at = ?, cleared_by = ?, cleared_reason = ?
+      WHERE id = ? AND cleared_at IS NULL
+    `),
+    findActiveUserRestriction: db.prepare(`
+      SELECT * FROM user_restrictions
+      WHERE user_id = ? AND restriction = ? AND cleared_at IS NULL
+      LIMIT 1
+    `),
+    listActiveRestrictionsForUser: db.prepare(`
+      SELECT * FROM user_restrictions
+      WHERE user_id = ? AND cleared_at IS NULL
+      ORDER BY applied_at ASC
+    `),
+    listRestrictionsForUser: db.prepare(`
+      SELECT * FROM user_restrictions
+      WHERE user_id = ?
+      ORDER BY applied_at DESC
+    `),
+
     findNotification: db.prepare(`
       SELECT * FROM notifications WHERE id = ?
     `),
@@ -952,7 +1036,9 @@ function makeApi(db) {
           clock: game.clock ?? null,
           drawOffer: game.drawOffer ?? null,
           ratingChange: game.ratingChange ?? null,
-          timeControl: game.timeControl ?? null
+          timeControl: game.timeControl ?? null,
+          adminVoid: game.adminVoid ?? null,
+          adminAdjustment: game.adminAdjustment ?? null
         }),
         now, now
       );
@@ -972,7 +1058,9 @@ function makeApi(db) {
           clock: game.clock ?? null,
           drawOffer: game.drawOffer ?? null,
           ratingChange: game.ratingChange ?? null,
-          timeControl: game.timeControl ?? null
+          timeControl: game.timeControl ?? null,
+          adminVoid: game.adminVoid ?? null,
+          adminAdjustment: game.adminAdjustment ?? null
         }),
         new Date().toISOString(),
         game.id
@@ -1298,8 +1386,83 @@ function makeApi(db) {
       return Number(stmts.countCashoutWaitlist.get()?.n ?? 0);
     },
 
+    // Admin audit log.
+    appendAdminAction({ actorUserId, targetType, targetId, action, reason, before = null, after = null }) {
+      const id = `aa_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.insertAdminAction.run(
+        id,
+        actorUserId,
+        targetType,
+        targetId,
+        action,
+        reason,
+        before == null ? null : JSON.stringify(before),
+        after == null ? null : JSON.stringify(after),
+        new Date().toISOString()
+      );
+      return id;
+    },
+    listAdminActions(limit = 100) {
+      return stmts.listAdminActions.all(limit).map(rowToAdminAction);
+    },
+    listAdminActionsForTarget(targetType, targetId) {
+      return stmts.listAdminActionsForTarget.all(targetType, targetId).map(rowToAdminAction);
+    },
+
+    // User restrictions ladder.
+    applyUserRestriction({ userId, restriction, reason, appliedBy, appliedAt = new Date().toISOString() }) {
+      const existing = stmts.findActiveUserRestriction.get(userId, restriction);
+      if (existing) return existing.id;
+      const id = `ur_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+      stmts.insertUserRestriction.run(id, userId, restriction, reason, appliedBy, appliedAt);
+      return id;
+    },
+    clearUserRestriction({ userId, restriction, clearedBy, clearedReason, clearedAt = new Date().toISOString() }) {
+      const existing = stmts.findActiveUserRestriction.get(userId, restriction);
+      if (!existing) return null;
+      stmts.clearUserRestriction.run(clearedAt, clearedBy, clearedReason, existing.id);
+      return existing.id;
+    },
+    listActiveRestrictionsForUser(userId) {
+      return stmts.listActiveRestrictionsForUser.all(userId).map(rowToUserRestriction);
+    },
+    listRestrictionsForUser(userId) {
+      return stmts.listRestrictionsForUser.all(userId).map(rowToUserRestriction);
+    },
+
     transaction(fn) { return db.transaction(fn); },
 
     close() { db.close(); }
+  };
+}
+
+function rowToAdminAction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    action: row.action,
+    reason: row.reason,
+    before: row.before_json ? JSON.parse(row.before_json) : null,
+    after: row.after_json ? JSON.parse(row.after_json) : null,
+    createdAt: row.created_at
+  };
+}
+
+function rowToUserRestriction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    restriction: row.restriction,
+    reason: row.reason,
+    appliedBy: row.applied_by,
+    appliedAt: row.applied_at,
+    clearedAt: row.cleared_at,
+    clearedBy: row.cleared_by,
+    clearedReason: row.cleared_reason,
+    active: !row.cleared_at
   };
 }

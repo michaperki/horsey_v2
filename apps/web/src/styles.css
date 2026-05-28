@@ -3850,7 +3850,7 @@ p {
   .milestone-burst { display: none; }
 }
 
-/* ---- Admin (read-only) ---------------------------------------------------- */
+/* ---- Admin --------------------------------------------------------------- */
 .admin-panel header { margin-bottom: 12px; }
 .admin-tabs {
   display: flex;
@@ -3892,6 +3892,23 @@ p {
 }
 .admin-table th { font-weight: 600; color: var(--muted); }
 .admin-table td.muted { color: var(--muted); }
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 140px;
+}
+.mini-button {
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.2;
+}
+.mini-button:hover { background: var(--paper-2); }
 
 /* ---- Notification bell --------------------------------------------------- */
 .bell-wrap { position: relative; }

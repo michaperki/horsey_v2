@@ -55,6 +55,7 @@ Do not capture:
 - Keep this first pass high level.
 - Establish a clean working relationship between the user and future coding agents so agents retain the big picture and do not become overly narrow.
 - Working context such as WSL vs Windows PowerShell is valid project memory when it helps future agents operate smoothly.
+- **Local run workflow.** The user runs and visually inspects the Horsey application on their end. Agents should not start long-running app/dev servers as a default handoff step; run automated tests/checks, then tell the user what changed and any relevant command or URL if useful. Only start a server when explicitly asked or when an automated verification task truly requires it.
 
 ## Agent Behavior
 

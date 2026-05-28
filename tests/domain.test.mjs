@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   abortGameSettlement,
+  adjustGameSettlement,
   calculatePot,
   cents,
   createEscrowHold,
@@ -12,6 +13,7 @@ import {
   HOUSE_USER_ID,
   settleGame,
   transitionChallenge,
+  voidGameSettlement,
   walletSummary
 } from "../packages/shared/domain.mjs";
 
@@ -332,6 +334,80 @@ test("abortGameSettlement requires an escrow_hold for both players", () => {
     }),
     /escrow_hold/
   );
+});
+
+test("voidGameSettlement reverses live escrow holds", () => {
+  const stake = cents(250);
+  const ledger = seededLedger(stake);
+
+  const { newEntries, alreadyVoided } = voidGameSettlement({
+    gameId: "game_void_live",
+    challengeId: "chg_1",
+    playerIds: ["usr_w", "usr_l"],
+    ledgerEntries: ledger
+  });
+
+  assert.equal(alreadyVoided, false);
+  assert.equal(newEntries.length, 2);
+  const finalLedger = [...ledger, ...newEntries];
+  assert.equal(walletSummary(finalLedger, "usr_w").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, "usr_w").escrowCents, 0);
+  assert.equal(walletSummary(finalLedger, "usr_l").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, "usr_l").escrowCents, 0);
+});
+
+test("voidGameSettlement reverses finalized winner, loser, and house rake", () => {
+  const stake = cents(250);
+  const ledger = seededLedger(stake);
+  const settled = settleGame({
+    gameId: "game_void_final",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    winnerId: "usr_w",
+    ledgerEntries: ledger
+  });
+
+  const { newEntries, alreadyVoided } = voidGameSettlement({
+    gameId: "game_void_final",
+    challengeId: "chg_1",
+    playerIds: ["usr_w", "usr_l"],
+    ledgerEntries: [...ledger, ...settled.newEntries]
+  });
+
+  assert.equal(alreadyVoided, false);
+  const finalLedger = [...ledger, ...settled.newEntries, ...newEntries];
+  assert.equal(walletSummary(finalLedger, "usr_w").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, "usr_l").balanceCents, cents(1000));
+  assert.equal(walletSummary(finalLedger, HOUSE_USER_ID).balanceCents, 0);
+});
+
+test("adjustGameSettlement writes compensating entries to net a new result", () => {
+  const stake = cents(250);
+  const ledger = seededLedger(stake);
+  const settled = settleGame({
+    gameId: "game_adjust",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    winnerId: "usr_w",
+    ledgerEntries: ledger
+  });
+
+  const adjusted = adjustGameSettlement({
+    gameId: "game_adjust",
+    challengeId: "chg_1",
+    stakeCents: stake,
+    playerIds: ["usr_w", "usr_l"],
+    winnerId: "usr_l",
+    ledgerEntries: [...ledger, ...settled.newEntries]
+  });
+
+  const pot = calculatePot({ stakeCents: stake });
+  const finalLedger = [...ledger, ...settled.newEntries, ...adjusted.newEntries];
+  assert.equal(walletSummary(finalLedger, "usr_w").balanceCents, cents(1000) - stake);
+  assert.equal(walletSummary(finalLedger, "usr_l").balanceCents, cents(1000) + pot.netPotCents - stake);
+  assert.equal(walletSummary(finalLedger, HOUSE_USER_ID).balanceCents, pot.rakeCents);
 });
 
 test("transitionChallenge allows incoming challenge accept and blocks terminal transitions", () => {

@@ -187,6 +187,80 @@ test("live players cannot start another challenge or quick match", async (t) => 
   assert.equal(acceptedWhileLive.body.error, "has_live_game");
 });
 
+test("admin mutation endpoints void, adjust, restrict, and audit", async (t) => {
+  const fixture = await startFixture(t);
+  const admin = await fixture.signup("admin");
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const db = new Database(fixture.dbPath);
+  db.prepare("UPDATE users SET is_admin = 1 WHERE id = ?").run(admin.user.id);
+  db.close();
+
+  const created = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${created.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+  const white = game.players.find((p) => p.color === "white");
+  const whiteClient = white.id === alice.user.id ? alice : bob;
+  await fixture.post(whiteClient, `/api/games/${game.id}/moves`, { from: "e2", to: "e4" });
+  const resigningClient = game.players[0].id === alice.user.id ? alice : bob;
+  const finalized = await fixture.post(resigningClient, `/api/games/${game.id}/resign`);
+  assert.equal(finalized.body.game.state, "finalized");
+
+  const voided = await fixture.post(admin, `/api/admin/games/${game.id}/void`, {
+    reason: "confirmed platform issue"
+  });
+  assert.equal(voided.status, 200);
+  assert.equal(voided.body.game.state, "voided");
+
+  const created2 = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted2 = await fixture.post(bob, `/api/challenges/${created2.body.challenge.id}/accept`);
+  const game2 = accepted2.body.game;
+  const white2 = game2.players.find((p) => p.color === "white");
+  const whiteClient2 = white2.id === alice.user.id ? alice : bob;
+  await fixture.post(whiteClient2, `/api/games/${game2.id}/moves`, { from: "e2", to: "e4" });
+  const resigningClient2 = game2.players[0].id === alice.user.id ? alice : bob;
+  await fixture.post(resigningClient2, `/api/games/${game2.id}/resign`);
+  const adjusted = await fixture.post(admin, `/api/admin/games/${game2.id}/adjust`, {
+    result: "draw",
+    reason: "manual settlement correction"
+  });
+  assert.equal(adjusted.status, 200);
+  assert.equal(adjusted.body.game.winnerId, null);
+
+  const created3 = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 1000,
+    timeControl: "3+0"
+  });
+  const accepted3 = await fixture.post(bob, `/api/challenges/${created3.body.challenge.id}/accept`);
+  const restricted = await fixture.post(admin, `/api/admin/users/${alice.user.id}/restrictions`, {
+    restrictions: ["hard_ban"],
+    reason: "test hard ban"
+  });
+  assert.equal(restricted.status, 200);
+  assert.deepEqual(restricted.body.autoVoided, [accepted3.body.game.id]);
+
+  const audit = await fixture.get(admin, "/api/admin/audit?limit=20");
+  assert.equal(audit.status, 200);
+  assert.equal(audit.body.actions.some((a) => a.action === "void" && a.targetId === game.id), true);
+  assert.equal(audit.body.actions.some((a) => a.action === "adjust" && a.targetId === game2.id), true);
+  assert.equal(audit.body.actions.some((a) => a.action === "restrict" && a.targetId === alice.user.id), true);
+
+  const checkDb = new Database(fixture.dbPath);
+  const liveAfterBan = checkDb.prepare("SELECT state FROM games WHERE id = ?").get(accepted3.body.game.id);
+  const adjustmentRows = checkDb.prepare("SELECT COUNT(*) AS n FROM ledger_entries WHERE type = 'settlement_adjustment' AND ref_id = ?").get(game2.id);
+  const restrictionRows = checkDb.prepare("SELECT COUNT(*) AS n FROM user_restrictions WHERE user_id = ? AND restriction = 'hard_ban' AND cleared_at IS NULL").get(alice.user.id);
+  checkDb.close();
+  assert.equal(liveAfterBan.state, "voided");
+  assert.ok(adjustmentRows.n > 0);
+  assert.equal(restrictionRows.n, 1);
+});
+
 test("signup conflicts use generic messaging", async (t) => {
   const fixture = await startFixture(t);
   const first = await fixture.post(null, "/api/auth/signup", {
