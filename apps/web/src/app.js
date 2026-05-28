@@ -4937,6 +4937,7 @@ const ADMIN_TABS = [
   { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200" },
   { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100" },
   { id: "externals", label: "External", endpoint: "/api/admin/external-accounts" },
+  { id: "purchases", label: "Purchases", endpoint: "/api/admin/purchases?limit=200" },
   { id: "audit", label: "Audit", endpoint: "/api/admin/audit?limit=200" }
 ];
 
@@ -5009,6 +5010,7 @@ function renderAdminBody(tabId) {
   if (tabId === "ledger") return renderAdminLedger(data.entries || []);
   if (tabId === "challenges") return renderAdminChallenges(data.challenges || []);
   if (tabId === "externals") return renderAdminExternals(data.accounts || []);
+  if (tabId === "purchases") return renderAdminPurchases(data.purchases || []);
   if (tabId === "audit") return renderAdminAudit(data.actions || []);
   return "";
 }
@@ -5192,6 +5194,25 @@ function renderAdminExternals(accounts) {
       escapeHtml(a.status),
       escapeHtml(formatShortTimestamp(a.verifiedAt)),
       escapeHtml(formatShortTimestamp(a.createdAt))
+    ])
+  );
+}
+
+function renderAdminPurchases(purchases) {
+  return adminTable(
+    ["When", "User", "Package", "USD", "Chips", "Status", "Pay", "Provider id", "Credited?"],
+    purchases.map((p) => [
+      escapeHtml(formatShortTimestamp(p.createdAt)),
+      p.user
+        ? `<a href="#user/${escapeHtml(p.user.id)}">${escapeHtml(p.user.handle)}</a>`
+        : escapeHtml(p.userId.slice(0, 12)),
+      escapeHtml(p.packageId),
+      money(p.amountUsdCents),
+      money(p.chipsCreditedCents),
+      escapeHtml(p.status),
+      p.payCurrency ? escapeHtml(`${p.payCurrency}${p.payAmount ? ` · ${p.payAmount}` : ""}`) : `<span class="muted">—</span>`,
+      escapeHtml(p.providerPaymentId || p.providerSessionId || ""),
+      p.ledgerEntryId ? "yes" : `<span class="muted">no</span>`
     ])
   );
 }

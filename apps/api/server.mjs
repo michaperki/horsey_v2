@@ -3430,6 +3430,22 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
+  if (req.method === "GET" && pathname === "/api/admin/purchases") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 200, 1, 1000);
+      const purchases = db.listAllPurchases(limit).map((p) => {
+        const user = db.getUser(p.userId);
+        return {
+          ...p,
+          user: user ? { id: user.id, handle: user.handle, email: user.email } : null
+        };
+      });
+      return json(res, 200, { purchases });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   if (req.method === "GET" && pathname === "/api/admin/external-accounts") {
     try {
       requireAdmin(viewer);

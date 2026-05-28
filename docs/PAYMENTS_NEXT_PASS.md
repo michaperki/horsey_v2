@@ -72,13 +72,23 @@ Phase 7 isn't deleted — it narrows. It's *cashout* and the AML/payout stack, n
 4. Profile → Buy Chips unlocks tiles when enabled and redirects to the hosted invoice URL.
 5. `GET /api/payments/purchases` returns viewer purchase rows for receipt/status display.
 
-Still required before enabling live purchases:
+**Slice 3 — readiness polish (shipped):** focused tests for checkout failure modes, IPN signature verification, status mapping, idempotent crediting on `finished` (replay-safe), and viewer-scoped purchase reads (`tests/payments.test.mjs`, 20 tests). Admin Purchases tab + `/api/admin/purchases` endpoint with user-join + status / pay-currency / ledger-credited columns. Go-live checklist below names the remaining operational steps — none are code.
 
-- NOWPayments merchant account + IPN secret; `NOWPAYMENTS_API_KEY` / `NOWPAYMENTS_IPN_SECRET` / `HORSEY_APP_URL` via `fly secrets set`.
-- Focused automated tests for checkout failure modes, IPN signature verification, status mapping, idempotent crediting, and viewer-scoped purchase reads.
-- Live-provider verification with a small invoice and signed IPN payload.
-- Edge/request-layer geo-block before invoice creation.
-- Admin read-out for in-flight + recent purchases beyond raw ledger/purchase rows.
+Still required before enabling live purchases (operational, not code):
+
+- Edge/request-layer geo-block before invoice creation. The `isGeoBlocked` helper exists and is unit-tested; wiring the actual lookup (Cloudflare country header, or a per-request IP→region resolution) is the next code-side follow-on.
+
+## Go-live checklist
+
+Before flipping `HORSEY_PAYMENTS_ENABLED=1` in production:
+
+1. **NOWPayments account.** Create a merchant account, complete onboarding, set the payout wallet for each enabled currency (USDT-TRC20, USDC-Polygon, USDC-Solana).
+2. **IPN secret.** In the NOWPayments dashboard, generate an IPN secret. Set the IPN callback URL to `https://<your-domain>/api/payments/webhook`.
+3. **Fly secrets.** `fly secrets set NOWPAYMENTS_API_KEY=... NOWPAYMENTS_IPN_SECRET=... HORSEY_APP_URL=https://<your-domain> HORSEY_PAYMENTS_ENABLED=1`. The webhook handler refuses bad signatures with 401; the checkout handler refuses requests with `payments_not_configured` (503) if the API key is missing.
+4. **Smoke test on real provider.** Buy the $5 Starter package from a real account. Confirm: invoice opens, send a small payment, watch `fly logs` for the `payments.webhook_*` event line, confirm the ledger entry lands and the chip balance increases. Replay the same IPN body via `curl` against the live webhook (with the correct signature) and confirm no double-credit.
+5. **Admin read-out check.** Hit `#admin → Purchases` as an admin and confirm the smoke-test purchase shows `status=finished`, `Credited?=yes`, and the user's handle resolves.
+6. **What to watch in logs.** `payments.webhook_bad_signature` (rejected — provider mis-config or attack), `payments.webhook_unknown_purchase` (provider replayed for a row we don't have), `payments.webhook_error` (handler exception — investigate before re-enabling).
+7. **Rollback.** `fly secrets set HORSEY_PAYMENTS_ENABLED=0` flips the panel off in ~30s. In-flight IPNs continue to process — the kill switch only blocks new checkout creation, not finalize-credits.
 
 ## Open questions
 

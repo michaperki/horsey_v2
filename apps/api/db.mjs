@@ -863,6 +863,9 @@ function makeApi(db) {
     listPurchasesForUser: db.prepare(`
       SELECT * FROM purchases WHERE user_id = ? ORDER BY created_at DESC LIMIT ?
     `),
+    listAllPurchases: db.prepare(`
+      SELECT * FROM purchases ORDER BY created_at DESC LIMIT ?
+    `),
 
     insertTosAcceptance: db.prepare(`
       INSERT OR IGNORE INTO tos_acceptances (id, user_id, tos_version, accepted_at)
@@ -1458,6 +1461,9 @@ function makeApi(db) {
     },
     listPurchasesForUser(userId, limit = 50) {
       return stmts.listPurchasesForUser.all(userId, limit).map(rowToPurchase);
+    },
+    listAllPurchases(limit = 200) {
+      return stmts.listAllPurchases.all(limit).map(rowToPurchase);
     },
 
     // ToS acceptances. The active version lives in shared code, not in the DB.
