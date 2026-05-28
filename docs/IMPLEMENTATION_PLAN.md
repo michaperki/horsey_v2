@@ -2,7 +2,7 @@
 
 This is the single master document for Horsey's product execution. It covers the product shape, the working principles, what is built today, what is mocked, the staged plan to replace each mock with the real version, and the cross-cutting work that runs alongside. Update this doc — not a side note — when product direction changes.
 
-Companion docs (not roadmaps): `PROJECT_SOUL.md` (product voice and feel), `ARCHITECTURE_FIRST_PASS.md` (early system shape), `DESIGN_REVIEW.md` (design intent), `DEV_QA_WORKFLOW.md` (manual multiplayer smoke workflow + lightweight dev-tool direction), `adr/` (durable architecture decisions).
+Companion docs (not roadmaps): `OPERATIONAL_POLICY.md` (integrity/abuse/payments/support doctrine — source material for ToS and FAQ; *what's allowed* and *how we explain it*, paired with the topic `_NEXT_PASS` docs that own *how we build it*), `PROJECT_SOUL.md` (product voice and feel), `ARCHITECTURE_FIRST_PASS.md` (early system shape), `DESIGN_REVIEW.md` (design intent), `DEV_QA_WORKFLOW.md` (manual multiplayer smoke workflow + lightweight dev-tool direction), `adr/` (durable architecture decisions).
 
 ## Product Shape
 
@@ -28,6 +28,7 @@ These reflect *how* we're working right now, not permanent rules. Update as cond
 - **Nav is product, not scaffolding.** The current top nav (`LOBBY · WAGER · GAME · SETTLEMENT · WALLET`) treats flow stops as destinations. Wager / Game / Settlement are places a user passes through, not places they navigate to. Information architecture rethink is a tracked workstream (see below); the current nav is a debug-era artifact.
 - **UI placeholder fields count as mocks.** A field that *looks* real but is hardcoded (opponent rating, country, h2h, momentum, rating delta, rematch button) is as much a mock as any subsystem in the seam list — and arguably more misleading, because it pretends to be product. Track them.
 - **Docs over chat.** When a working session produces a durable direction or preference, the relevant doc (this one, `PROJECT_SOUL`, or an ADR) gets updated in the same change.
+- **Policy doctrine lives in `OPERATIONAL_POLICY.md`.** Anything about *what is allowed, prohibited, reviewed, refunded, void-able, or surfaced in user-facing language* belongs there — it's the source material for the eventual ToS and public FAQ. Topic docs (`FAIR_PLAY`, `PAYMENTS`, `SCOUTING_TRUST`, `RATING_BLOCKS`) own the implementation side and cross-link to the matching policy section. When the two seem to disagree, the policy doc wins for *language and posture*, the topic doc wins for *how to build it*. Open product questions land in `OPERATIONAL_POLICY.md` § 9 until they're answered.
 - **Deploy with the dev store; swap stores only when real money forces it.** SQLite-on-a-volume is the prod store through the fake-money closed beta. The Postgres swap is a *named* pre-real-money slice, not a generic next step — it costs an async refactor of every `db.X(...)` call site in the server and earns its place only when concurrent-write safety, point-in-time recovery, and audit-grade backups actually matter (i.e., when funds are real). See mock #1 and the Deploy Readiness Bucket.
 - **Mobile pass comes before the next product expansion.** The app is mobile-native in intent, and the next broad UI work should be a full mobile pass before deeper admin/fair-play surfaces. Scope + decisions live in `MOBILE_NEXT_PASS.md` — bottom tab bar, compact topbar, unified pointer-events board, `dvh` + safe-areas, `(pointer: coarse)` target sweep.
 - **Fair-play is the next trust conversation after mobile.** Engine use and stronger-player assistance are the two obvious cheating paths. Blunder rate, average centipawn loss, top-engine agreement, and time/quality anomalies should enter the admin review model first, then selectively graduate into History/Profile/HUD once the analysis pipeline and caveats are real. See `FAIR_PLAY_NEXT_PASS.md`.
@@ -220,7 +221,7 @@ This whole section is a load-bearing input to Phase 6 and Phase 7 below — thos
 
 A workstream parallel to the phases, not a numbered phase of its own. It exists because "playable on my laptop" and "the fake-money loop is done" do not equal "a closed-beta tester can use this." That gap is operational, not chess-product. Reaching it is what unblocks any Phase 7 conversation.
 
-Three buckets, in order:
+Three buckets, in order. The bucket items below map onto `OPERATIONAL_POLICY.md` § 8 (Implementation Priorities) — Bucket A + B + Bucket C slice 1 cover the policy's "Before first real-money users" list; Bucket B follow-ons + first FAIR_PLAY slice cover "Soon after launch"; Bucket D inputs the "Deferred until scale" tail.
 
 ### Bucket A — Pre-deploy hardening (real-money-agnostic)
 
@@ -237,7 +238,9 @@ The minimum to host the fake-money loop somewhere external. **Status: code-side 
 The minimum to let real humans use it unattended.
 
 - **Read-only admin slice (Phase 6 first cut).** Status: **done** — schema v11 adds `users.is_admin` (hand-set in the DB via `UPDATE users SET is_admin=1 WHERE handle='...'`; no admin-creates-admin UI yet). `/api/admin/{users,games,stuck-games,ledger,challenges,external-accounts}` are read-only and gated on `is_admin`. Web `#admin` page renders a tabbed view (Users / Games / Stuck / Ledger / Challenges / External). Nav link only shows when the viewer is admin. No mutations through this surface — corrections are append-only compensating ledger entries written directly to the DB.
-- **Report-player path.** Even as a row in a `reports` table an admin can read. Seeds Phase 6 anti-cheat ingestion.
+- **Report-player path.** Even as a row in a `reports` table an admin can read. Seeds Phase 6 anti-cheat ingestion. Policy reference: `OPERATIONAL_POLICY.md` § 5.2 (user dispute flow).
+- **Admin mutation slice — void / refund / adjust / restrict.** Policy `§ 8` requires "ability to manually void/refund/adjust a match" + freeze accounts before first real-money users. **Locked 2026-05-28: all match outcomes are reversible by admin discretion** — no rules on *what* can be reversed, only audit-trail rules on *how*. Today the admin portal is read-only and corrections go to the DB by hand. The slice adds an `admin_actions` audit table (actor, target, action, reason, before/after JSON), a reason field on every mutation, and the following endpoints: `POST /api/admin/games/:id/void` (writes compensating ledger entries, sets `state='voided'`), `POST /api/admin/games/:id/refund` (same shape, kept distinct for reporting), `POST /api/admin/games/:id/adjust` (manual settlement override — winner-id and credited-cents both writable), `POST /api/admin/users/:id/restrict` (sets account-status flags). The restrict endpoint takes the *full* shadow-restriction ladder from `FAIR_PLAY_NEXT_PASS.md` § Enforcement Ladder (lower trust score → restricted matchmaking → … → hard ban) as a single multi-state enum; ship the whole ladder at once. Hard ban is rarely used in early days but the schema needs it. Status: **pending**.
+- **Disconnect policy — pre-move abort + user-facing wording.** Policy `§ 1.10` (locked 2026-05-28). Two-part slice: (a) server-side abort path for `settleGame(reason='aborted_pre_move')` that returns both stakes via compensating ledger entries with no rake, fired automatically when a disconnect happens before either player has made a move; (b) short user-facing copy explaining the rule — appears in the resign-confirm modal context and in a `Help → How matches resolve` blurb (or wherever the FAQ eventually lives). The post-first-move behavior already matches the policy (clock just runs); no behavior change there. Status: **pending**.
 - **Per-tab clock visibility throttling** (mock #5 trailing gap). Real users with backgrounded tabs will find this within a day.
 - **Narrow multiplayer smoke automation.** Moved to **Backlog** (operational): the bustling dev daemon already exercises the pair → finalize loop continuously, which covers the regression case for now. Revisit when CI is gating deploys or when the loop changes shape enough that bustling no longer represents real human flow.
 
@@ -257,15 +260,16 @@ Status: **partial** — slice 1 scaffold shipped. Canonical detail lives in `PAY
 
 ### Bucket D — Cashout discovery (non-code)
 
-The work that decides whether redeemable/cashout Phase 7 ships, and where.
+The work that decides whether redeemable/cashout Phase 7 ships, and where. **Not actively blocking current product work.** Per decision 2026-05-28, the gaming-attorney conversation is deferred indefinitely — it's expensive, it isn't on the near-term critical path, and Bucket C (NOWPayments buy-chips with a no-cashout wall) doesn't depend on it. Bucket D items live here as parking, not as a milestone we're sequencing toward.
 
-- **Gaming attorney conversation.** Costs money. Unblocks everything downstream.
-- **Jurisdiction shortlist + regulatory framing per region.** Skill-gaming vs. sweepstakes vs. licensed sportsbook. The dual-currency model documented under Trust Tiers is one of the answer shapes; others remain open.
-- **Custody model.** Do we hold funds, or does the payment provider? PFML-style escrow? This decision constrains the provider list.
+- **Sweepstakes model is the favored framing** (locked 2026-05-28). Dual currency: cosmetic / play chips (not withdrawable) + promotional / redeemable sweeps credits (potentially redeemable under rules). This matches the Trust Tiers § dual-currency direction. Other regulatory framings (skill-gaming, licensed sportsbook) are not ruled out but are not the working assumption.
+- **Gaming attorney conversation.** Costs money. Required *before* any sweepstakes-compatible cashout copy goes live publicly. Deferred until we have closed-beta traction worth paying to formalize.
+- **Jurisdiction shortlist + regulatory framing per region.** Where the sweepstakes model is viable, where it isn't.
+- **Custody model.** Do we hold funds, or does the payment provider? This decision constrains the provider list.
 - **KYC vendor evaluation.**
 - **Payout provider evaluation** — narrow shortlist of providers willing to touch a chess-wagering product in the chosen jurisdictions.
 
-Status: **pending** across the board. Bucket D inputs the *cashout* code spec for Phase 7. Without Bucket D, cashout code is premature.
+Status: **deferred** across the board. Bucket D inputs the *cashout* code spec for Phase 7. Without Bucket D, cashout code is premature — but the absence of Bucket D progress does *not* block Buckets A/B/C.
 
 ## Backlog
 
@@ -292,6 +296,11 @@ These are tracked in their own docs and the per-screen IA matrix; this list is j
 - **Drop the matchmaking 2s poll.** Belt-and-suspenders behind the realtime broker. Remove once we trust reconnect behavior in the wild.
 - **Phase 5 retention loops.** Rivalry threads, richer History/Profile stats, double-or-nothing, auto-requeue. Higher-impact *after* there are humans using the app — don't pre-build engagement loops for nobody.
 - **Postgres swap (mock #1).** Async-ifies every `db.X(...)` call site (~190 in `server.mjs`). Lands at the real-money gate, not before.
+- **Rating blocks UX (`OPERATIONAL_POLICY.md` § 1.4 + `RATING_BLOCKS_NEXT_PASS.md`).** Hide exact rating behind class bands (D / C / B / A / Expert / Master) across lobby, live-table, scout, profile, history, settlement. Admin stays exact. Gated on the open-questions decision in policy § 1.4. Significant surface sweep when it lands.
+- **Shadow-restriction ladder (`OPERATIONAL_POLICY.md` § 1.14 + `FAIR_PLAY_NEXT_PASS.md`).** Account-status states beyond banned/not-banned — reduced stake limits, delayed withdrawals, promotion ineligibility, restricted matchmaking, reduced visibility, no-rewards-from-suspicious-matches. Builds on the admin mutation slice in Bucket B.
+- **Responsible-play minimums (`OPERATIONAL_POLICY.md` § 5.3).** Self-exclusion, deposit/stake caps, cooling-off period. Not required before fake-money beta; required before scaling real-money. Earns its place once Bucket C is live.
+- **Multi-account / signup-abuse signals (`OPERATIONAL_POLICY.md` § 1.5, § 1.6).** Account-creation velocity by IP/device/email/wallet, rate limits on signup + reward claiming. Cheap to log now; intervene later. Gates real promotional rewards.
+- **Claim-victory CTA (Lichess-style, `OPERATIONAL_POLICY.md` § 1.10 Future plan).** After an opponent has been disconnected past a TC-aware threshold (shorter grace for faster time controls), the on-game player can click "claim victory" to force a settlement instead of waiting for the opponent's clock to run out. Quality-of-life polish on the disconnect policy, not v1. Lands after the pre-move abort slice ships.
 
 ## Phased Plan
 

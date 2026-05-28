@@ -1,5 +1,7 @@
 # Payments Next Pass
 
+Companion: `docs/OPERATIONAL_POLICY.md` § 3 (Payments / Crypto Operations — deposits, withdrawals, NOWPayments operational risks, policy needs) and § 4.2 (wallet draining / withdrawal abuse). This doc owns *what we build and ship*; the policy doc owns *the rules and user-facing language* around deposits, holds, refunds, disputes, withdrawal review.
+
 **Posture set 2026-05-27, provider locked 2026-05-27.** Horsey ships with a real payments panel. Users buy chips in crypto (stablecoins only, v1) via **NOWPayments**. Cashout is deferred behind a "coming soon" wall — that's the legal model. The ToS at signup makes it explicit: chips are entertainment credit, no cashout, no expectation of cashout, no monetary value outside the platform.
 
 This is a deliberate posture, not a missed step. The old blanket block on money code is narrowed: *cashout* still requires the Bucket D work (payout providers, KYC, AML, jurisdictional opinions). *Inbound* purchases of entertainment chips do not, given a clear ToS and a no-cashout disclaimer.

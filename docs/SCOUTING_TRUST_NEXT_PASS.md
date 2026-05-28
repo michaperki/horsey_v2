@@ -2,7 +2,7 @@
 
 Research note for the next product/design pass on Open Tables, compact Scout Card, Player Profile, and chess-account-backed trust. This is not an implementation spec yet; it is the judgment layer that should guide the next code changes.
 
-Companion docs: `docs/LOBBY_DESIGN_GAP.md` (Play/Open Tables IA), `docs/USER_PROFILE_IA.md` (identity/profile surfaces), `docs/IMPLEMENTATION_PLAN.md` (trust subsystem phasing), `docs/DESIGN_REVIEW.md` (canonical design source).
+Companion docs: `docs/OPERATIONAL_POLICY.md` (§ 1.4 rating blocks vs exact ratings — open product decision; § 6 trust system — public-vs-internal trust signal distinction), `docs/RATING_BLOCKS_NEXT_PASS.md` (the UX side of the rating-blocks question once we lock direction), `docs/LOBBY_DESIGN_GAP.md` (Play/Open Tables IA), `docs/USER_PROFILE_IA.md` (identity/profile surfaces), `docs/IMPLEMENTATION_PLAN.md` (trust subsystem phasing), `docs/DESIGN_REVIEW.md` (canonical design source).
 
 ## Current finding
 

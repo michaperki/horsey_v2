@@ -2,7 +2,7 @@
 
 Living note for anti-cheat, fair-play review, and the admin/user surfaces that make Horsey feel trustworthy. This is intentionally product-shaped, not a research survey. The goal is to know what the system must eventually observe and where those observations belong.
 
-Companion docs: `docs/IMPLEMENTATION_PLAN.md` (roadmap and admin slice), `docs/USER_PROFILE_IA.md` (profile/scout surfaces), `docs/SCOUTING_TRUST_NEXT_PASS.md` (trust signal taxonomy), `docs/PAYMENTS_NEXT_PASS.md` (cashout/payment gates).
+Companion docs: `docs/OPERATIONAL_POLICY.md` (§1.11 engine cheating, §1.12 external human assistance, §1.13 suspicious value transfer, §1.14 shadow restrictions vs hard bans — policy framing and enforcement language; this doc owns *how we detect and act*, the policy doc owns *what's allowed and how we explain it*), `docs/IMPLEMENTATION_PLAN.md` (roadmap and admin slice), `docs/USER_PROFILE_IA.md` (profile/scout surfaces), `docs/SCOUTING_TRUST_NEXT_PASS.md` (trust signal taxonomy), `docs/PAYMENTS_NEXT_PASS.md` (cashout/payment gates).
 
 ## Priority
 
@@ -75,3 +75,41 @@ Likely first technical slice:
 6. Only then decide which summary fields become public.
 
 Open question: choose the engine/runtime path and license posture. Do not import an engine until licensing, CPU budget, and deployment implications are documented.
+
+## Enforcement Ladder (from policy §1.14)
+
+Hard bans aren't the only response. The shadow-restriction options below give us granular control without revealing detection logic. These are the *internal* states; user-facing language stays broad (see policy §1.14 user-facing wording).
+
+States to build into the account model, ordered from softest to hardest:
+
+- **Lower trust score** — internal only, affects matchmaking + withdrawal review priority.
+- **Reduced stake limits** — user sees a cap when they try to wager above it; reason stays vague.
+- **Delayed withdrawals** — flat hold (e.g. 24–72h) on all withdrawal requests.
+- **Promotion ineligibility** — silently excluded from bonuses/quests/rewards.
+- **Restricted matchmaking** — paired only against similar-risk accounts, or only at their own (lower) stake ceiling.
+- **Manual review required** — every withdrawal goes to admin queue.
+- **Reduced visibility** — open tables not shown to general lobby (functional shadowban).
+- **No rewards from suspicious matches** — settlement still happens but doesn't count toward quests/streaks/trust.
+- **Hard ban** — terminal. Used when evidence is high-confidence or repeat offender.
+
+Account-status enum should support multiple of these in combination (a user can be on "delayed withdrawals + manual review" without being banned). Every state change needs an internal note + reviewer + reason field; the audit log is the trust artifact, not the score itself.
+
+**v1 scope (locked 2026-05-28):** ship the full ladder. Hard ban is the terminal state — it exists, gated behind admin discretion, but is expected to be rarely used in the early days (no one to ban yet). The other eight states all live in the account-status flags from day one of the admin mutation slice (Bucket B). Reasoning: building the ladder partial is more work than building it whole, and the data model needs the full enum anyway. Ship the schema, the toggles, and the audit trail together. Land it around the time we open the door to closed-beta users.
+
+## Branded integrity surface
+
+**Locked 2026-05-28: the public-facing brand for the anti-cheat surface is "Horsey Secure Play."** This becomes the badge / section name in History / Profile / Settlement when fair-play status surfaces publicly. The doctrine is that we don't reveal detection details, so the brand has to carry the trust signal alone. Use exactly this phrase in user-facing copy; internal docs and code can use shorter handles (`secure_play`, `fair_play_review`, etc.).
+
+### Badge gating — wait for data
+
+The badge does **not** appear on day one. It waits until the analysis pipeline has enough signal that the badge actually means something. Showing a badge before there's data behind it is exactly the kind of empty-trust signal Horsey is trying to avoid.
+
+Activation rule (locked 2026-05-28):
+
+- **Minimum 10 games** of analysis-eligible data per user, sourced from either (a) external Lichess / Chess.com import (extends the existing verification path under `external_accounts`), or (b) Horsey platform games once enough have been played, or (c) both pooled together.
+- **Per-user rolling metrics**: average centipawn loss (CPL) and blunder rate at minimum. Other metrics in the "Metrics That Matter" section feed admin review but don't gate the badge.
+- **Confidence threshold ~95%** — interpret loosely as "the rolling estimate has narrow enough error bars to be meaningful." Operationally: 10 games is the floor; tighter caps (≥30 games for a "settled" reading) graduate the badge from `calibrating` to a confirmed state. This mirrors the existing trust-tier `calibrating` UX.
+- **Badge states**: `calibrating` (sample below threshold) → `clean` (below review thresholds) → `under_review` (admin-flagged; not user-visible until policy says so) → `restricted` (one of the shadow states in the ladder below).
+- **Calibrating users are not punished.** They just don't display a Secure Play badge yet. Matchmaking and play work normally.
+
+The external-import path is the same `external_accounts` infrastructure Lichess verification already uses; extending it to pull recent game histories for analysis is a known follow-up. Document the licensing posture of any engine before importing.
