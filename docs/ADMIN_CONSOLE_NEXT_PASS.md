@@ -93,8 +93,12 @@ hanging off Games.
 4. **Fair-Play Queue.** Queue endpoint + first-class tab feeding the (restyled) analysis panel.
 5. **Polish pass.** Alignment, empty states, mobile (admin tables already scroll-wrap).
 
-## Open questions
+## Resolved decisions (2026-05-29)
 
-- Escrow as its own view vs. a column/filter on Users — worth a real view, or noise?
-- Should Overview recent-flags include high-ACPL clean games, or only operator-actionable items?
-- Mobile admin: is the console expected to be usable on a phone, or desktop-operator-first?
+- **Escrow** is *not* its own view — it's a gold money column + emphasis on Users
+  plus a total-escrow-held tile on Overview. MONEY group is therefore **Ledger ·
+  Purchases** only.
+- **Overview recent-flags** show operator-actionable items only (open reports +
+  open/`suspicious` analysis reviews). No high-ACPL "clean" games — that's noise.
+- **Desktop-operator-first.** Keep the existing table scroll-wrap for narrow
+  screens; do not invest in a dedicated mobile admin layout.

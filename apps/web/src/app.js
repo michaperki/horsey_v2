@@ -5316,6 +5316,12 @@ function adminReportActionsCell(r) {
   ).join("")}</div>`;
 }
 
+// Money cells render in deep gold (.cell-money); urgency markers in red
+// (.cell-urgent) — the admin console's two reserved accents.
+function moneyCell(cents) {
+  return `<span class="cell-money">${money(cents)}</span>`;
+}
+
 function adminTable(headers, rows) {
   if (!rows.length) return `<p class="muted">Empty.</p>`;
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
@@ -5333,8 +5339,8 @@ function renderAdminUsers(users) {
       escapeHtml(u.email),
       u.rating,
       u.trustTier,
-      money(u.balanceCents),
-      money(u.escrowCents),
+      moneyCell(u.balanceCents),
+      moneyCell(u.escrowCents),
       u.finishedGames,
       adminRestrictionsCell(u),
       u.isAdmin ? "yes" : "",
@@ -5399,7 +5405,7 @@ function adminGameRow(g) {
     adminPlayersCell(g),
     escapeHtml(g.timeControl || ""),
     g.moveCount,
-    g.pot?.stakeCents != null ? money(g.pot.stakeCents * 2) : "—",
+    g.pot?.stakeCents != null ? moneyCell(g.pot.stakeCents * 2) : "—",
     escapeHtml(formatShortTimestamp(g.updatedAt)),
     adminGameActionsCell(g)
   ];
@@ -5419,7 +5425,7 @@ function adminGameActionsCell(g) {
 function adminRestrictionsCell(u) {
   const active = u.restrictions || [];
   if (!active.length) return `<span class="muted">none</span>`;
-  return active.map((r) => escapeHtml(r.restriction)).join("<br>");
+  return active.map((r) => `<span class="cell-urgent">${escapeHtml(r.restriction)}</span>`).join("<br>");
 }
 
 function adminUserActionsCell(u) {
@@ -5447,7 +5453,7 @@ function renderAdminStuck(stuck) {
       escapeHtml(g.id),
       adminPlayersCell(g),
       escapeHtml(g.timeControl || ""),
-      g.flaggedSide ? `<span class="error">${g.flaggedSide}</span>` : "—",
+      g.flaggedSide ? `<span class="cell-urgent">${escapeHtml(g.flaggedSide)}</span>` : "—",
       g.idleMs != null ? Math.round(g.idleMs / 1000) : "—",
       escapeHtml(formatShortTimestamp(g.updatedAt))
     ])
@@ -5461,8 +5467,8 @@ function renderAdminLedger(entries) {
       escapeHtml(formatShortTimestamp(e.createdAt)),
       escapeHtml(e.userId.slice(0, 14)),
       escapeHtml(e.type),
-      money(e.availableDeltaCents),
-      money(e.escrowDeltaCents),
+      moneyCell(e.availableDeltaCents),
+      moneyCell(e.escrowDeltaCents),
       escapeHtml(e.refId || ""),
       escapeHtml(e.note || "")
     ])
@@ -5477,7 +5483,7 @@ function renderAdminChallenges(challenges) {
       escapeHtml(c.state),
       escapeHtml(c.challengerId.slice(0, 12)),
       escapeHtml(c.recipientId ? c.recipientId.slice(0, 12) : "open"),
-      money(c.stakeCents),
+      moneyCell(c.stakeCents),
       escapeHtml(c.timeControl || ""),
       escapeHtml(c.gameId ? c.gameId.slice(0, 14) : ""),
       escapeHtml(formatShortTimestamp(c.createdAt))
@@ -5508,8 +5514,8 @@ function renderAdminPurchases(purchases) {
         ? `<a href="#user/${escapeHtml(p.user.id)}">${escapeHtml(p.user.handle)}</a>`
         : escapeHtml(p.userId.slice(0, 12)),
       escapeHtml(p.packageId),
-      money(p.amountUsdCents),
-      money(p.chipsCreditedCents),
+      moneyCell(p.amountUsdCents),
+      moneyCell(p.chipsCreditedCents),
       escapeHtml(p.status),
       p.payCurrency ? escapeHtml(`${p.payCurrency}${p.payAmount ? ` · ${p.payAmount}` : ""}`) : `<span class="muted">—</span>`,
       escapeHtml(p.providerPaymentId || p.providerSessionId || ""),

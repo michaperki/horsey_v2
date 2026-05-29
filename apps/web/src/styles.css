@@ -3836,31 +3836,59 @@ p {
 }
 
 /* ---- Admin --------------------------------------------------------------- */
-.admin-panel header { margin-bottom: 12px; }
+/* ---- Admin console -------------------------------------------------------
+   Operator terminal: felt-green chrome framing warm-paper data surfaces.
+   Gold is reserved for money (.cell-money), red for operator urgency
+   (.cell-urgent) — see docs/ADMIN_CONSOLE_NEXT_PASS.md. */
+.admin-panel {
+  padding: 0;
+  overflow: hidden;
+}
+.admin-panel > header {
+  margin: 0;
+  padding: 16px 18px 13px;
+  background:
+    radial-gradient(circle at 92% 8%, rgba(211, 164, 65, 0.16), transparent 42%),
+    linear-gradient(160deg, var(--felt), var(--felt-2));
+  color: #fff7e8;
+}
+.admin-panel > header h2 { margin: 0; letter-spacing: 0.02em; }
+.admin-panel > header p { margin: 4px 0 0; color: rgba(255, 247, 232, 0.62); }
 .admin-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--rule);
-  padding-bottom: 8px;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--felt-2);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.28);
 }
 .admin-tab {
   padding: 6px 12px;
   border-radius: 6px;
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  color: var(--ink);
+  background: transparent;
+  border: 1px solid transparent;
+  color: rgba(255, 247, 232, 0.7);
   cursor: pointer;
   font-size: 13px;
 }
-.admin-tab:hover { background: var(--paper-2); }
+.admin-tab:hover { background: rgba(255, 247, 232, 0.08); color: #fff7e8; }
 .admin-tab.active {
-  background: rgba(211, 164, 65, 0.18);
+  background: rgba(211, 164, 65, 0.16);
   border-color: var(--gold);
+  color: var(--gold-2);
+  font-weight: 600;
 }
-.admin-body section { margin-bottom: 18px; }
-.admin-body h3 { margin: 8px 0; font-size: 14px; color: var(--muted); }
+.admin-body { padding: 16px 16px 18px; }
+.admin-body section { margin-bottom: 20px; }
+.admin-body section:last-child { margin-bottom: 0; }
+.admin-body h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
 .admin-table {
   width: 100%;
   border-collapse: collapse;
@@ -3875,8 +3903,20 @@ p {
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
 }
-.admin-table th { font-weight: 600; color: var(--muted); }
+.admin-table th {
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.admin-table tbody tr:nth-child(even) { background: rgba(27, 24, 21, 0.025); }
+.admin-table tbody tr:hover { background: rgba(211, 164, 65, 0.08); }
 .admin-table td.muted { color: var(--muted); }
+/* Money lives in deep gold so it stays legible on paper; red marks anything an
+   operator must act on (active restrictions, flagged sides, suspicious review). */
+.cell-money { color: #8a6411; font-weight: 600; font-variant-numeric: tabular-nums; }
+.cell-urgent { color: var(--red); font-weight: 600; }
 .admin-actions {
   display: flex;
   flex-wrap: wrap;
