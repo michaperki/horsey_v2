@@ -75,5 +75,6 @@ Related focused notes:
 - `docs/PAYMENTS_NEXT_PASS.md` records the buy-chips product posture: NOWPayments stablecoin purchases now, no cashout in v1, ToS acceptance, refunds, spend caps, kill switch, and cashout waitlist.
 - `docs/NOTIFICATIONS_NEXT_PASS.md` records the durable notification/inbox system needed for direct challenges, bot greetings, turn/draw events, cashout waitlists, and future operational notices.
 - `docs/FAIR_PLAY_NEXT_PASS.md` records the anti-cheat/fair-play roadmap: engine metrics, human-help review limits, admin queues, report intake, and which signals are safe to expose publicly.
+- `docs/ADMIN_CONSOLE_NEXT_PASS.md` records the admin dashboard redesign: brand→operator-console translation (felt chrome, paper data, gold-money/red-urgency discipline), the IA restructure (Overview triage landing + TRUST/MONEY/OPS groups + Fair-Play Queue), backend needs, and the staged slices.
 - `docs/DEV_QA_WORKFLOW.md` records the current manual two-browser smoke test and the preferred lightweight dev tooling path: scenario fixtures, disposable DBs, and narrow multiplayer smoke automation rather than a sprawling dev panel.
 - `docs/marketing/IMAGE_AD_PROMPTS.md` records reusable image-generation prompts and guardrails for Horsey advertising concepts.
