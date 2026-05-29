@@ -111,6 +111,13 @@ const state = {
     loading: false,
     error: null,
     anchor: null
+  },
+  adminAnalysisFilters: {
+    side: "all",
+    criticalOnly: false,
+    sharpOnly: false,
+    hideForced: false,
+    hideBook: false
   }
 };
 
@@ -5095,7 +5102,7 @@ function renderFairPlaySide(label, fp) {
     : `<span class="muted">no critical-position decisions</span>`;
   const rankEvidence = fp.engineRankEvidence;
   const rankLine = rankEvidence?.count
-    ? `avg rank ${rankEvidence.avgRank ?? "—"} · #1 ${rankEvidence.rankBucketPct?.rank1 ?? 0}% · #2 ${rankEvidence.rankBucketPct?.rank2 ?? 0}% · #3 ${rankEvidence.rankBucketPct?.rank3 ?? 0}% · outside top-N ${rankEvidence.rankBucketPct?.outsideTopN ?? 0}% · large-gap ${rankEvidence.largeGapPct ?? 0}% · forced ${rankEvidence.forcedPct ?? 0}%`
+    ? renderEngineRankEvidence(rankEvidence)
     : `<span class="muted">engine-rank evidence unavailable (needs MultiPV analysis)</span>`;
   return `
     <div class="fair-play-side">
@@ -5109,6 +5116,34 @@ function renderFairPlaySide(label, fp) {
         <dt>Clock-aware</dt><dd>${clockLine}</dd>
         <dt>Player baseline</dt><dd>${baselineLine}</dd>
       </dl>
+    </div>
+  `;
+}
+
+function renderEngineRankEvidence(e) {
+  const pct = e.rankBucketPct || {};
+  const buckets = [
+    ["#1", pct.rank1 ?? 0, "rank-1"],
+    ["#2", pct.rank2 ?? 0, "rank-2"],
+    ["#3", pct.rank3 ?? 0, "rank-3"],
+    ["4+", (pct.rank4 ?? 0) + (pct.rank5Plus ?? 0), "rank-4"],
+    ["out", pct.outsideTopN ?? 0, "rank-out"]
+  ];
+  const bars = buckets.map(([label, value, cls]) => `
+    <span class="rank-bar-row">
+      <span>${escapeHtml(label)}</span>
+      <span class="rank-bar-track"><span class="rank-bar-fill ${cls}" style="width:${Math.max(0, Math.min(100, value))}%"></span></span>
+      <strong>${value}%</strong>
+    </span>
+  `).join("");
+  return `
+    <div class="rank-evidence">
+      <div class="rank-evidence-head">
+        <span>avg rank <strong>${escapeHtml(String(e.avgRank ?? "—"))}</strong></span>
+        <span>large-gap <strong>${e.largeGapPct ?? 0}%</strong></span>
+        <span>forced <strong>${e.forcedPct ?? 0}%</strong></span>
+      </div>
+      <div class="rank-bars">${bars}</div>
     </div>
   `;
 }
@@ -5138,7 +5173,9 @@ function renderAdminAnalysisSummary(a) {
 
 function renderAdminAnalysisMoves(moves) {
   if (!moves.length) return `<p class="muted small">No move-level rows.</p>`;
-  const rows = moves.map((m) => {
+  const filters = normalizedAnalysisFilters();
+  const filteredMoves = moves.filter((m) => analysisMoveMatchesFilters(m, filters));
+  const rows = filteredMoves.map((m) => {
     const sharp = m.evalGapCp != null && m.evalGapCp >= 100;
     // The played move's engine rank, with the candidate set as a hover title so
     // the full MultiPV picture is one mouse-over away rather than always on.
@@ -5166,11 +5203,57 @@ function renderAdminAnalysisMoves(moves) {
   `;
   }).join("");
   return `
+    ${renderAnalysisMoveFilters(filters, moves.length, filteredMoves.length)}
     <table class="admin-analysis-moves">
       <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Eng#</th><th>Forced</th><th>Class</th><th>Phase</th><th>Clock</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${rows || `<tr><td colspan="11" class="muted small">No moves match these filters.</td></tr>`}</tbody>
     </table>
   `;
+}
+
+function normalizedAnalysisFilters() {
+  return {
+    side: ["all", "white", "black"].includes(state.adminAnalysisFilters?.side) ? state.adminAnalysisFilters.side : "all",
+    criticalOnly: !!state.adminAnalysisFilters?.criticalOnly,
+    sharpOnly: !!state.adminAnalysisFilters?.sharpOnly,
+    hideForced: !!state.adminAnalysisFilters?.hideForced,
+    hideBook: !!state.adminAnalysisFilters?.hideBook
+  };
+}
+
+function renderAnalysisMoveFilters(filters, totalCount, visibleCount) {
+  const checked = (flag) => filters[flag] ? "checked" : "";
+  return `
+    <div class="analysis-move-filters">
+      <label class="analysis-side-filter muted small">Side
+        <select data-analysis-filter-side>
+          ${["all", "white", "black"].map((side) => `<option value="${side}" ${filters.side === side ? "selected" : ""}>${side}</option>`).join("")}
+        </select>
+      </label>
+      <label><input type="checkbox" data-analysis-filter="criticalOnly" ${checked("criticalOnly")}> Critical only</label>
+      <label><input type="checkbox" data-analysis-filter="sharpOnly" ${checked("sharpOnly")}> Sharp only</label>
+      <label><input type="checkbox" data-analysis-filter="hideForced" ${checked("hideForced")}> Hide forced</label>
+      <label><input type="checkbox" data-analysis-filter="hideBook" ${checked("hideBook")}> Hide book</label>
+      <span class="muted small">${visibleCount}/${totalCount} moves</span>
+    </div>
+  `;
+}
+
+function analysisMoveMatchesFilters(m, filters) {
+  if (filters.side !== "all" && m.side !== filters.side) return false;
+  if (filters.hideBook && m.isBook) return false;
+  if (filters.criticalOnly && !isCriticalAnalysisMove(m)) return false;
+  if (filters.sharpOnly && !isSharpAnalysisMove(m)) return false;
+  if (filters.hideForced && forcedAnalysisMoveStatus(m) === true) return false;
+  return true;
+}
+
+function isCriticalAnalysisMove(m) {
+  return !m.isBook && m.bestEvalCp != null && Math.abs(m.bestEvalCp) <= 300;
+}
+
+function isSharpAnalysisMove(m) {
+  return m.evalGapCp != null && m.evalGapCp >= 100;
 }
 
 function forcedAnalysisMoveStatus(m) {
@@ -5497,6 +5580,17 @@ function adminCloseAnalysis() {
   state.adminAnalysisFor = null;
   state.adminAnalysisData = null;
   state.adminAnalysisError = null;
+  render();
+}
+
+function adminSetAnalysisFilter(key, value) {
+  const current = normalizedAnalysisFilters();
+  if (key === "side") {
+    current.side = ["all", "white", "black"].includes(value) ? value : "all";
+  } else if (["criticalOnly", "sharpOnly", "hideForced", "hideBook"].includes(key)) {
+    current[key] = !!value;
+  }
+  state.adminAnalysisFilters = current;
   render();
 }
 
@@ -5837,6 +5931,12 @@ function render() {
   });
   document.querySelectorAll("[data-admin-review-save]").forEach((b) => {
     b.addEventListener("click", () => adminSaveAnalysisReview(b.dataset.adminReviewSave));
+  });
+  document.querySelectorAll("[data-analysis-filter]").forEach((input) => {
+    input.addEventListener("change", () => adminSetAnalysisFilter(input.dataset.analysisFilter, input.checked));
+  });
+  document.querySelectorAll("[data-analysis-filter-side]").forEach((select) => {
+    select.addEventListener("change", () => adminSetAnalysisFilter("side", select.value));
   });
   document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
     b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));
