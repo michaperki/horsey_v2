@@ -4988,6 +4988,18 @@ function switchAdminTab(tabId) {
   render();
 }
 
+// Reload whatever the operator is looking at — the open analysis drilldown, or
+// the active tab's data. The floor changes under them, so a manual refresh earns
+// its place in the console header.
+function adminRefresh() {
+  if (state.adminAnalysisFor) {
+    adminOpenAnalysis(state.adminAnalysisFor);
+    return;
+  }
+  loadAdminData(state.adminTab || "overview").then(() => render());
+  render();
+}
+
 function renderAdmin() {
   const viewer = state.bootstrap?.viewer;
   if (!viewer?.isAdmin) {
@@ -5021,11 +5033,15 @@ function renderAdmin() {
   const main = state.adminAnalysisFor
     ? renderAdminAnalysisPanel()
     : `<div class="admin-body">${body}</div>`;
+  const sectionLabel = ADMIN_TABS.find((t) => t.id === activeTab)?.label || "";
   return `
     <article class="card admin-panel">
-      <header>
-        <h2>Admin</h2>
-        <p class="muted small">Privileged actions require a reason and write audit rows plus append-only ledger corrections.</p>
+      <header class="admin-head">
+        <div>
+          <h2>Admin${sectionLabel ? ` <span class="admin-head-section">${escapeHtml(sectionLabel)}</span>` : ""}</h2>
+          <p class="admin-head-sub">Privileged actions require a reason and write audit rows plus append-only ledger corrections.</p>
+        </div>
+        <button class="mini-button admin-refresh" data-admin-refresh ${state.adminLoading ? "disabled" : ""}>${state.adminLoading ? "Refreshing…" : "Refresh"}</button>
       </header>
       ${nav}
       ${main}
@@ -5349,7 +5365,7 @@ function renderAdminOverview(data) {
     tile("Live games", c.liveGames ?? 0, "games", c.liveGames > 0 ? "live" : "calm"),
     tile("Open reports", c.openReports ?? 0, "reports", alert(c.openReports)),
     tile("Stuck games", c.stuckGames ?? 0, "stuck", alert(c.stuckGames)),
-    tile("Pending analysis", c.pendingAnalysis ?? 0, "games", c.pendingAnalysis > 0 ? "pending" : "calm"),
+    tile("Pending analysis", c.pendingAnalysis ?? 0, "fairplay", c.pendingAnalysis > 0 ? "pending" : "calm"),
     tile("Restricted", c.restrictedUsers ?? 0, "users", alert(c.restrictedUsers)),
     `<button class="admin-stat tone-money" data-admin-tab="ledger">
        <span class="admin-stat-value">${money(c.escrowHeldCents ?? 0)}</span>
@@ -5420,7 +5436,7 @@ function moneyCell(cents) {
 }
 
 function adminTable(headers, rows) {
-  if (!rows.length) return `<p class="muted">Empty.</p>`;
+  if (!rows.length) return `<p class="muted small">Nothing here yet.</p>`;
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
   const body = rows
     .map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`)
@@ -5508,32 +5524,10 @@ function renderAdminUsers(users) {
 function renderAdminGames(data) {
   const liveRows = (data.live || []).map((g) => adminGameRow(g));
   const finalizedRows = (data.recentFinalized || []).map((g) => adminGameRow(g));
-  const analyzed = data.recentAnalyzed || [];
   return `
     <section>
       <h3>Live (${(data.live || []).length})</h3>
       ${adminTable(["Id", "Players", "TC", "Moves", "Pot", "Updated", "Actions"], liveRows)}
-    </section>
-    <section>
-      <h3>Recently analyzed (${analyzed.length})</h3>
-      ${analyzed.length === 0
-        ? `<p class="muted small">No completed analyses yet. Finalized games are analyzed in the background when the analysis worker is running.</p>`
-        : adminTable(
-          ["Id", "Players", "Eng", "W ACPL", "B ACPL", "Review", "Analyzed", "Actions"],
-          analyzed.map((g) => {
-            const a = g.analysis || {};
-            return [
-              escapeHtml(g.id),
-              adminPlayersCell(g),
-              escapeHtml(`d${a.depth ?? "?"}·mpv${a.multipv ?? "?"}`),
-              a.whiteAcpl ?? "—",
-              a.blackAcpl ?? "—",
-              `<span class="review-${escapeHtml(a.reviewStatus || "open")}">${escapeHtml(a.reviewStatus || "open")}</span>`,
-              escapeHtml(formatShortTimestamp(a.completedAt)),
-              `<div class="admin-actions"><button class="mini-button" data-admin-game-analysis="${escapeHtml(g.id)}">Analysis</button></div>`
-            ];
-          })
-        )}
     </section>
     <section>
       <h3>Recent finalized</h3>
@@ -6109,6 +6103,9 @@ function render() {
   });
   document.querySelectorAll("[data-fairplay-status]").forEach((b) => {
     b.addEventListener("click", () => adminSetFairPlayStatus(b.dataset.fairplayStatus));
+  });
+  document.querySelectorAll("[data-admin-refresh]").forEach((b) => {
+    b.addEventListener("click", () => adminRefresh());
   });
   document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
     b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));

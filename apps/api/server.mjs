@@ -3536,25 +3536,9 @@ async function routeApi(req, res) {
       const limit = clampInt(url.searchParams.get("limit"), 50, 1, 500);
       const live = db.listLiveGames().map(summarizeGameRow);
       const recentFinalized = db.listRecentFinalizedGames(limit).map(summarizeGameRow);
-      // Games with a completed analysis, newest-first — the entry point for
-      // fair-play review. Decoupled from the finalized-recency window so older
-      // analyzed games stay findable.
-      const recentAnalyzed = db.listRecentAnalyzedGames(limit).map((a) => {
-        const game = db.getGame(a.gameId);
-        return {
-          ...(game ? summarizeGameRow(game) : { id: a.gameId, state: "finalized" }),
-          analysis: {
-            multipv: a.multipv,
-            depth: a.depth,
-            engineVersion: a.engineVersion,
-            whiteAcpl: a.whiteAcpl,
-            blackAcpl: a.blackAcpl,
-            reviewStatus: a.reviewStatus,
-            completedAt: a.completedAt
-          }
-        };
-      });
-      return json(res, 200, { live, recentFinalized, recentAnalyzed });
+      // Analyzed games now live in the Fair-Play Queue (GET /api/admin/analysis),
+      // so the Games tab no longer carries a "recently analyzed" list.
+      return json(res, 200, { live, recentFinalized });
     } catch (error) { return handleDomainError(error, res); }
   }
 

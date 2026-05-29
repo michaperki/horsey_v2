@@ -3854,6 +3854,27 @@ p {
 }
 .admin-panel > header h2 { margin: 0; letter-spacing: 0.02em; }
 .admin-panel > header p { margin: 4px 0 0; color: rgba(255, 247, 232, 0.62); }
+.admin-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.admin-head-section {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: rgba(241, 201, 107, 0.18);
+  color: var(--gold-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+.admin-head-sub { font-size: 12px; max-width: 64ch; }
+/* Refresh sits on felt — keep the paper mini-button readable and unstretched. */
+.admin-refresh { flex: none; align-self: center; }
 .admin-nav {
   display: flex;
   flex-wrap: wrap;

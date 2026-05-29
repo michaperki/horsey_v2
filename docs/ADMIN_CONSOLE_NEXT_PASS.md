@@ -85,13 +85,20 @@ hanging off Games.
 ## Staged slices (small commits, review running app between)
 
 1. **Tokens + chrome.** Felt header rail, paper data surfaces, gold-money / red-urgency
-   cell helpers, denser tables. Pure reskin of the *existing* structure — nothing moves yet.
+   cell helpers, denser tables. **Done** (`36b71b6`).
 2. **Overview endpoint + landing.** `GET /api/admin/overview`, triage strip, recent-flags,
-   make it the default tab.
-3. **Grouped nav.** Restructure tab bar into TRUST / MONEY / OPS sections; add the
-   Restrictions and Escrow derived views.
-4. **Fair-Play Queue.** Queue endpoint + first-class tab feeding the (restyled) analysis panel.
-5. **Polish pass.** Alignment, empty states, mobile (admin tables already scroll-wrap).
+   default tab. **Done** (`160f925`).
+3. **Grouped nav.** TRUST / MONEY / OPS sections + Restrictions derived view (escrow folded
+   into a Users column + Overview tile per resolved decisions). **Done** (`cd5087c`).
+4. **Fair-Play Queue.** `GET /api/admin/analysis` + status chips + first-class tab; analysis
+   panel restyled and opened as an in-place breadcrumb drilldown. **Done** (`2d62f7e`, `85bfb4a`).
+5. **Polish pass.** Header carries the active section + a Refresh control; removed the
+   redundant "Recently analyzed" section from the Games tab (and trimmed its server payload —
+   the Fair-Play Queue owns analyzed games now); Pending-analysis tile points at the queue;
+   consistent empty-state copy. **Done.**
+
+Redesign complete. Future work would be incremental (e.g. column-level numeric right-align,
+per-tab empty-state context, a real pending-analysis job list rather than just a count).
 
 ## Resolved decisions (2026-05-29)
 
