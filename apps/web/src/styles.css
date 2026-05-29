@@ -3942,6 +3942,16 @@ p {
   display: flex; flex-direction: column; gap: 3px;
 }
 .fair-play-review-controls input[type="text"] { min-width: 280px; }
+/* MultiPV / engine-rank surface. Sharp = one clear engine move (large eval
+   gap); kept subtle so the move table doesn't get noisy. */
+.admin-analysis-moves td.eng-rank { white-space: nowrap; cursor: help; }
+.admin-analysis-moves tr.sharp td.eng-rank { font-weight: 600; }
+.admin-analysis-moves .sharp-dot { margin-left: 3px; color: #ffd594; font-size: 10px; }
+/* Review-status badges in the "Recently analyzed" admin table. */
+.review-open { opacity: 0.6; }
+.review-reviewing { color: #ffd594; }
+.review-clean { color: #b6e6c6; }
+.review-suspicious { color: #ffb4b4; font-weight: 600; }
 
 /* ---- Notification bell --------------------------------------------------- */
 .bell-wrap { position: relative; }

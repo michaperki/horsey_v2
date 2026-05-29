@@ -5087,9 +5087,16 @@ function renderFairPlaySide(label, fp) {
   const clockLine = clockAware
     ? `low time (<10s): ${clockAware.low.count} moves, ${clockAware.low.engineGradePct ?? "—"}% engine-grade · high time (≥60s): ${clockAware.high.count} moves, ${clockAware.high.engineGradePct ?? "—"}% engine-grade`
     : `<span class="muted">clock-aware metrics unavailable (no per-ply clock data)</span>`;
+  const sharpSuffix = fp.critical?.sharpCount
+    ? ` · <strong>sharp ${fp.critical.sharpEngineGrade}/${fp.critical.sharpCount} (${fp.critical.sharpAccuracyPct ?? 0}%)</strong>`
+    : "";
   const criticalLine = fp.critical?.count
-    ? `${fp.critical.engineGrade}/${fp.critical.count} engine-grade in critical positions (${fp.critical.accuracyPct ?? 0}%)`
+    ? `${fp.critical.engineGrade}/${fp.critical.count} engine-grade in critical positions (${fp.critical.accuracyPct ?? 0}%)${sharpSuffix}`
     : `<span class="muted">no critical-position decisions</span>`;
+  const rankEvidence = fp.engineRankEvidence;
+  const rankLine = rankEvidence?.count
+    ? `avg rank ${rankEvidence.avgRank ?? "—"} · #1 ${rankEvidence.rankBucketPct?.rank1 ?? 0}% · #2 ${rankEvidence.rankBucketPct?.rank2 ?? 0}% · #3 ${rankEvidence.rankBucketPct?.rank3 ?? 0}% · outside top-N ${rankEvidence.rankBucketPct?.outsideTopN ?? 0}% · large-gap ${rankEvidence.largeGapPct ?? 0}% · forced ${rankEvidence.forcedPct ?? 0}%`
+    : `<span class="muted">engine-rank evidence unavailable (needs MultiPV analysis)</span>`;
   return `
     <div class="fair-play-side">
       <h5>${escapeHtml(label)} <span class="concern concern-${escapeHtml(concern.level)}">${escapeHtml(concern.level)}</span></h5>
@@ -5097,6 +5104,7 @@ function renderFairPlaySide(label, fp) {
       <dl class="fair-play-metrics">
         <dt>Phase ACPL</dt><dd>opening ${phase.opening?.acpl ?? "—"} · middlegame ${phase.middlegame?.acpl ?? "—"} · endgame ${phase.endgame?.acpl ?? "—"}</dd>
         <dt>Critical positions</dt><dd>${criticalLine}</dd>
+        <dt>Engine rank</dt><dd>${rankLine}</dd>
         <dt>Rating-adjusted</dt><dd>${ratingLine}</dd>
         <dt>Clock-aware</dt><dd>${clockLine}</dd>
         <dt>Player baseline</dt><dd>${baselineLine}</dd>
@@ -5130,25 +5138,46 @@ function renderAdminAnalysisSummary(a) {
 
 function renderAdminAnalysisMoves(moves) {
   if (!moves.length) return `<p class="muted small">No move-level rows.</p>`;
-  const rows = moves.map((m) => `
-    <tr class="analysis-move analysis-${escapeHtml(m.classification || (m.isBook ? "book" : "good"))}">
+  const rows = moves.map((m) => {
+    const sharp = m.evalGapCp != null && m.evalGapCp >= 100;
+    // The played move's engine rank, with the candidate set as a hover title so
+    // the full MultiPV picture is one mouse-over away rather than always on.
+    const candidates = Array.isArray(m.candidates) ? m.candidates : [];
+    const tip = candidates.length
+      ? candidates.map((c) => `${c.rank}. ${c.san || c.uci} ${formatEvalCp(c.evalCp ?? 0)}`).join("  ·  ")
+      : "";
+    const rankCell = m.engineRank != null ? `#${m.engineRank}` : "—";
+    const gapNote = sharp ? `<span class="sharp-dot" title="one clear move · gap ${m.evalGapCp}cp">◆</span>` : "";
+    const forced = forcedAnalysisMoveStatus(m);
+    return `
+    <tr class="analysis-move analysis-${escapeHtml(m.classification || (m.isBook ? "book" : "good"))}${sharp ? " sharp" : ""}">
       <td>${m.ply}</td>
       <td>${escapeHtml(m.side[0].toUpperCase())}</td>
       <td>${escapeHtml(m.playedSan)}</td>
       <td>${escapeHtml(m.bestSan || "—")}</td>
       <td>${m.playedEvalCp != null ? formatEvalCp(m.playedEvalCp) : "—"}</td>
       <td>${m.cpLoss != null ? m.cpLoss : "—"}</td>
+      <td class="eng-rank"${tip ? ` title="${escapeHtml(tip)}"` : ""}>${escapeHtml(rankCell)}${gapNote}</td>
+      <td>${forced == null ? "—" : (forced ? "yes" : "no")}</td>
       <td>${escapeHtml(m.isBook ? "book" : (m.classification || ""))}</td>
       <td class="muted small">${escapeHtml(m.phase || "")}</td>
       <td class="muted small">${m.clockRemainingMs != null ? formatClockMs(m.clockRemainingMs) : ""}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
   return `
     <table class="admin-analysis-moves">
-      <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Class</th><th>Phase</th><th>Clock</th></tr></thead>
+      <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Eng#</th><th>Forced</th><th>Class</th><th>Phase</th><th>Clock</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+function forcedAnalysisMoveStatus(m) {
+  const candidates = Array.isArray(m.candidates) ? m.candidates : null;
+  if (candidates && candidates.length === 1) return true;
+  if (!candidates && m.evalGapCp == null) return null;
+  return m.evalGapCp != null && m.evalGapCp >= 300;
 }
 
 function formatClockMs(ms) {
@@ -5235,10 +5264,32 @@ function renderAdminUsers(users) {
 function renderAdminGames(data) {
   const liveRows = (data.live || []).map((g) => adminGameRow(g));
   const finalizedRows = (data.recentFinalized || []).map((g) => adminGameRow(g));
+  const analyzed = data.recentAnalyzed || [];
   return `
     <section>
       <h3>Live (${(data.live || []).length})</h3>
       ${adminTable(["Id", "Players", "TC", "Moves", "Pot", "Updated", "Actions"], liveRows)}
+    </section>
+    <section>
+      <h3>Recently analyzed (${analyzed.length})</h3>
+      ${analyzed.length === 0
+        ? `<p class="muted small">No completed analyses yet. Finalized games are analyzed in the background when the analysis worker is running.</p>`
+        : adminTable(
+          ["Id", "Players", "Eng", "W ACPL", "B ACPL", "Review", "Analyzed", "Actions"],
+          analyzed.map((g) => {
+            const a = g.analysis || {};
+            return [
+              escapeHtml(g.id),
+              adminPlayersCell(g),
+              escapeHtml(`d${a.depth ?? "?"}·mpv${a.multipv ?? "?"}`),
+              a.whiteAcpl ?? "—",
+              a.blackAcpl ?? "—",
+              `<span class="review-${escapeHtml(a.reviewStatus || "open")}">${escapeHtml(a.reviewStatus || "open")}</span>`,
+              escapeHtml(formatShortTimestamp(a.completedAt)),
+              `<div class="admin-actions"><button class="mini-button" data-admin-game-analysis="${escapeHtml(g.id)}">Analysis</button></div>`
+            ];
+          })
+        )}
     </section>
     <section>
       <h3>Recent finalized</h3>

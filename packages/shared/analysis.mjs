@@ -298,6 +298,97 @@ export function isCriticalPosition(move) {
   return Math.abs(move.bestEvalCp) <= CRITICAL_EVAL_RANGE_CP;
 }
 
+// MultiPV-derived sharpness. A position is "sharp" when the best move is
+// meaningfully better than the next-best (large eval gap) — i.e. there is one
+// clear engine move rather than several roughly-equivalent ones. Finding the
+// top move in a flat position (many ties) is weak evidence; finding it in a
+// sharp position is the discriminating signal. `evalGapCp` is best-vs-2nd-best
+// in centipawns; null when MultiPV data is unavailable (e.g. pre-v19 rows).
+export const SHARP_POSITION_GAP_CP = 100;
+
+export function isSharpPosition(move) {
+  return move.evalGapCp != null && move.evalGapCp >= SHARP_POSITION_GAP_CP;
+}
+
+// A move is "forced" when there was no real choice: only one legal candidate
+// (Stockfish returned a single line), or every alternative is a mistake-or-
+// worse versus the best (a very large eval gap). Forced moves carry no skill
+// signal, so the evidence panel reports their rate and lets admins hide them.
+export const FORCED_GAP_CP = 300;
+
+export function isForced(move) {
+  const cands = Array.isArray(move.candidates) ? move.candidates : null;
+  if (cands && cands.length === 1) return true;
+  return move.evalGapCp != null && move.evalGapCp >= FORCED_GAP_CP;
+}
+
+export function engineRankEvidenceForSide(moves, side) {
+  const rankBuckets = {
+    rank1: 0,
+    rank2: 0,
+    rank3: 0,
+    rank4: 0,
+    rank5Plus: 0,
+    outsideTopN: 0
+  };
+  let count = 0;
+  let rankKnown = 0;
+  let rankTotal = 0;
+  let gapKnown = 0;
+  let largeGap = 0;
+  let forced = 0;
+
+  for (const m of moves) {
+    if (m.side !== side) continue;
+    if (m.isBook) continue;
+
+    const hasRank = m.engineRank != null;
+    const hasGap = m.evalGapCp != null;
+    const hasCandidates = Array.isArray(m.candidates) && m.candidates.length > 0;
+    if (!hasRank && !hasGap && !hasCandidates) continue;
+
+    count += 1;
+    if (isForced(m)) forced += 1;
+
+    if (hasGap) {
+      gapKnown += 1;
+      if (isSharpPosition(m)) largeGap += 1;
+    }
+
+    if (hasRank) {
+      rankKnown += 1;
+      rankTotal += m.engineRank;
+      if (m.engineRank === 1) rankBuckets.rank1 += 1;
+      else if (m.engineRank === 2) rankBuckets.rank2 += 1;
+      else if (m.engineRank === 3) rankBuckets.rank3 += 1;
+      else if (m.engineRank === 4) rankBuckets.rank4 += 1;
+      else rankBuckets.rank5Plus += 1;
+    } else {
+      rankBuckets.outsideTopN += 1;
+    }
+  }
+
+  const pct = (n, d) => d > 0 ? Math.round((n / d) * 100) : null;
+  return {
+    count,
+    rankKnown,
+    avgRank: rankKnown > 0 ? Math.round((rankTotal / rankKnown) * 10) / 10 : null,
+    rankBuckets,
+    rankBucketPct: {
+      rank1: pct(rankBuckets.rank1, count),
+      rank2: pct(rankBuckets.rank2, count),
+      rank3: pct(rankBuckets.rank3, count),
+      rank4: pct(rankBuckets.rank4, count),
+      rank5Plus: pct(rankBuckets.rank5Plus, count),
+      outsideTopN: pct(rankBuckets.outsideTopN, count)
+    },
+    largeGapCount: largeGap,
+    largeGapPct: pct(largeGap, gapKnown),
+    forcedCount: forced,
+    forcedPct: pct(forced, count)
+  };
+}
+
 // A move is "engine-grade" if cp_loss <= this threshold. 25cp is generous;
 // it includes minor inaccuracies in eval, which is fine because we're
 // asking "did the player play AT engine strength" not "did they play the
@@ -386,20 +477,33 @@ export function phaseBreakdownForSide(moves, side) {
   };
 }
 
-// Overall critical-position accuracy across all phases, one side.
+// Overall critical-position accuracy across all phases, one side. The `sharp*`
+// fields restrict to critical positions that are ALSO sharp (one clear engine
+// move) — the stronger signal, since flat critical positions where several
+// moves tie inflate top-move agreement for honest players too.
 export function criticalPositionAccuracy(moves, side) {
   let critical = 0;
   let engineGrade = 0;
+  let sharp = 0;
+  let sharpEngineGrade = 0;
   for (const m of moves) {
     if (m.side !== side) continue;
     if (!isCriticalPosition(m)) continue;
     critical += 1;
-    if (isEngineGrade(m)) engineGrade += 1;
+    const eg = isEngineGrade(m);
+    if (eg) engineGrade += 1;
+    if (isSharpPosition(m)) {
+      sharp += 1;
+      if (eg) sharpEngineGrade += 1;
+    }
   }
   return {
     count: critical,
     engineGrade,
-    accuracyPct: critical > 0 ? Math.round((engineGrade / critical) * 100) : null
+    accuracyPct: critical > 0 ? Math.round((engineGrade / critical) * 100) : null,
+    sharpCount: sharp,
+    sharpEngineGrade,
+    sharpAccuracyPct: sharp > 0 ? Math.round((sharpEngineGrade / sharp) * 100) : null
   };
 }
 
@@ -467,14 +571,19 @@ export const HIGH_ACPL_THRESHOLD = 80;
 //            ("high ACPL, several blunders, no low-clock data, no baseline yet")
 //
 // Strong signals:
-//   - critical-position engine-grade >= 70% over 5+ critical moments,
-//     AND the player's overall ACPL is NOT high. (Spotting top moves in
-//     critical positions while playing badly everywhere else is much less
-//     concerning than spotting them while playing engine-clean overall.)
+//   - critical-position engine-grade >= 70%, AND the player's overall ACPL is
+//     NOT high. (Spotting top moves in critical positions while playing badly
+//     everywhere else is much less concerning than spotting them while playing
+//     engine-clean overall.) When we have enough SHARP critical positions (one
+//     clear engine move, MultiPV-derived), we judge on those — flat positions
+//     where several moves tie inflate agreement for honest players too. We fall
+//     back to the overall critical pool when the sharp sample is thin.
 //   - rating-adjusted ACPL delta >= 30 better than expected
 //   - sustained engine-grade play at low clock time
 //   - baseline deviation: game ACPL 25+ better than this player's prior
 //     analyzed games, with sample size 5+
+export const SHARP_CRITICAL_MIN_SAMPLE = 4;
+
 export function concernLabel({
   critical,
   ratingAdjusted,
@@ -488,8 +597,14 @@ export function concernLabel({
     ? expectedAcpl - observedAcpl : null;
   const highAcpl = observedAcpl != null && observedAcpl >= HIGH_ACPL_THRESHOLD;
 
-  const ca = critical?.accuracyPct ?? null;
-  const criticalSampleOk = critical?.count >= 5;
+  // Prefer the sharp-critical pool when it's large enough; otherwise judge on
+  // all critical positions. `useSharp` tracks which one drove the signal so the
+  // flag can say so.
+  const sharpSampleOk = (critical?.sharpCount ?? 0) >= SHARP_CRITICAL_MIN_SAMPLE;
+  const useSharp = sharpSampleOk;
+  const ca = useSharp ? (critical?.sharpAccuracyPct ?? null) : (critical?.accuracyPct ?? null);
+  const caCount = useSharp ? (critical?.sharpCount ?? 0) : (critical?.count ?? 0);
+  const criticalSampleOk = useSharp ? sharpSampleOk : caCount >= 5;
   const strongCritical = !!(ca != null && criticalSampleOk && ca >= 70 && !highAcpl);
   const strongRating = !!(acplDelta != null && acplDelta >= 30);
   const strongClock = !!(clockAware?.low?.count >= 5 && clockAware.low.engineGradePct >= 70);
@@ -502,7 +617,9 @@ export function concernLabel({
 
   const flags = [];
   if (strongCritical) {
-    flags.push(`critical-position accuracy ${ca}% over ${critical.count} moments`);
+    flags.push(useSharp
+      ? `sharp-critical accuracy ${ca}% over ${caCount} one-clear-move positions`
+      : `critical-position accuracy ${ca}% over ${caCount} moments`);
   }
   if (strongRating) {
     flags.push(`ACPL ${observedAcpl} vs expected ${expectedAcpl} for rating (Δ ${acplDelta} better)`);
@@ -544,6 +661,7 @@ export function concernLabel({
 export function fairPlaySummary({ moves, side, playerRating, summary, baselineRows }) {
   const phaseBreakdown = phaseBreakdownForSide(moves, side);
   const critical = criticalPositionAccuracy(moves, side);
+  const engineRankEvidence = engineRankEvidenceForSide(moves, side);
   const clockAware = clockAwareBreakdown(moves, side);
   const observedAcpl = side === "white" ? summary?.white?.acpl ?? null : summary?.black?.acpl ?? null;
   const expectedAcpl = expectedAcplForRating(playerRating);
@@ -566,6 +684,7 @@ export function fairPlaySummary({ moves, side, playerRating, summary, baselineRo
     side,
     phaseBreakdown,
     critical,
+    engineRankEvidence,
     ratingAdjusted,
     clockAware,
     baseline,

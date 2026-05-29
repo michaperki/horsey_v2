@@ -31,6 +31,7 @@ export function startAnalysisWorker({
   logger,
   enginePath = process.env.STOCKFISH_PATH || null,
   depth = Number(process.env.HORSEY_ANALYSIS_DEPTH || 18),
+  multipv = Number(process.env.HORSEY_ANALYSIS_MULTIPV || 3),
   bookPlies = DEFAULT_BOOK_PLIES,
   startEngineImpl = startEngine,
   autoStart = true
@@ -48,11 +49,12 @@ export function startAnalysisWorker({
 
   async function ensureEngine() {
     if (engine) return engine;
-    engine = await startEngineImpl({ path: enginePath, depth });
+    engine = await startEngineImpl({ path: enginePath, depth, multipv });
     logger?.info?.("analysis engine started", {
       event: "analysis.engine_started",
       version: engine.version,
-      depth
+      depth,
+      multipv
     });
     return engine;
   }
@@ -124,6 +126,9 @@ export function startAnalysisWorker({
       const side = ply % 2 === 1 ? "white" : "black";
       const stored = moves[i];
 
+      // MultiPV search on the before-position gives us the ranked candidate
+      // set (engine rank + eval gap). The after-position only needs the eval,
+      // so we run it single-line to keep the search cheap.
       const before = await eng.analyze(fenBefore);
       const bestEvalAtBefore = normalizeEvalCp({ evalCp: before.evalCp, mateIn: before.mateIn });
       const bestUciAtBefore = before.bestMoveUci || null;
@@ -138,7 +143,7 @@ export function startAnalysisWorker({
 
       // Eval the position after the played move. The score is from the side-
       // to-move's perspective (next side); flip back to white POV.
-      const after = await eng.analyze(fenAfter);
+      const after = await eng.analyze(fenAfter, { multipv: 1 });
       const evalAfterFromNextSide = normalizeEvalCp({ evalCp: after.evalCp, mateIn: after.mateIn });
       const playedEvalCpWhite = evalAfterFromNextSide == null
         ? null
@@ -158,19 +163,34 @@ export function startAnalysisWorker({
       });
 
       // best-move SAN: convert UCI to SAN by replaying it on the before-position.
-      let bestSan = null;
-      if (bestUciAtBefore && bestUciAtBefore.length >= 4) {
-        try {
-          const bestApplied = applyMove(fenBefore, {
-            from: bestUciAtBefore.slice(0, 2),
-            to: bestUciAtBefore.slice(2, 4),
-            promotion: bestUciAtBefore.length > 4 ? bestUciAtBefore[4] : null
-          });
-          bestSan = bestApplied.move.san;
-        } catch {
-          bestSan = null;
-        }
+      const bestSan = uciToSan(fenBefore, bestUciAtBefore);
+
+      // MultiPV-derived signals from the before-position candidate set. The
+      // engine reports each candidate's eval from the moving side's POV; we
+      // store them white-POV (consistent with played/best) for the UI, but the
+      // eval gap is a side-relative magnitude so it needs no flip.
+      const candidateLines = Array.isArray(before.lines) ? before.lines : [];
+      const candidates = candidateLines.map((c) => {
+        const normSide = normalizeEvalCp({ evalCp: c.evalCp, mateIn: c.mateIn });
+        const evalWhite = normSide == null ? null : (side === "white" ? normSide : -normSide);
+        return { rank: c.rank, uci: c.uci, san: uciToSan(fenBefore, c.uci), evalCp: evalWhite };
+      });
+
+      // Eval gap: how much better the best move is than the 2nd-best, from the
+      // moving side's POV (>= 0). Large gap → one clear move; small gap → many
+      // roughly-equivalent moves. Null when fewer than two candidates.
+      let evalGapCp = null;
+      if (candidateLines.length >= 2) {
+        const best = normalizeEvalCp({ evalCp: candidateLines[0].evalCp, mateIn: candidateLines[0].mateIn });
+        const second = normalizeEvalCp({ evalCp: candidateLines[1].evalCp, mateIn: candidateLines[1].mateIn });
+        if (best != null && second != null) evalGapCp = Math.max(0, best - second);
       }
+
+      // Engine rank: where the played move sits in the candidate set (1 = best
+      // move). Null when the played move is outside the top-N.
+      const playedUci = `${stored.from}${stored.to}${stored.promotion ? String(stored.promotion).toLowerCase() : ""}`;
+      const rankMatch = candidateLines.find((c) => c.uci === playedUci);
+      const engineRank = rankMatch ? rankMatch.rank : null;
 
       const isBook = ply <= bookPlies;
       const isTopMove = !!(bestSan && stored.san === bestSan);
@@ -191,7 +211,10 @@ export function startAnalysisWorker({
         classification,
         isBook,
         phase,
-        clockRemainingMs
+        clockRemainingMs,
+        engineRank,
+        evalGapCp,
+        candidates
       });
 
       fenBefore = fenAfter;
@@ -205,7 +228,7 @@ export function startAnalysisWorker({
       source: "horsey",
       engineVersion: eng.version,
       depth,
-      multipv: 1,
+      multipv: eng.multipv ?? multipv,
       whiteAcpl: summary.white.acpl,
       blackAcpl: summary.black.acpl,
       whiteBlunders: summary.white.blunders,
@@ -255,6 +278,22 @@ export function startAnalysisWorker({
   }
 
   return { stop, runOnce };
+}
+
+// Convert a UCI move to SAN by replaying it on the given position. Returns null
+// for missing/illegal moves rather than throwing.
+function uciToSan(fen, uci) {
+  if (!uci || uci.length < 4) return null;
+  try {
+    const applied = applyMove(fen, {
+      from: uci.slice(0, 2),
+      to: uci.slice(2, 4),
+      promotion: uci.length > 4 ? uci[4] : null
+    });
+    return applied.move.san;
+  } catch {
+    return null;
+  }
 }
 
 function sleep(ms) {

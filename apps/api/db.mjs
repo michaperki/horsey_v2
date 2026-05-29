@@ -4,7 +4,13 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
+
+// A 'running' analysis job older than this is treated as a stale claim (the
+// worker that took it died mid-job) and is eligible to be re-claimed. Set well
+// above the worst-case single-game analysis time so we never reclaim a job that
+// is legitimately still in flight.
+const STALE_ANALYSIS_CLAIM_MS = 15 * 60 * 1000;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -313,6 +319,9 @@ const SCHEMA = `
     is_book INTEGER NOT NULL DEFAULT 0,
     phase TEXT,
     clock_remaining_ms INTEGER,
+    engine_rank INTEGER,
+    eval_gap_cp INTEGER,
+    candidates_json TEXT,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_move_analysis_game ON move_analysis(game_analysis_id, ply);
@@ -553,6 +562,9 @@ function rowToMoveAnalysis(row) {
     isBook: !!row.is_book,
     phase: row.phase ?? null,
     clockRemainingMs: row.clock_remaining_ms ?? null,
+    engineRank: row.engine_rank ?? null,
+    evalGapCp: row.eval_gap_cp ?? null,
+    candidates: row.candidates_json ? JSON.parse(row.candidates_json) : null,
     createdAt: row.created_at
   };
 }
@@ -736,6 +748,23 @@ function migrateSchema(db) {
   // logical thread so async-resolution events (pot_state, payment_state,
   // cashout_state) can update in place rather than double-write. See
   // docs/NOTIFICATIONS_NEXT_PASS.md.
+
+  // v18 → v19: MultiPV / engine-rank columns on move_analysis. engine_rank is
+  // the played move's rank in the top-N candidate set (null if outside it);
+  // eval_gap_cp is best-vs-2nd-best magnitude (sharpness); candidates_json is
+  // the ranked top-N {rank, uci, san, evalCp} list. See ADR 0008.
+  if (currentVersion < 19 && currentVersion >= 16) {
+    const maCols = db.prepare("PRAGMA table_info('move_analysis')").all();
+    if (!maCols.some((c) => c.name === "engine_rank")) {
+      db.exec("ALTER TABLE move_analysis ADD COLUMN engine_rank INTEGER");
+    }
+    if (!maCols.some((c) => c.name === "eval_gap_cp")) {
+      db.exec("ALTER TABLE move_analysis ADD COLUMN eval_gap_cp INTEGER");
+    }
+    if (!maCols.some((c) => c.name === "candidates_json")) {
+      db.exec("ALTER TABLE move_analysis ADD COLUMN candidates_json TEXT");
+    }
+  }
 
   // v17 → v18: fair-play surface columns. game_analysis gains review_status +
   // admin_note; move_analysis gains phase + clock_remaining_ms.
@@ -1154,8 +1183,16 @@ function makeApi(db) {
       UPDATE analysis_jobs
       SET status = 'running', attempts = attempts + 1, started_at = ?
       WHERE id = (
-        SELECT id FROM analysis_jobs WHERE status = 'pending'
-        ORDER BY created_at LIMIT 1
+        SELECT id FROM analysis_jobs
+        -- Pending jobs, plus 'running' jobs whose claim is stale: a worker that
+        -- was killed mid-job leaves the row in 'running' forever otherwise,
+        -- since nothing else picks it back up. The 2nd param is the cutoff.
+        WHERE status = 'pending'
+           OR (status = 'running' AND (started_at IS NULL OR started_at < ?))
+        ORDER BY
+          CASE WHEN status = 'pending' THEN 0 ELSE 1 END,  -- fresh work first
+          created_at
+        LIMIT 1
       )
       RETURNING *
     `),
@@ -1185,6 +1222,12 @@ function makeApi(db) {
       ORDER BY created_at DESC LIMIT 1
     `),
     findGameAnalysisById: db.prepare("SELECT * FROM game_analysis WHERE id = ?"),
+    listRecentAnalyzedGames: db.prepare(`
+      SELECT * FROM game_analysis
+      WHERE status = 'complete'
+      ORDER BY completed_at DESC
+      LIMIT ?
+    `),
     updateGameAnalysisReview: db.prepare(`
       UPDATE game_analysis
       SET review_status = ?, admin_note = ?
@@ -1206,8 +1249,9 @@ function makeApi(db) {
       INSERT INTO move_analysis
         (id, game_analysis_id, ply, side, played_san, best_san,
          played_eval_cp, best_eval_cp, cp_loss, classification, is_book,
-         phase, clock_remaining_ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         phase, clock_remaining_ms, engine_rank, eval_gap_cp, candidates_json,
+         created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     listMoveAnalysisFor: db.prepare(`
       SELECT * FROM move_analysis WHERE game_analysis_id = ?
@@ -1698,8 +1742,10 @@ function makeApi(db) {
     findAnalysisJobById(id) {
       return rowToAnalysisJob(stmts.findAnalysisJobById.get(id));
     },
-    claimNextAnalysisJob() {
-      const row = stmts.claimAnalysisJob.get(new Date().toISOString());
+    claimNextAnalysisJob({ staleClaimMs = STALE_ANALYSIS_CLAIM_MS } = {}) {
+      const now = Date.now();
+      const staleCutoff = new Date(now - staleClaimMs).toISOString();
+      const row = stmts.claimAnalysisJob.get(new Date(now).toISOString(), staleCutoff);
       return rowToAnalysisJob(row);
     },
     completeAnalysisJob(id, { status, error = null }) {
@@ -1754,6 +1800,9 @@ function makeApi(db) {
             row.isBook ? 1 : 0,
             row.phase ?? null,
             row.clockRemainingMs ?? null,
+            row.engineRank ?? null,
+            row.evalGapCp ?? null,
+            row.candidates ? JSON.stringify(row.candidates) : null,
             row.createdAt ?? now
           );
         }
@@ -1762,6 +1811,9 @@ function makeApi(db) {
     },
     findLatestGameAnalysisForGame(gameId) {
       return rowToGameAnalysis(stmts.findLatestGameAnalysis.get(gameId));
+    },
+    listRecentAnalyzedGames(limit = 50) {
+      return stmts.listRecentAnalyzedGames.all(limit).map(rowToGameAnalysis);
     },
     listMoveAnalysisForAnalysis(gameAnalysisId) {
       return stmts.listMoveAnalysisFor.all(gameAnalysisId).map(rowToMoveAnalysis);

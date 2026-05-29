@@ -26,11 +26,14 @@ import {
   cpLossForPlay,
   criticalPositionAccuracy,
   evalCpFromMate,
+  engineRankEvidenceForSide,
   expectedAcplForRating,
   extractPositionFeatures,
   fairPlaySummary,
   isCriticalPosition,
   isEngineGrade,
+  isForced,
+  isSharpPosition,
   materialFromFen,
   normalizeEvalCp,
   phaseBreakdownForSide,
@@ -243,6 +246,79 @@ test("criticalPositionAccuracy counts only critical plies for the named side", (
   assert.equal(b.accuracyPct, 100);
 });
 
+test("isSharpPosition requires an eval gap at/above the sharp threshold", () => {
+  assert.equal(isSharpPosition({ evalGapCp: 100 }), true);
+  assert.equal(isSharpPosition({ evalGapCp: 250 }), true);
+  assert.equal(isSharpPosition({ evalGapCp: 99 }), false);
+  assert.equal(isSharpPosition({ evalGapCp: 0 }), false);
+  // Null gap (pre-MultiPV rows) is never sharp.
+  assert.equal(isSharpPosition({ evalGapCp: null }), false);
+  assert.equal(isSharpPosition({}), false);
+});
+
+test("isForced treats single-candidate or very-large-gap moves as forced", () => {
+  assert.equal(isForced({ candidates: [{ rank: 1, uci: "e2e4" }], evalGapCp: 0 }), true);
+  assert.equal(isForced({ candidates: [{ rank: 1 }, { rank: 2 }], evalGapCp: 300 }), true);
+  assert.equal(isForced({ candidates: [{ rank: 1 }, { rank: 2 }], evalGapCp: 299 }), false);
+  assert.equal(isForced({ evalGapCp: null }), false);
+});
+
+test("engineRankEvidenceForSide aggregates rank distribution, sharpness, and forced rate", () => {
+  const moves = [
+    { side: "white", isBook: true, engineRank: 1, evalGapCp: 500, candidates: [{ rank: 1 }] },
+    { side: "white", isBook: false, engineRank: 1, evalGapCp: 20, candidates: [{ rank: 1 }, { rank: 2 }] },
+    { side: "white", isBook: false, engineRank: 2, evalGapCp: 120, candidates: [{ rank: 1 }, { rank: 2 }] },
+    { side: "white", isBook: false, engineRank: null, evalGapCp: 350, candidates: [{ rank: 1 }, { rank: 2 }, { rank: 3 }] },
+    { side: "black", isBook: false, engineRank: 1, evalGapCp: 120, candidates: [{ rank: 1 }] }
+  ];
+  const out = engineRankEvidenceForSide(moves, "white");
+  assert.equal(out.count, 3);
+  assert.equal(out.rankKnown, 2);
+  assert.equal(out.avgRank, 1.5);
+  assert.equal(out.rankBuckets.rank1, 1);
+  assert.equal(out.rankBuckets.rank2, 1);
+  assert.equal(out.rankBuckets.outsideTopN, 1);
+  assert.equal(out.rankBucketPct.rank1, 33);
+  assert.equal(out.largeGapCount, 2);
+  assert.equal(out.largeGapPct, 67);
+  assert.equal(out.forcedCount, 1);
+  assert.equal(out.forcedPct, 33);
+});
+
+test("criticalPositionAccuracy splits out the sharp (one-clear-move) subset", () => {
+  const moves = [
+    // critical + sharp + engine-grade
+    { side: "white", isBook: false, bestEvalCp: 40, cpLoss: 5, evalGapCp: 200 },
+    // critical + sharp + NOT engine-grade
+    { side: "white", isBook: false, bestEvalCp: -60, cpLoss: 130, evalGapCp: 150 },
+    // critical but flat (gap below threshold) — counts toward critical, not sharp
+    { side: "white", isBook: false, bestEvalCp: 20, cpLoss: 8, evalGapCp: 30 }
+  ];
+  const w = criticalPositionAccuracy(moves, "white");
+  assert.equal(w.count, 3);
+  assert.equal(w.engineGrade, 2);
+  assert.equal(w.sharpCount, 2);
+  assert.equal(w.sharpEngineGrade, 1);
+  assert.equal(w.sharpAccuracyPct, 50);
+});
+
+test("concernLabel judges on the sharp pool once the sharp sample is large enough", () => {
+  // 4 sharp critical positions, 75% engine-grade, clean ACPL → strong signal
+  // sourced from the sharp pool (flat critical positions are ignored).
+  const critical = {
+    count: 12, engineGrade: 6, accuracyPct: 50,
+    sharpCount: 4, sharpEngineGrade: 3, sharpAccuracyPct: 75
+  };
+  const label = concernLabel({
+    critical,
+    ratingAdjusted: { observedAcpl: 30, expectedAcpl: 35 },
+    clockAware: null,
+    baseline: null
+  });
+  assert.equal(label.level, "medium");
+  assert.match(label.reasons[0], /sharp-critical accuracy 75%/);
+});
+
 test("phaseBreakdownForSide splits ACPL by opening/middlegame/endgame", () => {
   const moves = [
     { side: "white", phase: "opening", isBook: true, cpLoss: 0 },
@@ -401,6 +477,7 @@ test("fairPlaySummary plugs all pieces together end-to-end", () => {
   assert.equal(out.ratingAdjusted.expectedAcpl, 58);
   assert.equal(out.ratingAdjusted.observedAcpl, 10);
   assert.equal(out.ratingAdjusted.delta, 48);
+  assert.equal(out.engineRankEvidence.count, 0);
   // High concern: critical-accuracy 100% AND rating-adjusted delta 48 (>=30).
   assert.equal(out.concern.level, "high");
 });

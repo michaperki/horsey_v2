@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 // Re-queue stale-worker game analyses for re-analysis.
 //
-// A "stale" analysis is one where the move_analysis rows have phase=NULL —
-// produced by a worker process that booted before the phase/clock fields
-// were added. The data is correct but missing those fields, so the Fair
-// Play Review panel can't render phase breakdown or clock-aware metrics
-// for those games.
+// A "stale" analysis is one missing fields the current worker produces:
+//   - move_analysis.phase = NULL — produced before the phase/clock fields were
+//     added (Fair Play panel can't render phase breakdown / clock metrics).
+//   - game_analysis.multipv < 2 — produced before MultiPV / engine-rank support
+//     (no engine_rank, eval_gap_cp, or candidate set; no sharp-critical signal).
+// The underlying data (the game + its moves) is fine; only the derived analysis
+// rows are incomplete, so we delete them and re-queue the game.
 //
 // This script:
 //   - finds all such game_analysis rows
@@ -29,15 +31,15 @@ const execute = process.argv.includes("--execute");
 
 const db = new Database(dbPath);
 
-// A stale analysis is one whose move_analysis rows have any phase=NULL.
-// (The new worker always sets phase to opening|middlegame|endgame; the old
-// worker had no concept of the column.)
+// Stale = missing phase (old phase-less worker) OR predates MultiPV
+// (game_analysis.multipv < 2 → no engine_rank / eval_gap_cp / candidates).
 const stale = db.prepare(`
   SELECT
     ga.id,
     ga.game_id,
     ga.completed_at,
     ga.depth,
+    ga.multipv,
     ga.engine_version,
     (SELECT COUNT(*) FROM move_analysis WHERE game_analysis_id = ga.id) AS move_count,
     (SELECT COUNT(*) FROM move_analysis WHERE game_analysis_id = ga.id AND phase IS NULL) AS null_phase_count,
@@ -45,9 +47,12 @@ const stale = db.prepare(`
     EXISTS(SELECT 1 FROM games g WHERE g.id = ga.game_id AND g.data_json LIKE '%clkAfterMs%') AS game_has_clk
   FROM game_analysis ga
   WHERE ga.status = 'complete'
-    AND EXISTS (
-      SELECT 1 FROM move_analysis
-      WHERE game_analysis_id = ga.id AND phase IS NULL
+    AND (
+      ga.multipv < 2
+      OR EXISTS (
+        SELECT 1 FROM move_analysis
+        WHERE game_analysis_id = ga.id AND phase IS NULL
+      )
     )
   ORDER BY ga.completed_at DESC
 `).all();
@@ -55,7 +60,9 @@ const stale = db.prepare(`
 const summary = {
   staleAnalyses: stale.length,
   totalMoveAnalysisRows: stale.reduce((s, r) => s + r.move_count, 0),
-  withGameClkData: stale.filter((r) => r.game_has_clk === 1).length
+  withGameClkData: stale.filter((r) => r.game_has_clk === 1).length,
+  preMultipv: stale.filter((r) => r.multipv < 2).length,
+  nullPhase: stale.filter((r) => r.null_phase_count > 0).length
 };
 
 console.log(`scanning ${dbPath}`);
@@ -69,12 +76,14 @@ if (stale.length === 0) {
 
 console.log(`\nfound ${summary.staleAnalyses} stale-worker analyses`);
 console.log(`  total move_analysis rows: ${summary.totalMoveAnalysisRows}`);
+console.log(`  predate MultiPV (multipv<2): ${summary.preMultipv} (will gain engine-rank + sharp-critical signal after re-run)`);
+console.log(`  missing phase: ${summary.nullPhase}`);
 console.log(`  games whose source has clkAfterMs: ${summary.withGameClkData} (these will gain clock-aware metrics after re-run)`);
 
 const previewCount = Math.min(10, stale.length);
 console.log(`\nfirst ${previewCount}:`);
 for (const row of stale.slice(0, previewCount)) {
-  console.log(`  ${row.id} · game ${row.game_id.slice(0, 16)} · ${row.move_count} plies · ${row.engine_version} d${row.depth} · completed ${row.completed_at}`);
+  console.log(`  ${row.id} · game ${row.game_id.slice(0, 16)} · ${row.move_count} plies · ${row.engine_version} d${row.depth} mpv${row.multipv} · completed ${row.completed_at}`);
 }
 if (stale.length > previewCount) {
   console.log(`  ... and ${stale.length - previewCount} more`);

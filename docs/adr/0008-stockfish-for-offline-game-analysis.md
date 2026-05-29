@@ -47,7 +47,7 @@ Starting parameters:
 | Parameter | Value | Rationale |
 |---|---|---|
 | `depth` | 18 | Common ACPL baseline. Tunable; record it per row. |
-| `multipv` | 1 | We only need the top move per ply; `multipv` is reserved for future "how-close-to-best" variants. |
+| `multipv` | 3 | Top-N candidate set per ply on the before-position, giving each played move an engine rank + the best-vs-2nd eval gap. See *MultiPV / engine-rank addendum* below. Tunable via `HORSEY_ANALYSIS_MULTIPV`. |
 | `threads` | 1 | Single-worker; predictable CPU footprint. |
 | `hash` | 64 MB | Modest; the worker is shared across games. |
 
@@ -141,6 +141,20 @@ These are the Lichess-aligned defaults so future ingest from Lichess-precomputed
 - Dockerfile gains a `RUN apt-get install -y stockfish` line.
 - Admin review screens (`/api/admin/games/:id/analysis`, Admin → Games detail) render the `game_analysis` summary + the `move_analysis` rows. Admin-only; no public surface in slice 1.
 - Public surfaces (History/Profile/Scout self-improvement stats) stay deferred. `FAIR_PLAY_NEXT_PASS` is explicit about lagging admin surfaces.
+
+## MultiPV / engine-rank addendum (slice: engine-rank support)
+
+The original table pinned `multipv = 1` and reserved MultiPV for "future how-close-to-best variants." That variant is now shipped.
+
+- **Where it runs.** The worker already evaluates the position *before* each played move (to learn the best move + best eval). That single call now runs at MultiPV=N (default 3), so it returns the ranked top-N candidates at no extra search count. The *after*-position call — which only needs the played-move eval — stays at MultiPV=1 (`analyze(fen, { multipv: 1 })`) to keep its search cheap.
+- **What we persist** on each `move_analysis` row:
+  - `engine_rank` — the played move's rank in the top-N candidate set (1 = the engine's move; `null` when the played move is outside the top-N or for pre-migration rows).
+  - `eval_gap_cp` — best-vs-2nd-best eval gap, from the moving side's POV (≥0). A large gap means *one clear engine move*; a small gap means *several roughly-equivalent moves*. `null` when fewer than two candidates.
+  - `candidates_json` — the ranked `{ rank, uci, san, evalCp }` list (evals white-POV, consistent with the rest of the row).
+- **How it sharpens fair-play detection.** A position is *sharp* when `eval_gap_cp ≥ SHARP_POSITION_GAP_CP` (100cp). Matching the engine in a flat position (many ties) is weak evidence; matching it in a sharp critical position is the discriminating signal. `criticalPositionAccuracy` now reports a `sharp*` subset, and `concernLabel` judges on the sharp pool once there are ≥`SHARP_CRITICAL_MIN_SAMPLE` (4) sharp critical positions, falling back to the overall critical pool when the sharp sample is thin.
+- **How admins see it.** `engineRankEvidenceForSide` aggregates the stored per-move data into avg rank, rank distribution, large-gap rate, and forced-move rate. A move is treated as *forced* when Stockfish returns only one candidate or the best-vs-second gap is ≥`FORCED_GAP_CP` (300cp). This is a pragmatic v1 definition until the worker persists exact legal-move count.
+- **Schema.** v18 → v19 adds the three `move_analysis` columns; `game_analysis.multipv` now records the actual N. Append-only, no backfill — old rows keep `engine_rank`/`eval_gap_cp` null and are simply treated as "no MultiPV data."
+- **Cost.** MultiPV=3 on the before-position is a modest per-ply search slowdown; keeping the after-position single-line halves that overhead. Tunable down to 2 via `HORSEY_ANALYSIS_MULTIPV` if VM load demands it.
 
 ## Trade-offs accepted
 
