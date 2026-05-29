@@ -390,6 +390,70 @@ function emitNotification(args) {
   return notification;
 }
 
+function emitGameVoidedNotifications(game) {
+  if (!game?.id) return;
+  for (const player of game.players || []) {
+    emitNotification({
+      userId: player.id,
+      type: "game_voided",
+      entityType: "game",
+      entityId: game.id,
+      status: "voided",
+      title: "Match voided after review",
+      body: "This match was voided after review; stakes were returned.",
+      data: { gameId: game.id, route: `history/${game.id}` }
+    });
+  }
+}
+
+function emitGameAdjustedNotifications(game) {
+  if (!game?.id) return;
+  for (const player of game.players || []) {
+    emitNotification({
+      userId: player.id,
+      type: "result_adjusted",
+      entityType: "game",
+      entityId: game.id,
+      status: "adjusted",
+      title: "Match result adjusted",
+      body: "This match result was adjusted after review. Your balance history reflects the correction.",
+      data: { gameId: game.id, route: `history/${game.id}` }
+    });
+  }
+}
+
+function emitReportResolvedNotification(report) {
+  if (!report?.reporterUserId) return;
+  emitNotification({
+    userId: report.reporterUserId,
+    type: "report_resolved",
+    entityType: "report",
+    entityId: report.id,
+    status: report.status,
+    title: "Report reviewed",
+    body: "We reviewed your report and took appropriate action where warranted. Thanks for helping keep Horsey fair.",
+    data: {
+      reportId: report.id,
+      gameId: report.gameId ?? null,
+      route: report.gameId ? `history/${report.gameId}` : "profile"
+    }
+  });
+}
+
+function emitHardBanNotification(userId) {
+  if (!userId) return;
+  emitNotification({
+    userId,
+    type: "account_suspended",
+    entityType: "account",
+    entityId: userId,
+    status: "suspended",
+    title: "Account suspended",
+    body: "Your account has been suspended after review.",
+    data: { route: "profile" }
+  });
+}
+
 function moneyShort(cents) {
   if (typeof cents !== "number") return "";
   return `$${Math.round(cents / 100)}`;
@@ -3441,6 +3505,7 @@ async function routeApi(req, res) {
         resolvedBy: terminal ? viewer.id : null,
         resolvedAt: terminal ? new Date().toISOString() : null
       });
+      if (terminal) emitReportResolvedNotification(updated);
       return json(res, 200, { report: reportPayload(updated) });
     } catch (error) { return handleDomainError(error, res); }
   }
@@ -3453,6 +3518,7 @@ async function routeApi(req, res) {
       const game = getGameOr404(m[1]);
       const result = adminVoidGame(viewer, game, reason);
       publishGameFinalized(result.game);
+      if (!result.alreadyNoop) emitGameVoidedNotifications(result.game);
       return json(res, 200, {
         game: enrichGame(result.game),
         alreadyNoop: result.alreadyNoop,
@@ -3470,6 +3536,7 @@ async function routeApi(req, res) {
       const game = getGameOr404(m[1]);
       const result = adminAdjustGame(viewer, game, { result: body.result, reason });
       publishGameFinalized(result.game);
+      emitGameAdjustedNotifications(result.game);
       return json(res, 200, {
         game: enrichGame(result.game),
         actions: db.listAdminActionsForTarget("game", game.id)
@@ -3483,9 +3550,13 @@ async function routeApi(req, res) {
       const body = await readJson(req);
       const reason = requireAdminReason(body.reason);
       const result = adminSetRestrictions(viewer, m[1], body.restrictions, reason);
+      if ((body.restrictions ?? []).includes("hard_ban")) emitHardBanNotification(m[1]);
       for (const gameId of result.autoVoided) {
         const game = db.getGame(gameId);
-        if (game) publishGameFinalized(game);
+        if (game) {
+          publishGameFinalized(game);
+          emitGameVoidedNotifications(game);
+        }
       }
       return json(res, 200, result);
     } catch (error) { return handleDomainError(error, res); }

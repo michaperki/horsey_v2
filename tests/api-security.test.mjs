@@ -214,6 +214,21 @@ test("admin mutation endpoints void, adjust, restrict, and audit", async (t) => 
   });
   assert.equal(voided.status, 200);
   assert.equal(voided.body.game.state, "voided");
+  const aliceAfterVoid = await fixture.get(alice, "/api/notifications");
+  const bobAfterVoid = await fixture.get(bob, "/api/notifications");
+  assert.equal(aliceAfterVoid.body.notifications.some((n) =>
+    n.type === "game_voided" &&
+    n.entityId === game.id &&
+    n.title === "Match voided after review" &&
+    n.data.route === `history/${game.id}` &&
+    !n.readAt
+  ), true);
+  assert.equal(bobAfterVoid.body.notifications.some((n) =>
+    n.type === "game_voided" &&
+    n.entityId === game.id &&
+    n.body === "This match was voided after review; stakes were returned." &&
+    !n.readAt
+  ), true);
 
   const created2 = await fixture.post(alice, "/api/challenges", {
     stakeCents: 2500,
@@ -232,6 +247,19 @@ test("admin mutation endpoints void, adjust, restrict, and audit", async (t) => 
   });
   assert.equal(adjusted.status, 200);
   assert.equal(adjusted.body.game.winnerId, null);
+  const aliceAfterAdjust = await fixture.get(alice, "/api/notifications");
+  const bobAfterAdjust = await fixture.get(bob, "/api/notifications");
+  assert.equal(aliceAfterAdjust.body.notifications.some((n) =>
+    n.type === "result_adjusted" &&
+    n.entityId === game2.id &&
+    n.status === "adjusted" &&
+    n.data.route === `history/${game2.id}`
+  ), true);
+  assert.equal(bobAfterAdjust.body.notifications.some((n) =>
+    n.type === "result_adjusted" &&
+    n.entityId === game2.id &&
+    n.title === "Match result adjusted"
+  ), true);
 
   const created3 = await fixture.post(alice, "/api/challenges", {
     stakeCents: 1000,
@@ -244,6 +272,22 @@ test("admin mutation endpoints void, adjust, restrict, and audit", async (t) => 
   });
   assert.equal(restricted.status, 200);
   assert.deepEqual(restricted.body.autoVoided, [accepted3.body.game.id]);
+  const aliceAfterBan = await fixture.get(alice, "/api/notifications");
+  const bobAfterBan = await fixture.get(bob, "/api/notifications");
+  assert.equal(aliceAfterBan.body.notifications.some((n) =>
+    n.type === "account_suspended" &&
+    n.entityType === "account" &&
+    n.entityId === alice.user.id &&
+    n.status === "suspended"
+  ), true);
+  assert.equal(aliceAfterBan.body.notifications.some((n) =>
+    n.type === "game_voided" &&
+    n.entityId === accepted3.body.game.id
+  ), true);
+  assert.equal(bobAfterBan.body.notifications.some((n) =>
+    n.type === "game_voided" &&
+    n.entityId === accepted3.body.game.id
+  ), true);
 
   const audit = await fixture.get(admin, "/api/admin/audit?limit=20");
   assert.equal(audit.status, 200);
@@ -312,6 +356,23 @@ test("report intake is player-scoped and admin review is gated", async (t) => {
   assert.equal(updated.status, 200);
   assert.equal(updated.body.report.status, "reviewing");
   assert.equal(updated.body.report.adminNote, "Queued for manual review.");
+
+  const resolved = await fixture.post(admin, `/api/admin/reports/${report.body.report.id}/status`, {
+    status: "resolved",
+    adminNote: "Reviewed and closed."
+  });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.body.report.status, "resolved");
+  const aliceNotifications = await fixture.get(alice, "/api/notifications");
+  assert.equal(aliceNotifications.body.notifications.some((n) =>
+    n.type === "report_resolved" &&
+    n.entityType === "report" &&
+    n.entityId === report.body.report.id &&
+    n.status === "resolved" &&
+    n.data.route === `history/${game.id}` &&
+    n.body ===
+      "We reviewed your report and took appropriate action where warranted. Thanks for helping keep Horsey fair."
+  ), true);
 });
 
 test("signup conflicts use generic messaging", async (t) => {

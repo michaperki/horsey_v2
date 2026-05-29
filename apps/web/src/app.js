@@ -3311,16 +3311,21 @@ function spectatorSettlementPanel(game) {
     ? game.players.find((p) => p.id === game.winnerId)
     : null;
   const isAborted = game.state === "aborted";
-  const isDraw = !isAborted && !game.winnerId;
+  const isVoided = game.state === "voided";
+  const isDraw = !isAborted && !isVoided && !game.winnerId;
   const reasonLabel = endReasonLabel(game.endReason);
-  const eyebrowClass = isAborted || isDraw ? "muted" : "success";
+  const eyebrowClass = isAborted || isVoided || isDraw ? "muted" : "success";
   const eyebrowText = isAborted
     ? "Aborted · no first move"
+    : isVoided
+      ? "Voided · stake returned"
     : isDraw
       ? `Settlement · drawn (${reasonLabel.toLowerCase()})`
       : `Settlement · ${reasonLabel.toLowerCase()}`;
   const headline = isAborted
     ? "Table aborted before the first move."
+    : isVoided
+      ? "This match was voided after review."
     : isDraw
       ? "The table drew."
       : `${escapeHtml(winner?.handle ?? "Winner")} took the pot.`;
@@ -3381,7 +3386,8 @@ function finalizedGameSettlementPanel(game) {
   const won = settlement.result === "win";
   const drew = settlement.result === "draw";
   const aborted = settlement.result === "aborted";
-  const slideMode = aborted ? "draw" : won ? "win" : drew ? "draw" : "loss";
+  const voided = settlement.result === "voided";
+  const slideMode = aborted || voided ? "draw" : won ? "win" : drew ? "draw" : "loss";
   let eyebrowClass = "danger";
   let eyebrowText = "Settlement · stake taken";
   let headline = `${escapeHtml(opponentHandle)} took the pot.`;
@@ -3389,7 +3395,14 @@ function finalizedGameSettlementPanel(game) {
   let amountPrefix = "-";
   let amountCents = game?.pot?.stakeCents || 0;
 
-  if (aborted) {
+  if (voided) {
+    eyebrowClass = "muted";
+    eyebrowText = "Voided · stake returned";
+    headline = "This match was voided after review.";
+    amountClass = "money-draw";
+    amountPrefix = "";
+    amountCents = settlement.creditedCents;
+  } else if (aborted) {
     eyebrowClass = "muted";
     eyebrowText = "Aborted · stake returned";
     headline = "No first move. Stakes returned.";
@@ -3414,10 +3427,10 @@ function finalizedGameSettlementPanel(game) {
 
   const balanceAfterCents = settlement.balanceAfterCents;
   const stakeCents = game?.pot?.stakeCents ?? 0;
-  const balanceBeforeCents = (won || drew || aborted)
+  const balanceBeforeCents = (won || drew || aborted || voided)
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
     : balanceAfterCents + stakeCents;
-  const amountTweenAttr = (won || drew || aborted)
+  const amountTweenAttr = (won || drew || aborted || voided)
     ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}" data-tween-key="amount:${escapeHtml(game?.id ?? settlement.gameId ?? "")}"`
     : "";
   const firstReveal = isFirstSettlementRenderFor(game?.id);
@@ -3432,7 +3445,7 @@ function finalizedGameSettlementPanel(game) {
       </div>
       <h2>${headline}</h2>
       <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
-      <p>${aborted ? "Both stakes returned. No rake." : `Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.`}</p>
+      <p>${voided ? "Stakes were returned after review." : aborted ? "Both stakes returned. No rake." : `Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.`}</p>
       <div class="metric-grid">
         <div>
           <small>Balance</small>
@@ -4123,6 +4136,7 @@ function renderSettlement() {
 
   const won = settlement.result === "win";
   const drew = settlement.result === "draw";
+  const voided = settlement.result === "voided";
   let eyebrowClass = "danger";
   let eyebrowText = "Settlement · stake taken";
   let headline = `${escapeHtml(opponentHandle)} took the pot.`;
@@ -4130,7 +4144,14 @@ function renderSettlement() {
   let amountPrefix = "-";
   let amountCents = game?.pot?.stakeCents || 0;
 
-  if (won) {
+  if (voided) {
+    eyebrowClass = "muted";
+    eyebrowText = "Voided · stake returned";
+    headline = "This match was voided after review.";
+    amountClass = "money-draw";
+    amountPrefix = "";
+    amountCents = settlement.creditedCents;
+  } else if (won) {
     eyebrowClass = "success";
     eyebrowText = "Settlement · auto-credited";
     headline = `You took ${escapeHtml(opponentHandle)}.`;
@@ -4146,7 +4167,7 @@ function renderSettlement() {
     amountCents = settlement.creditedCents;
   }
 
-  const slideMode = won ? "win" : drew ? "draw" : "loss";
+  const slideMode = voided ? "draw" : won ? "win" : drew ? "draw" : "loss";
 
   // Bankroll tween: the metric-grid Balance ticks up on win/draw (escrow
   // release + winnings). On loss the escrow already left the available
@@ -4156,10 +4177,10 @@ function renderSettlement() {
   // money leaving on screen. See ARENA_NEXT_PASS § Phase 4.
   const balanceAfterCents = settlement.balanceAfterCents;
   const stakeCents = game?.pot?.stakeCents ?? 0;
-  const balanceBeforeCents = (won || drew)
+  const balanceBeforeCents = (won || drew || voided)
     ? balanceAfterCents - (settlement.creditedCents ?? 0)
     : balanceAfterCents + stakeCents;
-  const amountTweenAttr = won || drew
+  const amountTweenAttr = won || drew || voided
     ? `data-amount-tween="${amountCents}" data-amount-prefix="${escapeHtml(amountPrefix)}" data-tween-key="amount:${escapeHtml(settlement.gameId ?? game?.id ?? "")}"`
     : "";
   const firstReveal = isFirstSettlementRenderFor(settlement.gameId);
@@ -4172,7 +4193,7 @@ function renderSettlement() {
         <div class="eyebrow ${eyebrowClass}">${escapeHtml(eyebrowText)}</div>
         <h1>${headline}</h1>
         <div class="${amountClass}" ${amountTweenAttr}>${amountPrefix}${money(amountCents)}</div>
-        <p>Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.</p>
+        <p>${voided ? "Stakes were returned after review." : `Pot ${money(settlement.grossPotCents)} minus ${money(settlement.rakeCents)} fake-money rake.`}</p>
         <div class="metric-grid">
           <div>
             <small>Balance</small>
@@ -4283,7 +4304,11 @@ function endReasonLabel(reason) {
     stalemate: "Stalemate",
     threefold_repetition: "Threefold repetition",
     insufficient_material: "Insufficient material",
-    aborted_pre_move: "Aborted — no first move"
+    aborted_pre_move: "Aborted — no first move",
+    admin_void: "Voided after review",
+    "admin_adjust:white_win": "Adjusted after review",
+    "admin_adjust:black_win": "Adjusted after review",
+    "admin_adjust:draw": "Adjusted after review"
   };
   return labels[reason] || reason || "—";
 }
