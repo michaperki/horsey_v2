@@ -108,6 +108,10 @@ import {
   isValidRestriction,
   RESTRICTION_LADDER
 } from "../../packages/shared/restrictions.mjs";
+import {
+  fairPlaySummary,
+  summarizeMoveAnalyses
+} from "../../packages/shared/analysis.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
@@ -975,6 +979,8 @@ function handleDomainError(error, res) {
     waitlist_email_required: 400,
     invalid_report: 400,
     report_not_found: 404,
+    invalid_review_status: 400,
+    analysis_not_found: 404,
     external_rate_limited: 502,
     external_fetch_timeout: 504,
     external_fetch_failed: 502,
@@ -1826,6 +1832,52 @@ function normalizeReportStatus(status) {
     e.code = "invalid_report"; throw e;
   }
   return value;
+}
+
+const REVIEW_STATUSES = new Set(["open", "clean", "suspicious", "reviewing"]);
+
+function normalizeReviewStatus(status) {
+  const value = String(status ?? "").trim();
+  if (!REVIEW_STATUSES.has(value)) {
+    const e = new RangeError("Invalid review status.");
+    e.code = "invalid_review_status"; throw e;
+  }
+  return value;
+}
+
+// Build the per-side fair-play summary for a finalized game. Reads the
+// players from game_players (we need rating + per-side baseline) and the
+// move analyses are already loaded by the caller.
+function buildFairPlayForGame(gameId, moves) {
+  const game = db.getGame(gameId);
+  if (!game) return null;
+  const summary = summarizeMoveAnalyses(moves);
+  const white = game.players.find((p) => p.color === "white");
+  const black = game.players.find((p) => p.color === "black");
+  const baselineRowsFor = (userId) => {
+    if (!userId) return [];
+    const rows = db.listAnalyzedGamesForUser(userId, 50);
+    // Exclude the current game so the baseline is independent.
+    return rows.filter((r) => r.game_id !== gameId);
+  };
+  const whiteUser = white ? db.getUser(white.id) : null;
+  const blackUser = black ? db.getUser(black.id) : null;
+  return {
+    white: white ? fairPlaySummary({
+      moves,
+      side: "white",
+      playerRating: whiteUser?.rating ?? null,
+      summary,
+      baselineRows: baselineRowsFor(white.id)
+    }) : null,
+    black: black ? fairPlaySummary({
+      moves,
+      side: "black",
+      playerRating: blackUser?.rating ?? null,
+      summary,
+      baselineRows: baselineRowsFor(black.id)
+    }) : null
+  };
 }
 
 function adminGameSnapshot(game) {
@@ -3464,7 +3516,25 @@ async function routeApi(req, res) {
       const job = db.findAnalysisJobByGame(gameId);
       const analysis = db.findLatestGameAnalysisForGame(gameId);
       const moves = analysis ? db.listMoveAnalysisForAnalysis(analysis.id) : [];
-      return json(res, 200, { job, analysis, moves });
+      const fairPlay = analysis ? buildFairPlayForGame(gameId, moves) : null;
+      return json(res, 200, { job, analysis, moves, fairPlay });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
+  if (req.method === "POST" && (m = pathname.match(/^\/api\/admin\/games\/([^/]+)\/analysis\/review$/))) {
+    try {
+      requireAdmin(viewer);
+      const gameId = m[1];
+      const body = await readJson(req);
+      const reviewStatus = normalizeReviewStatus(body.reviewStatus);
+      const adminNote = typeof body.adminNote === "string" ? body.adminNote.trim().slice(0, 2000) : null;
+      const analysis = db.findLatestGameAnalysisForGame(gameId);
+      if (!analysis) {
+        const e = new RangeError("no analysis to review");
+        e.code = "analysis_not_found"; throw e;
+      }
+      const updated = db.updateGameAnalysisReview(analysis.id, { reviewStatus, adminNote });
+      return json(res, 200, { analysis: updated });
     } catch (error) { return handleDomainError(error, res); }
   }
 

@@ -11,6 +11,7 @@
 import { applyMove, STARTING_FEN } from "../../packages/chess/src/board.mjs";
 import {
   classifyCpLoss,
+  classifyPhase,
   cpLossForPlay,
   DEFAULT_BOOK_PLIES,
   normalizeEvalCp,
@@ -111,6 +112,11 @@ export function startAnalysisWorker({
     const moveAnalyses = [];
     const analysisId = newId("gan");
 
+    // Per-ply clock remaining (ms). Populated only if the bustling daemon
+    // stashed the clk array on the game when it created it from a PGN script.
+    // Real Horsey games don't have per-ply clock capture yet.
+    const clkAfterMs = Array.isArray(game.clkAfterMs) ? game.clkAfterMs : null;
+
     let fenBefore = STARTING_FEN;
 
     for (let i = 0; i < moves.length; i++) {
@@ -169,6 +175,8 @@ export function startAnalysisWorker({
       const isBook = ply <= bookPlies;
       const isTopMove = !!(bestSan && stored.san === bestSan);
       const classification = isBook ? null : classifyCpLoss(cpLoss, { isTopMove });
+      const phase = classifyPhase(ply, fenBefore, bookPlies);
+      const clockRemainingMs = clkAfterMs && clkAfterMs[i] != null ? clkAfterMs[i] : null;
 
       moveAnalyses.push({
         id: newId("mva"),
@@ -181,7 +189,9 @@ export function startAnalysisWorker({
         bestEvalCp: bestEvalCpWhite,
         cpLoss,
         classification,
-        isBook
+        isBook,
+        phase,
+        clockRemainingMs
       });
 
       fenBefore = fenAfter;

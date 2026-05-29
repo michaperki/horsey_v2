@@ -2236,17 +2236,6 @@ p {
   box-shadow: inset 0 0 0 999px rgba(181, 58, 45, 0.42);
 }
 
-.capture-tray {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: min(100%, 560px);
-  min-height: 28px;
-  padding: 4px 8px;
-  color: var(--muted);
-  font-size: 18px;
-}
-
 .capture-inline {
   display: inline-flex;
   align-items: center;
@@ -2259,10 +2248,6 @@ p {
   height: 22px;
   object-fit: contain;
   opacity: 0.78;
-}
-
-.capture-tray small {
-  font-size: 12px;
 }
 
 .coord {
@@ -3909,6 +3894,54 @@ p {
   line-height: 1.2;
 }
 .mini-button:hover { background: var(--paper-2); }
+
+/* ---- Fair Play Review panel --------------------------------------------- */
+.admin-analysis-panel { margin-top: 12px; }
+.admin-analysis-panel .analysis-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.analysis-subhead { margin: 16px 0 6px; font-size: 13px; opacity: 0.85; }
+.fair-play-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin: 8px 0;
+}
+.fair-play-side {
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--paper);
+}
+.fair-play-side h5 {
+  margin: 0 0 6px; font-size: 13px;
+  display: flex; align-items: center; gap: 8px;
+}
+.concern {
+  display: inline-block;
+  padding: 2px 7px; border-radius: 12px;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: 600;
+}
+.concern-low { background: #1e3a2b; color: #b6e6c6; }
+.concern-medium { background: #4a3818; color: #ffd594; }
+.concern-high { background: #5a1d1d; color: #ffb4b4; }
+.fair-play-reasons {
+  margin: 4px 0 8px; padding-left: 18px; font-size: 12px;
+}
+.fair-play-reasons li { margin: 2px 0; }
+.fair-play-metrics { margin: 0; font-size: 12px; }
+.fair-play-metrics dt {
+  font-weight: 600; opacity: 0.7; margin-top: 6px;
+}
+.fair-play-metrics dd { margin: 2px 0 0 0; }
+.fair-play-review-controls {
+  display: flex; gap: 12px; align-items: end; flex-wrap: wrap;
+  margin: 10px 0;
+}
+.fair-play-review-controls label {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.fair-play-review-controls input[type="text"] { min-width: 280px; }
 
 /* ---- Notification bell --------------------------------------------------- */
 .bell-wrap { position: relative; }

@@ -83,6 +83,11 @@ export async function startLichessBustling({ db, services, log = () => {} }) {
       // out which scripted side is on each color in the actual game.
       const whiteSeat = game.players.find((p) => p.color === "white");
       const reversed = whiteSeat.id === black.id;
+      // Stash per-ply clock-remaining (ms) on the game so the analysis worker
+      // can read realistic clock pressure for fair-play metrics. The Lichess
+      // PGN gives us seconds remaining after each ply.
+      const clkAfterMs = script.clkAfter.map((s) => Math.round(s * 1000));
+      db.saveGame({ ...db.getGame(game.id), clkAfterMs });
       activeScripts.set(game.id, {
         script,
         scriptPly: 0,

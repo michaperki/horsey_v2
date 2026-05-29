@@ -19,10 +19,22 @@ import Database from "better-sqlite3";
 
 import {
   classifyCpLoss,
+  classifyPhase,
+  clockAwareBreakdown,
+  computePlayerBaseline,
+  concernLabel,
   cpLossForPlay,
+  criticalPositionAccuracy,
   evalCpFromMate,
+  expectedAcplForRating,
+  fairPlaySummary,
+  isCriticalPosition,
+  isEngineGrade,
+  materialFromFen,
   normalizeEvalCp,
-  summarizeMoveAnalyses
+  phaseBreakdownForSide,
+  summarizeMoveAnalyses,
+  timeBucket
 } from "../packages/shared/analysis.mjs";
 import { startAnalysisWorker } from "../apps/api/analysis-worker.mjs";
 
@@ -116,6 +128,184 @@ test("summarizeMoveAnalyses tolerates empty/all-book input", () => {
     inaccuracies: 0,
     topMoveMatchPct: 0
   });
+});
+
+// --- 1b. Fair-play pure math ----------------------------------------------
+
+test("materialFromFen counts non-king material correctly", () => {
+  const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  // Each side: 8p (8) + 2n (6) + 2b (6) + 2r (10) + 1q (9) = 39. Total = 78.
+  assert.equal(materialFromFen(startFen), 78);
+  const kingsOnlyFen = "4k3/8/8/8/8/8/8/4K3 w - - 0 1";
+  assert.equal(materialFromFen(kingsOnlyFen), 0);
+});
+
+test("classifyPhase distinguishes opening / middlegame / endgame", () => {
+  const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  const middlegameFen = "r2qkb1r/ppp2ppp/2n5/3pp3/3PP3/2N5/PPP2PPP/R2QKB1R w KQkq - 0 1";
+  const endgameFen = "4k3/8/3p4/8/3P4/8/4K3/8 w - - 0 1"; // K+P vs K+P
+  assert.equal(classifyPhase(4, startFen), "opening");        // pre-book
+  assert.equal(classifyPhase(20, middlegameFen), "middlegame");
+  assert.equal(classifyPhase(60, endgameFen), "endgame");
+});
+
+test("isCriticalPosition excludes book + decisive evals", () => {
+  assert.equal(isCriticalPosition({ isBook: true, bestEvalCp: 0 }), false);
+  assert.equal(isCriticalPosition({ isBook: false, bestEvalCp: null }), false);
+  assert.equal(isCriticalPosition({ isBook: false, bestEvalCp: 50 }), true);
+  assert.equal(isCriticalPosition({ isBook: false, bestEvalCp: -200 }), true);
+  // Already crushing — not "critical" for our purposes.
+  assert.equal(isCriticalPosition({ isBook: false, bestEvalCp: 500 }), false);
+  assert.equal(isCriticalPosition({ isBook: false, bestEvalCp: -1500 }), false);
+});
+
+test("isEngineGrade is true for cp_loss <= 25", () => {
+  assert.equal(isEngineGrade({ cpLoss: 0 }), true);
+  assert.equal(isEngineGrade({ cpLoss: 25 }), true);
+  assert.equal(isEngineGrade({ cpLoss: 26 }), false);
+  assert.equal(isEngineGrade({ cpLoss: null }), false);
+});
+
+test("criticalPositionAccuracy counts only critical plies for the named side", () => {
+  const moves = [
+    // white critical, engine-grade
+    { side: "white", isBook: false, bestEvalCp: 50, cpLoss: 10 },
+    // white critical, not engine-grade
+    { side: "white", isBook: false, bestEvalCp: -100, cpLoss: 120 },
+    // black critical, engine-grade
+    { side: "black", isBook: false, bestEvalCp: 200, cpLoss: 5 },
+    // not critical (decisive)
+    { side: "white", isBook: false, bestEvalCp: 800, cpLoss: 0 },
+    // book — excluded
+    { side: "white", isBook: true, bestEvalCp: 0, cpLoss: 0 }
+  ];
+  const w = criticalPositionAccuracy(moves, "white");
+  assert.equal(w.count, 2);
+  assert.equal(w.engineGrade, 1);
+  assert.equal(w.accuracyPct, 50);
+  const b = criticalPositionAccuracy(moves, "black");
+  assert.equal(b.count, 1);
+  assert.equal(b.engineGrade, 1);
+  assert.equal(b.accuracyPct, 100);
+});
+
+test("phaseBreakdownForSide splits ACPL by opening/middlegame/endgame", () => {
+  const moves = [
+    { side: "white", phase: "opening", isBook: true, cpLoss: 0 },
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 50, bestEvalCp: 0, playedSan: "a3", bestSan: "Nf3" },
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 100, bestEvalCp: 0, playedSan: "b4", bestSan: "d4" },
+    { side: "white", phase: "endgame", isBook: false, cpLoss: 10, bestEvalCp: 0, playedSan: "Kf2", bestSan: "Kf2" }
+  ];
+  const out = phaseBreakdownForSide(moves, "white");
+  assert.equal(out.middlegame.moveCount, 2);
+  assert.equal(out.middlegame.acpl, 75);
+  assert.equal(out.endgame.moveCount, 1);
+  assert.equal(out.endgame.acpl, 10);
+  assert.equal(out.endgame.topMatchPct, 100);
+});
+
+test("expectedAcplForRating interpolates the reference curve", () => {
+  assert.equal(expectedAcplForRating(800), 130);
+  assert.equal(expectedAcplForRating(2600), 14);
+  // 1500 sits halfway between 1400 (65) and 1600 (50): expect 58 ((65+50)/2).
+  assert.equal(expectedAcplForRating(1500), 58);
+  // Out-of-range clamps.
+  assert.equal(expectedAcplForRating(300), 130);
+  assert.equal(expectedAcplForRating(3000), 14);
+  assert.equal(expectedAcplForRating(null), null);
+});
+
+test("timeBucket categorizes low/mid/high time", () => {
+  assert.equal(timeBucket(2_000), "low");
+  assert.equal(timeBucket(9_999), "low");
+  assert.equal(timeBucket(10_000), "mid");
+  assert.equal(timeBucket(45_000), "mid");
+  assert.equal(timeBucket(60_000), "high");
+  assert.equal(timeBucket(180_000), "high");
+  assert.equal(timeBucket(null), null);
+});
+
+test("clockAwareBreakdown returns null when no clock data exists", () => {
+  const moves = [
+    { side: "white", isBook: false, cpLoss: 0, clockRemainingMs: null },
+    { side: "white", isBook: false, cpLoss: 30, clockRemainingMs: null }
+  ];
+  assert.equal(clockAwareBreakdown(moves, "white"), null);
+});
+
+test("clockAwareBreakdown buckets moves by clock and counts engine-grade", () => {
+  const moves = [
+    { side: "white", isBook: false, cpLoss: 0, clockRemainingMs: 5_000 },     // low, engine
+    { side: "white", isBook: false, cpLoss: 50, clockRemainingMs: 3_000 },    // low, not engine
+    { side: "white", isBook: false, cpLoss: 10, clockRemainingMs: 90_000 },   // high, engine
+    { side: "white", isBook: false, cpLoss: 80, clockRemainingMs: 30_000 }    // mid, not engine
+  ];
+  const out = clockAwareBreakdown(moves, "white");
+  assert.equal(out.low.count, 2);
+  assert.equal(out.low.engineGrade, 1);
+  assert.equal(out.low.engineGradePct, 50);
+  assert.equal(out.high.count, 1);
+  assert.equal(out.high.engineGradePct, 100);
+  assert.equal(out.mid.count, 1);
+});
+
+test("computePlayerBaseline requires minSampleSize and averages prior ACPL", () => {
+  assert.equal(computePlayerBaseline([{ player_acpl: 50 }, { player_acpl: 70 }]), null);
+  const b = computePlayerBaseline([
+    { player_acpl: 60, player_match_pct: 50 },
+    { player_acpl: 80, player_match_pct: 40 },
+    { player_acpl: 70, player_match_pct: 45 }
+  ]);
+  assert.equal(b.sampleSize, 3);
+  assert.equal(b.meanAcpl, 70);
+  assert.equal(b.meanTopMatchPct, 45);
+});
+
+test("concernLabel raises 'medium' for one elevated signal and 'high' for two", () => {
+  const lowAll = concernLabel({
+    critical: { count: 10, engineGrade: 2, accuracyPct: 20 },
+    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 65 }
+  });
+  assert.equal(lowAll.level, "low");
+  assert.deepEqual(lowAll.reasons, []);
+
+  const oneSignal = concernLabel({
+    critical: { count: 10, engineGrade: 6, accuracyPct: 60 },
+    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 55 }
+  });
+  assert.equal(oneSignal.level, "medium");
+  assert.equal(oneSignal.reasons.length, 1);
+
+  const twoSignals = concernLabel({
+    critical: { count: 10, engineGrade: 8, accuracyPct: 80 },
+    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 25 }
+  });
+  assert.equal(twoSignals.level, "high");
+  assert.ok(twoSignals.reasons.length >= 2);
+});
+
+test("fairPlaySummary plugs all pieces together end-to-end", () => {
+  const moves = [
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 10, bestEvalCp: 50, playedSan: "Nf3", bestSan: "Nf3", clockRemainingMs: 120_000 },
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 20, bestEvalCp: -100, playedSan: "Bb5", bestSan: "Bc4", clockRemainingMs: 90_000 },
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 15, bestEvalCp: 100, playedSan: "Qe2", bestSan: "Qe2", clockRemainingMs: 60_000 },
+    { side: "white", phase: "middlegame", isBook: false, cpLoss: 5, bestEvalCp: -50, playedSan: "Re1", bestSan: "Re1", clockRemainingMs: 30_000 },
+    { side: "white", phase: "endgame", isBook: false, cpLoss: 0, bestEvalCp: 0, playedSan: "Kf2", bestSan: "Kf2", clockRemainingMs: 5_000 }
+  ];
+  const out = fairPlaySummary({
+    moves,
+    side: "white",
+    playerRating: 1500,
+    summary: { white: { acpl: 10 }, black: { acpl: 80 } }
+  });
+  assert.equal(out.side, "white");
+  assert.equal(out.critical.count, 5);  // all 5 are critical
+  assert.equal(out.critical.engineGrade, 5);  // all under 25 cpLoss
+  assert.equal(out.ratingAdjusted.expectedAcpl, 58);
+  assert.equal(out.ratingAdjusted.observedAcpl, 10);
+  assert.equal(out.ratingAdjusted.delta, 48);
+  // High concern: critical-accuracy 100% AND rating-adjusted delta 48 (>=30).
+  assert.equal(out.concern.level, "high");
 });
 
 // --- 2. Worker against a stub engine --------------------------------------
@@ -359,6 +549,62 @@ test("/api/admin/games/:id/analyze refuses non-finalized games and enqueues fina
   assert.ok(enqueued.body.job, "expected the existing job in the response");
   assert.equal(enqueued.body.job.status, "pending");
   assert.equal(enqueued.body.requeued, false);
+});
+
+test("/api/admin/games/:id/analysis/review updates status + note and is admin-gated", async (t) => {
+  const fixture = await startFixture(t);
+  const admin = await fixture.signup("admin");
+  const alice = await fixture.signup("alice");
+  const bob = await fixture.signup("bob");
+  const db = new Database(fixture.dbPath);
+  db.prepare("UPDATE users SET is_admin = 1 WHERE id = ?").run(admin.user.id);
+
+  const challenge = await fixture.post(alice, "/api/challenges", {
+    stakeCents: 2500,
+    timeControl: "3+0"
+  });
+  const accepted = await fixture.post(bob, `/api/challenges/${challenge.body.challenge.id}/accept`);
+  const game = accepted.body.game;
+
+  // Hand-insert a complete game_analysis row (skips the engine entirely).
+  const analysisId = `gan_test_${Math.random().toString(16).slice(2, 8)}`;
+  db.prepare(`
+    INSERT INTO game_analysis
+      (id, game_id, source, engine_version, depth, multipv,
+       white_acpl, black_acpl, white_blunders, black_blunders,
+       white_mistakes, black_mistakes, white_inaccuracies, black_inaccuracies,
+       white_top_move_match_pct, black_top_move_match_pct,
+       status, review_status, created_at, completed_at)
+    VALUES (?, ?, 'horsey', 'stub-1.0', 12, 1, 50, 80, 0, 1, 1, 2, 2, 3, 60, 40, 'complete', 'open', ?, ?)
+  `).run(analysisId, game.id, new Date().toISOString(), new Date().toISOString());
+  db.close();
+
+  const notAdmin = await fixture.post(alice, `/api/admin/games/${game.id}/analysis/review`, {
+    reviewStatus: "suspicious",
+    adminNote: "I shouldn't be able to do this"
+  });
+  assert.equal(notAdmin.status, 403);
+  assert.equal(notAdmin.body.error, "admin_only");
+
+  const badStatus = await fixture.post(admin, `/api/admin/games/${game.id}/analysis/review`, {
+    reviewStatus: "made-up",
+    adminNote: ""
+  });
+  assert.equal(badStatus.status, 400);
+  assert.equal(badStatus.body.error, "invalid_review_status");
+
+  const updated = await fixture.post(admin, `/api/admin/games/${game.id}/analysis/review`, {
+    reviewStatus: "suspicious",
+    adminNote: "Critical accuracy looked extreme, need second eyes."
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.analysis.reviewStatus, "suspicious");
+  assert.equal(updated.body.analysis.adminNote, "Critical accuracy looked extreme, need second eyes.");
+
+  // GET should reflect the new state.
+  const fetched = await fixture.get(admin, `/api/admin/games/${game.id}/analysis`);
+  assert.equal(fetched.body.analysis.reviewStatus, "suspicious");
+  assert.equal(fetched.body.analysis.adminNote, "Critical accuracy looked extreme, need second eyes.");
 });
 
 // --- helpers ---------------------------------------------------------------

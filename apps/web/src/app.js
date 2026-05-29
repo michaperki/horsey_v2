@@ -3517,10 +3517,8 @@ function renderGame() {
           }
           return `
             ${playerStrip(game, topPlayer, game.turn === topPlayer.color)}
-            ${captureTray(game, topPlayer.color)}
             ${board(game)}
             ${promotionDialog()}
-            ${captureTray(game, bottomPlayer.color)}
             ${playerStrip(game, bottomPlayer, game.turn === bottomPlayer.color)}
           `;
         })()}
@@ -3749,14 +3747,6 @@ function capturedPiecesMarkup(game, color, empty = "No captures") {
     <span class="capture-inline" aria-label="${color} captured pieces">
       ${pieces.length ? pieces.map((piece) => pieceImg(piece.color, piece.type, "captured-piece")).join("") : `<small>${empty}</small>`}
     </span>
-  `;
-}
-
-function captureTray(game, color) {
-  return `
-    <div class="capture-tray" aria-label="${color} captured pieces">
-      ${capturedPiecesMarkup(game, color)}
-    </div>
   `;
 }
 
@@ -5035,7 +5025,9 @@ function renderAdminAnalysisPanel() {
     }
     return `
       ${jobLine}
-      <p class="muted small">${escapeHtml(analysis.engineVersion)} · depth ${analysis.depth} · ${escapeHtml(analysis.source)}</p>
+      <p class="muted small">${escapeHtml(analysis.engineVersion)} · depth ${analysis.depth} · ${escapeHtml(analysis.source)} · rule-based concern (no historical baseline yet)</p>
+      ${renderAdminFairPlayPanel(analysis, data.fairPlay, gameId)}
+      <h4 class="analysis-subhead">Engine summary</h4>
       ${renderAdminAnalysisSummary(analysis)}
       ${renderAdminAnalysisMoves(moves)}
       <button class="mini-button" data-admin-game-analyze="${escapeHtml(gameId)}">Re-analyze</button>
@@ -5043,6 +5035,80 @@ function renderAdminAnalysisPanel() {
   })();
 
   return `<article class="card admin-analysis-panel">${header}${body}</article>`;
+}
+
+function renderAdminFairPlayPanel(analysis, fairPlay, gameId) {
+  const status = analysis.reviewStatus || "open";
+  const note = analysis.adminNote || "";
+  const statusOptions = ["open", "clean", "suspicious", "reviewing"].map((s) =>
+    `<option value="${s}" ${s === status ? "selected" : ""}>${s}</option>`
+  ).join("");
+  const reviewControl = `
+    <div class="fair-play-review-controls">
+      <label class="muted small">Review status
+        <select data-admin-review-status="${escapeHtml(gameId)}">${statusOptions}</select>
+      </label>
+      <label class="muted small">Admin note
+        <input type="text" data-admin-review-note="${escapeHtml(gameId)}" value="${escapeHtml(note)}" placeholder="Notes for the next reviewer…" maxlength="2000">
+      </label>
+      <button class="mini-button" data-admin-review-save="${escapeHtml(gameId)}">Save review</button>
+    </div>`;
+
+  if (!fairPlay) {
+    return `
+      <h4 class="analysis-subhead">Fair Play Review</h4>
+      <p class="muted small">Fair-play summary not available.</p>
+      ${reviewControl}
+    `;
+  }
+
+  return `
+    <h4 class="analysis-subhead">Fair Play Review</h4>
+    <div class="fair-play-grid">
+      ${renderFairPlaySide("White", fairPlay.white)}
+      ${renderFairPlaySide("Black", fairPlay.black)}
+    </div>
+    ${reviewControl}
+  `;
+}
+
+function renderFairPlaySide(label, fp) {
+  if (!fp) return `<div class="fair-play-side"><h5>${escapeHtml(label)}</h5><p class="muted small">No data.</p></div>`;
+  const concern = fp.concern || { level: "low", reasons: [] };
+  const phase = fp.phaseBreakdown || {};
+  const ratingLine = fp.ratingAdjusted?.expectedAcpl != null && fp.ratingAdjusted?.observedAcpl != null
+    ? `${fp.ratingAdjusted.rating ?? "?"} rated · expected ACPL ${fp.ratingAdjusted.expectedAcpl} · observed ${fp.ratingAdjusted.observedAcpl} <strong>(Δ ${formatDelta(fp.ratingAdjusted.delta)})</strong>`
+    : `<span class="muted">rating-adjusted ACPL unavailable</span>`;
+  const baseline = fp.baseline;
+  const baselineLine = baseline
+    ? `${baseline.sampleSize}-game baseline · mean ACPL ${baseline.meanAcpl}${baseline.meanTopMatchPct != null ? ` · top-match ${baseline.meanTopMatchPct}%` : ""}`
+    : `<span class="muted">no baseline yet (needs ≥3 prior analyzed games)</span>`;
+  const clockAware = fp.clockAware;
+  const clockLine = clockAware
+    ? `low time (<10s): ${clockAware.low.count} moves, ${clockAware.low.engineGradePct ?? "—"}% engine-grade · high time (≥60s): ${clockAware.high.count} moves, ${clockAware.high.engineGradePct ?? "—"}% engine-grade`
+    : `<span class="muted">clock-aware metrics unavailable (no per-ply clock data)</span>`;
+  const criticalLine = fp.critical?.count
+    ? `${fp.critical.engineGrade}/${fp.critical.count} engine-grade in critical positions (${fp.critical.accuracyPct ?? 0}%)`
+    : `<span class="muted">no critical-position decisions</span>`;
+  return `
+    <div class="fair-play-side">
+      <h5>${escapeHtml(label)} <span class="concern concern-${escapeHtml(concern.level)}">${escapeHtml(concern.level)}</span></h5>
+      ${concern.reasons.length > 0 ? `<ul class="fair-play-reasons">${concern.reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : `<p class="muted small">No flags raised.</p>`}
+      <dl class="fair-play-metrics">
+        <dt>Phase ACPL</dt><dd>opening ${phase.opening?.acpl ?? "—"} · middlegame ${phase.middlegame?.acpl ?? "—"} · endgame ${phase.endgame?.acpl ?? "—"}</dd>
+        <dt>Critical positions</dt><dd>${criticalLine}</dd>
+        <dt>Rating-adjusted</dt><dd>${ratingLine}</dd>
+        <dt>Clock-aware</dt><dd>${clockLine}</dd>
+        <dt>Player baseline</dt><dd>${baselineLine}</dd>
+      </dl>
+    </div>
+  `;
+}
+
+function formatDelta(delta) {
+  if (delta == null) return "—";
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${delta}`;
 }
 
 function renderAdminAnalysisSummary(a) {
@@ -5073,14 +5139,23 @@ function renderAdminAnalysisMoves(moves) {
       <td>${m.playedEvalCp != null ? formatEvalCp(m.playedEvalCp) : "—"}</td>
       <td>${m.cpLoss != null ? m.cpLoss : "—"}</td>
       <td>${escapeHtml(m.isBook ? "book" : (m.classification || ""))}</td>
+      <td class="muted small">${escapeHtml(m.phase || "")}</td>
+      <td class="muted small">${m.clockRemainingMs != null ? formatClockMs(m.clockRemainingMs) : ""}</td>
     </tr>
   `).join("");
   return `
     <table class="admin-analysis-moves">
-      <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Class</th></tr></thead>
+      <thead><tr><th>#</th><th></th><th>Played</th><th>Best</th><th>Eval</th><th>Loss</th><th>Class</th><th>Phase</th><th>Clock</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
   `;
+}
+
+function formatClockMs(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function formatEvalCp(cp) {
@@ -5389,6 +5464,27 @@ async function adminEnqueueAnalysis(gameId) {
   }
 }
 
+async function adminSaveAnalysisReview(gameId) {
+  const statusEl = document.querySelector(`[data-admin-review-status="${gameId}"]`);
+  const noteEl = document.querySelector(`[data-admin-review-note="${gameId}"]`);
+  if (!statusEl) return;
+  state.adminAnalysisLoading = true;
+  render();
+  try {
+    await postJson(`/api/admin/games/${encodeURIComponent(gameId)}/analysis/review`, {
+      reviewStatus: statusEl.value,
+      adminNote: noteEl?.value || ""
+    });
+    const data = await getJson(`/api/admin/games/${encodeURIComponent(gameId)}/analysis`);
+    state.adminAnalysisData = data;
+  } catch (error) {
+    state.adminAnalysisError = error.message;
+  } finally {
+    state.adminAnalysisLoading = false;
+    render();
+  }
+}
+
 async function adminAdjustGame(gameId) {
   const result = window.prompt("New result: white_win, black_win, or draw?");
   if (!result) return;
@@ -5687,6 +5783,9 @@ function render() {
   });
   document.querySelectorAll("[data-admin-analysis-close]").forEach((b) => {
     b.addEventListener("click", () => adminCloseAnalysis());
+  });
+  document.querySelectorAll("[data-admin-review-save]").forEach((b) => {
+    b.addEventListener("click", () => adminSaveAnalysisReview(b.dataset.adminReviewSave));
   });
   document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
     b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));

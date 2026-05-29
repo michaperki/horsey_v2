@@ -4,7 +4,7 @@ import path from "node:path";
 import { initialSeed } from "./seed.mjs";
 import { DEFAULT_AVATAR_ID, defaultOwnedAvatarIds } from "../../packages/shared/avatars.mjs";
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -292,6 +292,8 @@ const SCHEMA = `
     black_top_move_match_pct INTEGER NOT NULL,
     status TEXT NOT NULL,
     error TEXT,
+    review_status TEXT NOT NULL DEFAULT 'open',
+    admin_note TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT
   );
@@ -309,6 +311,8 @@ const SCHEMA = `
     cp_loss INTEGER,
     classification TEXT,
     is_book INTEGER NOT NULL DEFAULT 0,
+    phase TEXT,
+    clock_remaining_ms INTEGER,
     created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_move_analysis_game ON move_analysis(game_analysis_id, ply);
@@ -414,7 +418,8 @@ function rowToGame(row) {
     ratingChange: data.ratingChange ?? null,
     timeControl: data.timeControl ?? null,
     adminVoid: data.adminVoid ?? null,
-    adminAdjustment: data.adminAdjustment ?? null
+    adminAdjustment: data.adminAdjustment ?? null,
+    clkAfterMs: data.clkAfterMs ?? null
   };
 }
 
@@ -525,6 +530,8 @@ function rowToGameAnalysis(row) {
     blackTopMoveMatchPct: row.black_top_move_match_pct,
     status: row.status,
     error: row.error ?? null,
+    reviewStatus: row.review_status ?? "open",
+    adminNote: row.admin_note ?? null,
     createdAt: row.created_at,
     completedAt: row.completed_at ?? null
   };
@@ -544,6 +551,8 @@ function rowToMoveAnalysis(row) {
     cpLoss: row.cp_loss ?? null,
     classification: row.classification ?? null,
     isBook: !!row.is_book,
+    phase: row.phase ?? null,
+    clockRemainingMs: row.clock_remaining_ms ?? null,
     createdAt: row.created_at
   };
 }
@@ -727,6 +736,25 @@ function migrateSchema(db) {
   // logical thread so async-resolution events (pot_state, payment_state,
   // cashout_state) can update in place rather than double-write. See
   // docs/NOTIFICATIONS_NEXT_PASS.md.
+
+  // v17 → v18: fair-play surface columns. game_analysis gains review_status +
+  // admin_note; move_analysis gains phase + clock_remaining_ms.
+  if (currentVersion < 18 && currentVersion >= 16) {
+    const gaCols = db.prepare("PRAGMA table_info('game_analysis')").all();
+    if (!gaCols.some((c) => c.name === "review_status")) {
+      db.exec("ALTER TABLE game_analysis ADD COLUMN review_status TEXT NOT NULL DEFAULT 'open'");
+    }
+    if (!gaCols.some((c) => c.name === "admin_note")) {
+      db.exec("ALTER TABLE game_analysis ADD COLUMN admin_note TEXT");
+    }
+    const maCols = db.prepare("PRAGMA table_info('move_analysis')").all();
+    if (!maCols.some((c) => c.name === "phase")) {
+      db.exec("ALTER TABLE move_analysis ADD COLUMN phase TEXT");
+    }
+    if (!maCols.some((c) => c.name === "clock_remaining_ms")) {
+      db.exec("ALTER TABLE move_analysis ADD COLUMN clock_remaining_ms INTEGER");
+    }
+  }
 
   // v10 → v11: add users.is_admin (default 0). Admins are hand-set in the DB
   // (`UPDATE users SET is_admin=1 WHERE handle='...'`); there is no
@@ -1157,11 +1185,29 @@ function makeApi(db) {
       ORDER BY created_at DESC LIMIT 1
     `),
     findGameAnalysisById: db.prepare("SELECT * FROM game_analysis WHERE id = ?"),
+    updateGameAnalysisReview: db.prepare(`
+      UPDATE game_analysis
+      SET review_status = ?, admin_note = ?
+      WHERE id = ?
+    `),
+    listAnalyzedGamesForUserAsSide: db.prepare(`
+      SELECT ga.id, ga.game_id, ga.completed_at, ga.depth, ga.engine_version,
+             gp.color,
+             CASE WHEN gp.color = 'white' THEN ga.white_acpl ELSE ga.black_acpl END AS player_acpl,
+             CASE WHEN gp.color = 'white' THEN ga.white_top_move_match_pct ELSE ga.black_top_move_match_pct END AS player_match_pct,
+             CASE WHEN gp.color = 'white' THEN ga.white_blunders ELSE ga.black_blunders END AS player_blunders
+      FROM game_analysis ga
+      JOIN game_players gp ON gp.game_id = ga.game_id
+      WHERE gp.user_id = ? AND ga.status = 'complete'
+      ORDER BY ga.completed_at DESC
+      LIMIT ?
+    `),
     insertMoveAnalysis: db.prepare(`
       INSERT INTO move_analysis
         (id, game_analysis_id, ply, side, played_san, best_san,
-         played_eval_cp, best_eval_cp, cp_loss, classification, is_book, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         played_eval_cp, best_eval_cp, cp_loss, classification, is_book,
+         phase, clock_remaining_ms, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `),
     listMoveAnalysisFor: db.prepare(`
       SELECT * FROM move_analysis WHERE game_analysis_id = ?
@@ -1365,7 +1411,8 @@ function makeApi(db) {
           ratingChange: game.ratingChange ?? null,
           timeControl: game.timeControl ?? null,
           adminVoid: game.adminVoid ?? null,
-          adminAdjustment: game.adminAdjustment ?? null
+          adminAdjustment: game.adminAdjustment ?? null,
+          clkAfterMs: game.clkAfterMs ?? null
         }),
         new Date().toISOString(),
         game.id
@@ -1705,6 +1752,8 @@ function makeApi(db) {
             row.cpLoss ?? null,
             row.classification ?? null,
             row.isBook ? 1 : 0,
+            row.phase ?? null,
+            row.clockRemainingMs ?? null,
             row.createdAt ?? now
           );
         }
@@ -1716,6 +1765,13 @@ function makeApi(db) {
     },
     listMoveAnalysisForAnalysis(gameAnalysisId) {
       return stmts.listMoveAnalysisFor.all(gameAnalysisId).map(rowToMoveAnalysis);
+    },
+    updateGameAnalysisReview(analysisId, { reviewStatus, adminNote = null }) {
+      stmts.updateGameAnalysisReview.run(reviewStatus, adminNote, analysisId);
+      return rowToGameAnalysis(stmts.findGameAnalysisById.get(analysisId));
+    },
+    listAnalyzedGamesForUser(userId, limit = 100) {
+      return stmts.listAnalyzedGamesForUserAsSide.all(userId, limit);
     },
 
     // PGN scripts.
