@@ -1697,7 +1697,7 @@ async function enterRoute(parsed) {
   } else if (state.route === "admin") {
     const viewer = state.bootstrap?.viewer;
     if (viewer?.isAdmin) {
-      await loadAdminData(state.adminTab || "users");
+      await loadAdminData(state.adminTab || "overview");
     }
   }
 
@@ -4927,6 +4927,7 @@ function renderAvatarPickerCard(viewer) {
 }
 
 const ADMIN_TABS = [
+  { id: "overview", label: "Overview", endpoint: "/api/admin/overview" },
   { id: "users", label: "Users", endpoint: "/api/admin/users" },
   { id: "games", label: "Games", endpoint: "/api/admin/games" },
   { id: "reports", label: "Reports", endpoint: "/api/admin/reports?limit=200" },
@@ -4976,7 +4977,7 @@ function renderAdmin() {
   if (!viewer?.isAdmin) {
     return `<article class="card"><h2>Admin only</h2><p class="muted">This page requires an admin account.</p></article>`;
   }
-  const activeTab = state.adminTab || "users";
+  const activeTab = state.adminTab || "overview";
   const tabBar = ADMIN_TABS.map((t) =>
     `<button class="admin-tab ${t.id === activeTab ? "active" : ""}" data-admin-tab="${t.id}">${t.label}</button>`
   ).join("");
@@ -5279,6 +5280,7 @@ function formatEvalCp(cp) {
 function renderAdminBody(tabId) {
   const data = state.adminData?.[tabId];
   if (!data) return `<p class="muted">No data yet.</p>`;
+  if (tabId === "overview") return renderAdminOverview(data);
   if (tabId === "users") return renderAdminUsers(data.users || []);
   if (tabId === "games") return renderAdminGames(data);
   if (tabId === "reports") return renderAdminReports(data.reports || []);
@@ -5289,6 +5291,61 @@ function renderAdminBody(tabId) {
   if (tabId === "purchases") return renderAdminPurchases(data.purchases || []);
   if (tabId === "audit") return renderAdminAudit(data.actions || []);
   return "";
+}
+
+// Triage landing: a HUD-like status strip the operator lands on, plus a short
+// list of items that actually need action. Counts in red mean "act now", gold
+// is the escrow money figure, green is healthy live activity.
+function renderAdminOverview(data) {
+  const c = data.counts || {};
+  const flags = data.flags || {};
+  const tile = (label, value, tab, tone) => `
+    <button class="admin-stat tone-${tone}" data-admin-tab="${tab}">
+      <span class="admin-stat-value">${escapeHtml(String(value))}</span>
+      <span class="admin-stat-label">${escapeHtml(label)}</span>
+    </button>`;
+  const alert = (n) => (n > 0 ? "alert" : "calm");
+  const tiles = [
+    tile("Live games", c.liveGames ?? 0, "games", c.liveGames > 0 ? "live" : "calm"),
+    tile("Open reports", c.openReports ?? 0, "reports", alert(c.openReports)),
+    tile("Stuck games", c.stuckGames ?? 0, "stuck", alert(c.stuckGames)),
+    tile("Pending analysis", c.pendingAnalysis ?? 0, "games", c.pendingAnalysis > 0 ? "pending" : "calm"),
+    tile("Restricted", c.restrictedUsers ?? 0, "users", alert(c.restrictedUsers)),
+    `<button class="admin-stat tone-money" data-admin-tab="ledger">
+       <span class="admin-stat-value">${money(c.escrowHeldCents ?? 0)}</span>
+       <span class="admin-stat-label">Escrow held</span>
+     </button>`
+  ].join("");
+
+  const reportFlags = (flags.reports || []).map((r) => `
+    <li>
+      <button class="admin-flag" data-admin-tab="reports">
+        <span class="cell-urgent">${escapeHtml(reportCategoryLabel(r.category))}</span>
+        <span class="muted">${escapeHtml(r.reporter?.handle || r.reporterUserId.slice(0, 10))}${r.target ? ` → ${escapeHtml(r.target.handle)}` : ""}</span>
+        ${r.note ? `<span class="admin-flag-note">${escapeHtml(r.note)}</span>` : ""}
+      </button>
+    </li>`).join("");
+  const analysisFlags = (flags.suspiciousAnalyses || []).map((a) => `
+    <li>
+      <button class="admin-flag" data-admin-game-analysis="${escapeHtml(a.gameId)}">
+        <span class="cell-urgent">suspicious</span>
+        <span class="muted">${escapeHtml(a.gameId.slice(0, 14))}</span>
+        <span class="admin-flag-note">ACPL W ${a.whiteAcpl ?? "—"} · B ${a.blackAcpl ?? "—"}</span>
+      </button>
+    </li>`).join("");
+  const flagItems = reportFlags + analysisFlags;
+
+  return `
+    <section>
+      <div class="admin-stats">${tiles}</div>
+    </section>
+    <section class="admin-flags">
+      <h3>Needs attention</h3>
+      ${flagItems
+        ? `<ul class="admin-flag-list">${flagItems}</ul>`
+        : `<p class="muted small">Nothing flagged. No open reports or suspicious reviews.</p>`}
+    </section>
+  `;
 }
 
 function renderAdminReports(reports) {

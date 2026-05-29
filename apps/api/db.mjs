@@ -1228,6 +1228,23 @@ function makeApi(db) {
       ORDER BY completed_at DESC
       LIMIT ?
     `),
+    // Admin console triage counts (see docs/ADMIN_CONSOLE_NEXT_PASS.md).
+    countOpenReports: db.prepare("SELECT count(*) AS n FROM reports WHERE status = 'open'"),
+    countPendingAnalysisJobs: db.prepare(
+      "SELECT count(*) AS n FROM analysis_jobs WHERE status IN ('pending', 'running')"
+    ),
+    countRestrictedUsers: db.prepare(
+      "SELECT count(DISTINCT user_id) AS n FROM user_restrictions WHERE cleared_at IS NULL"
+    ),
+    sumEscrowHeld: db.prepare(
+      "SELECT COALESCE(SUM(escrow_delta_cents), 0) AS n FROM ledger_entries"
+    ),
+    listSuspiciousAnalyses: db.prepare(`
+      SELECT * FROM game_analysis
+      WHERE status = 'complete' AND review_status = 'suspicious'
+      ORDER BY completed_at DESC
+      LIMIT ?
+    `),
     updateGameAnalysisReview: db.prepare(`
       UPDATE game_analysis
       SET review_status = ?, admin_note = ?
@@ -1814,6 +1831,17 @@ function makeApi(db) {
     },
     listRecentAnalyzedGames(limit = 50) {
       return stmts.listRecentAnalyzedGames.all(limit).map(rowToGameAnalysis);
+    },
+    listSuspiciousAnalyses(limit = 10) {
+      return stmts.listSuspiciousAnalyses.all(limit).map(rowToGameAnalysis);
+    },
+    adminOverviewCounts() {
+      return {
+        openReports: Number(stmts.countOpenReports.get()?.n ?? 0),
+        pendingAnalysis: Number(stmts.countPendingAnalysisJobs.get()?.n ?? 0),
+        restrictedUsers: Number(stmts.countRestrictedUsers.get()?.n ?? 0),
+        escrowHeldCents: Number(stmts.sumEscrowHeld.get()?.n ?? 0)
+      };
     },
     listMoveAnalysisForAnalysis(gameAnalysisId) {
       return stmts.listMoveAnalysisFor.all(gameAnalysisId).map(rowToMoveAnalysis);

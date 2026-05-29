@@ -3336,6 +3336,45 @@ async function routeApi(req, res) {
   // ---- Admin ---------------------------------------------------------------
   // Every /api/admin/* route gates on users.is_admin via requireAdmin.
 
+  // Triage summary for the console Overview landing — cheap counts plus a small
+  // set of operator-actionable flags. See docs/ADMIN_CONSOLE_NEXT_PASS.md.
+  if (req.method === "GET" && pathname === "/api/admin/overview") {
+    try {
+      requireAdmin(viewer);
+      const now = Date.now();
+      const liveGames = db.listLiveGames();
+      const stuckGames = liveGames.filter((game) => {
+        const flagged = game.clock ? flaggedSide(game.clock, now) : null;
+        const lastMoveIso = game.clock?.lastMoveAt ?? null;
+        const idleMs = lastMoveIso ? now - new Date(lastMoveIso).getTime() : null;
+        return flagged || (idleMs != null && idleMs > 15 * 60 * 1000);
+      });
+      const counts = db.adminOverviewCounts();
+      const reports = db.listReports(200)
+        .filter((r) => r.status === "open")
+        .slice(0, 5)
+        .map(reportPayload);
+      const suspiciousAnalyses = db.listSuspiciousAnalyses(5).map((a) => ({
+        gameId: a.gameId,
+        reviewStatus: a.reviewStatus,
+        whiteAcpl: a.whiteAcpl,
+        blackAcpl: a.blackAcpl,
+        completedAt: a.completedAt
+      }));
+      return json(res, 200, {
+        counts: {
+          liveGames: liveGames.length,
+          stuckGames: stuckGames.length,
+          openReports: counts.openReports,
+          pendingAnalysis: counts.pendingAnalysis,
+          restrictedUsers: counts.restrictedUsers,
+          escrowHeldCents: counts.escrowHeldCents
+        },
+        flags: { reports, suspiciousAnalyses }
+      });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   if (req.method === "GET" && pathname === "/api/admin/audit") {
     try {
       requireAdmin(viewer);

@@ -3917,6 +3917,75 @@ p {
    operator must act on (active restrictions, flagged sides, suspicious review). */
 .cell-money { color: #8a6411; font-weight: 600; font-variant-numeric: tabular-nums; }
 .cell-urgent { color: var(--red); font-weight: 600; }
+/* Overview triage strip: status tiles + operator-actionable flags. Left-edge
+   accent carries the tone — red = act now, green = healthy live, gold = money. */
+.admin-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
+}
+.admin-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: 8px;
+  background: var(--paper);
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+}
+.admin-stat:hover { background: var(--paper-2); }
+.admin-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.admin-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.admin-stat.tone-alert { border-left-color: var(--red); }
+.admin-stat.tone-alert .admin-stat-value { color: var(--red); }
+.admin-stat.tone-live { border-left-color: var(--green); }
+.admin-stat.tone-live .admin-stat-value { color: var(--green); }
+.admin-stat.tone-pending { border-left-color: var(--gold); }
+.admin-stat.tone-pending .admin-stat-value { color: #8a6411; }
+.admin-stat.tone-money { border-left-color: var(--gold); }
+.admin-stat.tone-money .admin-stat-value { color: #8a6411; font-size: 20px; }
+.admin-flags h3 { margin-top: 0; }
+.admin-flag-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.admin-flag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  background: var(--paper);
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  font-size: 12px;
+}
+.admin-flag:hover { background: rgba(211, 164, 65, 0.08); }
+.admin-flag-note { color: var(--muted); }
 .admin-actions {
   display: flex;
   flex-wrap: wrap;
