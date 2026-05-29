@@ -27,6 +27,7 @@ import {
   criticalPositionAccuracy,
   evalCpFromMate,
   expectedAcplForRating,
+  extractPositionFeatures,
   fairPlaySummary,
   isCriticalPosition,
   isEngineGrade,
@@ -140,13 +141,66 @@ test("materialFromFen counts non-king material correctly", () => {
   assert.equal(materialFromFen(kingsOnlyFen), 0);
 });
 
-test("classifyPhase distinguishes opening / middlegame / endgame", () => {
+test("classifyPhase: pre-book is always opening", () => {
   const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-  const middlegameFen = "r2qkb1r/ppp2ppp/2n5/3pp3/3PP3/2N5/PPP2PPP/R2QKB1R w KQkq - 0 1";
-  const endgameFen = "4k3/8/3p4/8/3P4/8/4K3/8 w - - 0 1"; // K+P vs K+P
-  assert.equal(classifyPhase(4, startFen), "opening");        // pre-book
-  assert.equal(classifyPhase(20, middlegameFen), "middlegame");
-  assert.equal(classifyPhase(60, endgameFen), "endgame");
+  assert.equal(classifyPhase(1, startFen), "opening");
+  assert.equal(classifyPhase(8, startFen), "opening");
+});
+
+test("classifyPhase: opening extends past book when position still looks opening-y", () => {
+  // After 1.d4 d5 2.c4 e6 3.Nc3 Nf6 4.Bg5 Be7 — ply 9, classic QGD opening.
+  // White Bc1 developed to g5, Nb1 to c3. Black Ng8 to f6, Bf8 to e7.
+  // Several minors still home, kings home, queens home, rooks home.
+  const lateOpeningFen = "rnbqk2r/ppp1bppp/4pn2/3p2B1/2PP4/2N5/PP2PPPP/R2QKBNR w KQkq - 4 5";
+  assert.equal(classifyPhase(9, lateOpeningFen), "opening");
+  assert.equal(classifyPhase(12, lateOpeningFen), "opening");
+});
+
+test("classifyPhase: developed-and-castled position past book is middlegame", () => {
+  // Both castled kingside, queens still on, central tension resolved.
+  const middlegameFen = "r1bq1rk1/pp3ppp/2n1pn2/2bp4/3P4/2NB1N2/PPP2PPP/R1BQ1RK1 w - - 0 11";
+  assert.equal(classifyPhase(22, middlegameFen), "middlegame");
+});
+
+test("classifyPhase: queenless middlegame stays middlegame when material is high", () => {
+  // Queens traded but plenty of pieces still on. Material ~58 (well above 22).
+  const queenlessMidFen = "r3kb1r/pp3ppp/2n1pn2/3p4/2PP4/2NB1N2/PP3PPP/R1B1K2R w KQkq - 0 15";
+  assert.equal(classifyPhase(30, queenlessMidFen), "middlegame");
+});
+
+test("classifyPhase: low material is endgame", () => {
+  const lowMaterialFen = "4k3/8/3p4/8/3P4/8/4K3/8 w - - 0 30";
+  assert.equal(classifyPhase(60, lowMaterialFen), "endgame");
+});
+
+test("classifyPhase: queens off + modest material is endgame", () => {
+  // K+R+5P each, queens off. Material = 20 (under the 22 threshold).
+  const queenlessEndgameFen = "4k3/p4ppp/8/8/8/8/PP4PP/R3K2R w KQ - 0 30";
+  assert.equal(classifyPhase(60, queenlessEndgameFen), "endgame");
+});
+
+test("classifyPhase: very-few-pieces rule catches Q+P vs K+P shapes", () => {
+  const sparseFen = "4k3/8/8/8/8/8/4P3/Q3K3 w - - 0 50";
+  assert.equal(classifyPhase(100, sparseFen), "endgame");
+});
+
+test("extractPositionFeatures captures castling, queens, minors, rooks", () => {
+  const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  const f = extractPositionFeatures(startFen);
+  assert.equal(f.queensHomeCount, 2);
+  assert.equal(f.undevelopedMinors, 8);
+  assert.equal(f.rooksOnHomeCorner, 4);
+  assert.equal(f.whiteKingHome, true);
+  assert.equal(f.blackKingHome, true);
+  assert.equal(f.whiteCanCastle, true);
+
+  // Castled position.
+  const castledFen = "r1bq1rk1/pp3ppp/2n1pn2/2bp4/3P4/2NB1N2/PPP2PPP/R1BQ1RK1 w - - 0 11";
+  const c = extractPositionFeatures(castledFen);
+  assert.equal(c.whiteKingCastled, true);
+  assert.equal(c.blackKingCastled, true);
+  assert.equal(c.whiteCanCastle, false);
+  assert.equal(c.blackCanCastle, false);
 });
 
 test("isCriticalPosition excludes book + decisive evals", () => {
@@ -261,27 +315,70 @@ test("computePlayerBaseline requires minSampleSize and averages prior ACPL", () 
   assert.equal(b.meanTopMatchPct, 45);
 });
 
-test("concernLabel raises 'medium' for one elevated signal and 'high' for two", () => {
-  const lowAll = concernLabel({
-    critical: { count: 10, engineGrade: 2, accuracyPct: 20 },
-    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 65 }
+test("concernLabel: no strong signals → 'low' with descriptive context", () => {
+  // High-ACPL, blunder-filled, mediocre-everywhere game. Critical accuracy
+  // 67% (6 of 9) is elevated but should NOT flag concern in a noisy game.
+  const verdict = concernLabel({
+    critical: { count: 9, engineGrade: 6, accuracyPct: 67 },
+    ratingAdjusted: { expectedAcpl: 50, observedAcpl: 98 },
+    blunders: 3
   });
-  assert.equal(lowAll.level, "low");
-  assert.deepEqual(lowAll.reasons, []);
+  assert.equal(verdict.level, "low");
+  // The descriptive context line should mention the high ACPL and blunders.
+  assert.equal(verdict.reasons.length, 1);
+  assert.match(verdict.reasons[0], /high ACPL/);
+  assert.match(verdict.reasons[0], /blunder/);
+});
 
-  const oneSignal = concernLabel({
-    critical: { count: 10, engineGrade: 6, accuracyPct: 60 },
-    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 55 }
+test("concernLabel: critical accuracy alone is muted when ACPL is high", () => {
+  // 80% critical accuracy would normally be a strong signal — but combined
+  // with ACPL 90 (chaotic game) we don't credit it.
+  const verdict = concernLabel({
+    critical: { count: 10, engineGrade: 8, accuracyPct: 80 },
+    ratingAdjusted: { expectedAcpl: 55, observedAcpl: 90 }
   });
-  assert.equal(oneSignal.level, "medium");
-  assert.equal(oneSignal.reasons.length, 1);
+  assert.equal(verdict.level, "low");
+});
 
-  const twoSignals = concernLabel({
+test("concernLabel: 'medium' on one strong signal", () => {
+  // 80% critical accuracy in a clean game (ACPL well under threshold).
+  const verdict = concernLabel({
+    critical: { count: 10, engineGrade: 8, accuracyPct: 80 },
+    ratingAdjusted: { expectedAcpl: 55, observedAcpl: 50 }
+  });
+  assert.equal(verdict.level, "medium");
+  assert.equal(verdict.reasons.length, 1);
+  assert.match(verdict.reasons[0], /critical-position/);
+});
+
+test("concernLabel: 'high' when two strong signals stack", () => {
+  const verdict = concernLabel({
     critical: { count: 10, engineGrade: 8, accuracyPct: 80 },
     ratingAdjusted: { expectedAcpl: 60, observedAcpl: 25 }
   });
-  assert.equal(twoSignals.level, "high");
-  assert.ok(twoSignals.reasons.length >= 2);
+  assert.equal(verdict.level, "high");
+  assert.equal(verdict.reasons.length, 2);
+});
+
+test("concernLabel: clock-aware engine grade at low time counts as strong signal", () => {
+  const verdict = concernLabel({
+    critical: { count: 2, engineGrade: 1, accuracyPct: 50 }, // sample too small
+    ratingAdjusted: { expectedAcpl: 50, observedAcpl: 45 },  // not strong enough
+    clockAware: { low: { count: 8, engineGrade: 7, engineGradePct: 88 }, mid: { count: 5, engineGradePct: 60 }, high: { count: 10, engineGradePct: 70 } }
+  });
+  assert.equal(verdict.level, "medium");
+  assert.match(verdict.reasons[0], /low time/);
+});
+
+test("concernLabel: baseline deviation 25+ counts as a strong signal", () => {
+  const verdict = concernLabel({
+    critical: { count: 4, engineGrade: 2, accuracyPct: 50 },
+    ratingAdjusted: { expectedAcpl: 60, observedAcpl: 30 }, // strongRating
+    baseline: { sampleSize: 8, meanAcpl: 90 } // game ACPL 30 vs baseline 90 = -60
+  });
+  // Two strong signals (rating + baseline) → high.
+  assert.equal(verdict.level, "high");
+  assert.equal(verdict.reasons.length, 2);
 });
 
 test("fairPlaySummary plugs all pieces together end-to-end", () => {

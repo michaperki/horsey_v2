@@ -112,13 +112,47 @@ export function summarizeMoveAnalyses(moveAnalyses) {
 // based: no ground truth, no ML. Reasons are returned alongside the label
 // so admins can see why a game flagged.
 
-// Phase boundaries. Opening is the same crude book-ply skip as classification.
-// Endgame triggers when total non-king material drops below this threshold.
-// 14 ≈ a rook + minor on each side, or equivalent — well into endgame technique.
+// Phase boundaries.
+//
+// Endgame triggers on a few different shapes (queens off + low material,
+// very few pieces, plain low total). Opening *extends past book* when the
+// position still looks opening-y — many minor pieces undeveloped, kings not
+// castled, queens still home — instead of slamming everything non-book into
+// middlegame.
 export const ENDGAME_MATERIAL_THRESHOLD = 14;
 const PIECE_VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
-// Count non-king material on the board from a FEN. Used to classify endgame.
+// Square indexes (a1 = 0 ... h8 = 63). Used by extractPositionFeatures to
+// detect "piece still on its starting square."
+const WHITE_KING_HOME = 4;     // e1
+const BLACK_KING_HOME = 60;    // e8
+const WHITE_QUEEN_HOME = 3;    // d1
+const BLACK_QUEEN_HOME = 59;   // d8
+const WHITE_MINOR_HOMES = new Set([1, 2, 5, 6]); // b1, c1, f1, g1
+const BLACK_MINOR_HOMES = new Set([57, 58, 61, 62]); // b8, c8, f8, g8
+const WHITE_ROOK_HOMES = new Set([0, 7]);  // a1, h1
+const BLACK_ROOK_HOMES = new Set([56, 63]); // a8, h8
+const WHITE_KING_CASTLED = new Set([2, 6]); // c1 (long), g1 (short)
+const BLACK_KING_CASTLED = new Set([58, 62]); // c8, g8
+
+function parseFenBoard(boardStr) {
+  const board = new Array(64).fill(null);
+  if (!boardStr) return board;
+  const ranks = boardStr.split("/");
+  for (let rankIdx = 0; rankIdx < 8; rankIdx++) {
+    const rank = 7 - rankIdx; // FEN reads rank 8 first.
+    let file = 0;
+    for (const ch of ranks[rankIdx] || "") {
+      if (/\d/.test(ch)) { file += Number(ch); continue; }
+      const square = rank * 8 + file;
+      board[square] = ch;
+      file += 1;
+    }
+  }
+  return board;
+}
+
+// Count non-king material on the board from a FEN. Used as one endgame test.
 export function materialFromFen(fen) {
   if (!fen) return 0;
   const board = fen.split(" ")[0];
@@ -130,11 +164,126 @@ export function materialFromFen(fen) {
   return total;
 }
 
-// Phase classifier. Pass the FEN BEFORE the move was played + the ply.
+// Rich feature extraction. Counts piece totals, where kings live, which
+// minor pieces are still on home squares, which rooks are still on corners,
+// etc. Used by classifyPhase below.
+export function extractPositionFeatures(fen) {
+  if (!fen) return null;
+  const parts = fen.split(" ");
+  const board = parseFenBoard(parts[0]);
+  const castlingRights = parts[2] || "-";
+
+  let material = 0;
+  let queens = 0;
+  let rooks = 0;
+  let minors = 0;
+  let pawns = 0;
+  let whiteQueenHome = false;
+  let blackQueenHome = false;
+  let whiteKingSquare = -1;
+  let blackKingSquare = -1;
+  let whiteMinorsAtHome = 0;
+  let blackMinorsAtHome = 0;
+  let rooksOnHomeCorner = 0;
+
+  for (let sq = 0; sq < 64; sq++) {
+    const piece = board[sq];
+    if (!piece) continue;
+    const lower = piece.toLowerCase();
+    material += PIECE_VALUE[lower] || 0;
+    if (lower === "q") {
+      queens += 1;
+      if (piece === "Q" && sq === WHITE_QUEEN_HOME) whiteQueenHome = true;
+      if (piece === "q" && sq === BLACK_QUEEN_HOME) blackQueenHome = true;
+    } else if (lower === "r") {
+      rooks += 1;
+      if (piece === "R" && WHITE_ROOK_HOMES.has(sq)) rooksOnHomeCorner += 1;
+      if (piece === "r" && BLACK_ROOK_HOMES.has(sq)) rooksOnHomeCorner += 1;
+    } else if (lower === "b" || lower === "n") {
+      minors += 1;
+      if (piece === piece.toUpperCase() && WHITE_MINOR_HOMES.has(sq)) whiteMinorsAtHome += 1;
+      if (piece === piece.toLowerCase() && BLACK_MINOR_HOMES.has(sq)) blackMinorsAtHome += 1;
+    } else if (lower === "p") {
+      pawns += 1;
+    } else if (lower === "k") {
+      if (piece === "K") whiteKingSquare = sq;
+      else blackKingSquare = sq;
+    }
+  }
+
+  const whiteKingHome = whiteKingSquare === WHITE_KING_HOME;
+  const blackKingHome = blackKingSquare === BLACK_KING_HOME;
+  const whiteKingCastled = WHITE_KING_CASTLED.has(whiteKingSquare);
+  const blackKingCastled = BLACK_KING_CASTLED.has(blackKingSquare);
+  const whiteCanCastle = castlingRights.includes("K") || castlingRights.includes("Q");
+  const blackCanCastle = castlingRights.includes("k") || castlingRights.includes("q");
+
+  return {
+    material,
+    queens,
+    rooks,
+    minors,
+    pawns,
+    whiteQueenHome,
+    blackQueenHome,
+    queensHomeCount: (whiteQueenHome ? 1 : 0) + (blackQueenHome ? 1 : 0),
+    whiteKingSquare,
+    blackKingSquare,
+    whiteKingHome,
+    blackKingHome,
+    whiteKingCastled,
+    blackKingCastled,
+    whiteCanCastle,
+    blackCanCastle,
+    whiteMinorsAtHome,
+    blackMinorsAtHome,
+    undevelopedMinors: whiteMinorsAtHome + blackMinorsAtHome,
+    rooksOnHomeCorner
+  };
+}
+
+// Phase classifier. Heuristic, not perfect, but it should not classify a
+// barely-developed early-game position past book as "middlegame."
+//
+// Inputs:
+//   ply       — 1-indexed ply number
+//   fenBefore — FEN of the position before the move
+//   bookPlies — opening-book cutoff (default 8)
+//
+// Returns 'opening' | 'middlegame' | 'endgame'.
 export function classifyPhase(ply, fenBefore, bookPlies = DEFAULT_BOOK_PLIES) {
   if (ply <= bookPlies) return "opening";
-  const material = materialFromFen(fenBefore);
-  if (material <= ENDGAME_MATERIAL_THRESHOLD) return "endgame";
+  if (!fenBefore) return "middlegame";
+  const f = extractPositionFeatures(fenBefore);
+  if (!f) return "middlegame";
+
+  // ENDGAME tests (most decisive first).
+  if (f.material <= ENDGAME_MATERIAL_THRESHOLD) return "endgame";
+  // Queens off + total non-king material modest → endgame.
+  if (f.queens === 0 && f.material <= 22) return "endgame";
+  // Queens off + very few pieces (rook-and-pawn / minor-and-pawn endings).
+  if (f.queens === 0 && (f.minors + f.rooks) <= 3) return "endgame";
+  // Very few pieces total even with queens still on (e.g. Q+P vs K+P).
+  if ((f.minors + f.rooks) <= 2 && f.queens <= 1) return "endgame";
+
+  // OPENING extension past book. Score opening-ness signals:
+  //  +1  at least one queen still on its home square
+  //  +1  three+ minor pieces still on their home square
+  //  +1  at least one side has not yet castled AND retains castling rights
+  //  +1  three+ rooks still on their starting corner (a1/h1/a8/h8)
+  let openingScore = 0;
+  if (f.queensHomeCount >= 1) openingScore += 1;
+  if (f.undevelopedMinors >= 3) openingScore += 1;
+  const whiteUncastledWithRights = !f.whiteKingCastled && f.whiteKingHome && f.whiteCanCastle;
+  const blackUncastledWithRights = !f.blackKingCastled && f.blackKingHome && f.blackCanCastle;
+  if (whiteUncastledWithRights || blackUncastledWithRights) openingScore += 1;
+  if (f.rooksOnHomeCorner >= 3) openingScore += 1;
+
+  // Tunable thresholds. Earlier plies need fewer signals to count as still
+  // in the opening; later plies need more.
+  if (ply <= 14 && openingScore >= 2) return "opening";
+  if (ply <= 20 && openingScore >= 3) return "opening";
+
   return "middlegame";
 }
 
@@ -301,67 +450,93 @@ export function computePlayerBaseline(rows, { minSampleSize = 3 } = {}) {
   };
 }
 
-// Rule-based concern label. Inputs all flow from this module's metrics.
-// Returns { level, reasons } so admins can see why something flagged. Reasons
-// are short user-facing strings; the rules are intentionally conservative
-// because we have no labeled data.
+// "High ACPL" gate. A chaotic, mistake-heavy game shouldn't earn concern
+// from spotting the engine move on a tactical shot here and there — that's
+// "lucky tactic," not "engine help." We use this threshold to mute the
+// critical-accuracy signal in noisy games.
+export const HIGH_ACPL_THRESHOLD = 80;
+
+// Rule-based concern label. Inputs flow from this module's other metrics.
+// Returns { level, reasons } so admins can see what triggered. Honestly
+// rule-based — we have no labeled data, no ML.
 //
 // Levels:
-//   high   — strong signal of engine-like play (critical accuracy >= 70%
-//            AND rating-adjusted ACPL is way better than expected); OR
-//            sustained engine grade at low time across many moves
-//   medium — one elevated signal: critical accuracy >= 55%, or rating-
-//            adjusted delta >= 20 better than expected, or baseline deviation
-//   low    — no strong signal
+//   high   — TWO+ strong signals stacked
+//   medium — ONE strong signal (worth a human eye)
+//   low    — no strong signals; reasons becomes a descriptive context line
+//            ("high ACPL, several blunders, no low-clock data, no baseline yet")
+//
+// Strong signals:
+//   - critical-position engine-grade >= 70% over 5+ critical moments,
+//     AND the player's overall ACPL is NOT high. (Spotting top moves in
+//     critical positions while playing badly everywhere else is much less
+//     concerning than spotting them while playing engine-clean overall.)
+//   - rating-adjusted ACPL delta >= 30 better than expected
+//   - sustained engine-grade play at low clock time
+//   - baseline deviation: game ACPL 25+ better than this player's prior
+//     analyzed games, with sample size 5+
 export function concernLabel({
   critical,
   ratingAdjusted,
   clockAware,
-  baseline
+  baseline,
+  blunders = 0
 }) {
-  const reasons = [];
-  let level = "low";
+  const observedAcpl = ratingAdjusted?.observedAcpl ?? null;
+  const expectedAcpl = ratingAdjusted?.expectedAcpl ?? null;
+  const acplDelta = (expectedAcpl != null && observedAcpl != null)
+    ? expectedAcpl - observedAcpl : null;
+  const highAcpl = observedAcpl != null && observedAcpl >= HIGH_ACPL_THRESHOLD;
 
-  // Critical-position accuracy signal.
-  const ca = critical?.accuracyPct;
-  if (ca != null && critical.count >= 5) {
-    if (ca >= 70) reasons.push(`critical-position accuracy ${ca}% over ${critical.count} moments`);
-    else if (ca >= 55) reasons.push(`elevated critical-position accuracy (${ca}%)`);
-  }
-
-  // Rating-adjusted ACPL deviation.
-  if (ratingAdjusted && ratingAdjusted.expectedAcpl != null && ratingAdjusted.observedAcpl != null) {
-    const delta = ratingAdjusted.expectedAcpl - ratingAdjusted.observedAcpl;
-    if (delta >= 30) reasons.push(`ACPL ${ratingAdjusted.observedAcpl} vs expected ${ratingAdjusted.expectedAcpl} for rating (Δ ${delta} better)`);
-    else if (delta >= 20) reasons.push(`ACPL ${ratingAdjusted.observedAcpl} vs expected ${ratingAdjusted.expectedAcpl} (Δ ${delta})`);
-  }
-
-  // Clock-aware: sustained engine grade at low time.
-  if (clockAware?.low?.count >= 5 && clockAware.low.engineGradePct >= 70) {
-    reasons.push(`engine-grade ${clockAware.low.engineGradePct}% at low time (${clockAware.low.count} moves)`);
-  }
-
-  // Baseline deviation: this game is much stronger than the player's history.
-  if (baseline && ratingAdjusted?.observedAcpl != null) {
-    const diff = baseline.meanAcpl - ratingAdjusted.observedAcpl;
-    if (diff >= 25 && baseline.sampleSize >= 5) {
-      reasons.push(`game ACPL ${ratingAdjusted.observedAcpl} vs player's ${baseline.sampleSize}-game baseline ${baseline.meanAcpl}`);
-    }
-  }
-
-  // Promote level based on how many signals stacked.
-  const strongCritical = ca != null && ca >= 70 && critical.count >= 5;
-  const strongRating = ratingAdjusted?.expectedAcpl != null
-    && (ratingAdjusted.expectedAcpl - ratingAdjusted.observedAcpl) >= 30;
+  const ca = critical?.accuracyPct ?? null;
+  const criticalSampleOk = critical?.count >= 5;
+  const strongCritical = !!(ca != null && criticalSampleOk && ca >= 70 && !highAcpl);
+  const strongRating = !!(acplDelta != null && acplDelta >= 30);
   const strongClock = !!(clockAware?.low?.count >= 5 && clockAware.low.engineGradePct >= 70);
 
-  if ((strongCritical && strongRating) || (strongCritical && strongClock) || (strongRating && strongClock)) {
-    level = "high";
-  } else if (reasons.length > 0) {
-    level = "medium";
+  let strongBaseline = false;
+  if (baseline && observedAcpl != null) {
+    const baselineDiff = baseline.meanAcpl - observedAcpl;
+    if (baselineDiff >= 25 && baseline.sampleSize >= 5) strongBaseline = true;
   }
 
-  return { level, reasons };
+  const flags = [];
+  if (strongCritical) {
+    flags.push(`critical-position accuracy ${ca}% over ${critical.count} moments`);
+  }
+  if (strongRating) {
+    flags.push(`ACPL ${observedAcpl} vs expected ${expectedAcpl} for rating (Δ ${acplDelta} better)`);
+  }
+  if (strongClock) {
+    flags.push(`engine-grade ${clockAware.low.engineGradePct}% at low time (${clockAware.low.count} moves)`);
+  }
+  if (strongBaseline) {
+    flags.push(`game ACPL ${observedAcpl} vs player's ${baseline.sampleSize}-game baseline ${baseline.meanAcpl}`);
+  }
+
+  const signalCount = flags.length;
+
+  if (signalCount >= 2) return { level: "high", reasons: flags };
+  if (signalCount >= 1) return { level: "medium", reasons: flags };
+
+  // LOW concern — emit a descriptive context line instead of weak flags, so
+  // the panel reads like a verdict, not a list of half-suspicions.
+  const context = [];
+  if (highAcpl) context.push(`high ACPL (${observedAcpl})`);
+  if (blunders >= 2) context.push(`${blunders} blunders`);
+  else if (blunders === 1) context.push("1 blunder");
+  if (ca != null && criticalSampleOk && ca >= 55) {
+    context.push(`elevated critical-position accuracy ${ca}% but ACPL too noisy to attribute`);
+  } else if (acplDelta != null && acplDelta >= 15 && acplDelta < 30) {
+    context.push(`ACPL ${observedAcpl} mildly under expected ${expectedAcpl} for rating`);
+  }
+  if (!clockAware) context.push("no per-ply clock data");
+  if (!baseline) context.push("no historical baseline yet");
+
+  return {
+    level: "low",
+    reasons: context.length > 0 ? [context.join(", ")] : []
+  };
 }
 
 // Build the full per-side fair-play summary. This is what the admin endpoint
@@ -379,7 +554,14 @@ export function fairPlaySummary({ moves, side, playerRating, summary, baselineRo
     delta: expectedAcpl != null && observedAcpl != null ? expectedAcpl - observedAcpl : null
   };
   const baseline = computePlayerBaseline(baselineRows || []);
-  const concern = concernLabel({ critical, ratingAdjusted, clockAware, baseline });
+  const sideSummary = side === "white" ? summary?.white : summary?.black;
+  const concern = concernLabel({
+    critical,
+    ratingAdjusted,
+    clockAware,
+    baseline,
+    blunders: sideSummary?.blunders ?? 0
+  });
   return {
     side,
     phaseBreakdown,
