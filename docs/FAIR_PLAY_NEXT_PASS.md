@@ -63,6 +63,18 @@ User-facing surfaces should lag admin:
 - **HUD:** live fair-play signals should be avoided in v1; they invite accusations mid-game and can leak detection logic.
 - **Scout Card:** keep it to trust tier, sample size, reliability, and history until the fair-play pipeline has real outcomes.
 
+### Review outcomes must reach the user (gap identified 2026-05-29)
+
+Admin enforcement is built end-to-end — void, adjust, restrict, ban, report resolution all exist in `apps/api/server.mjs` with a full `admin_actions` audit trail — but **none of it currently surfaces to the affected user**. There is no notification, no settlement-screen explanation, and no account-state copy for any of these outcomes; voids, payout reversals, resolved reports, and even loud restrictions land silently. The only persisted notifications today are `challenge_received` / `challenge_countered`. Closing this gap is the next user-facing fair-play slice.
+
+Be selective about *how* each outcome surfaces — not everything is a bell notification. The canonical decisions live elsewhere so this doc doesn't fork them:
+
+- enforcement visibility (loud / quiet / state-only) → `OPERATIONAL_POLICY.md` § 1.14;
+- which event uses which surface (notification vs settlement UI vs game history vs balance history vs account state vs error copy) → `NOTIFICATIONS_NEXT_PASS.md`;
+- settlement model + void copy + report-resolution copy → `OPERATIONAL_POLICY.md` § 2.6, § 5.2.
+
+Innocent-opponent case: when a shared game is voided because the *other* player was sanctioned, the clean player also sees a result/rating reversal and a returned stake. They must get the same neutral void copy — they did nothing wrong, so the message can't read as an accusation.
+
 ## Implementation Shape
 
 Likely first technical slice:
@@ -111,5 +123,14 @@ Activation rule (locked 2026-05-28):
 - **Confidence threshold ~95%** — interpret loosely as "the rolling estimate has narrow enough error bars to be meaningful." Operationally: 10 games is the floor; tighter caps (≥30 games for a "settled" reading) graduate the badge from `calibrating` to a confirmed state. This mirrors the existing trust-tier `calibrating` UX.
 - **Badge states**: `calibrating` (sample below threshold) → `clean` (below review thresholds) → `under_review` (admin-flagged; not user-visible until policy says so) → `restricted` (one of the shadow states in the ladder below).
 - **Calibrating users are not punished.** They just don't display a Secure Play badge yet. Matchmaking and play work normally.
+
+### What calibrating users see (decided 2026-05-29)
+
+Absence of a Secure Play badge must never read as a *negative* mark — most early users will be calibrating simply because not enough of their games have been analyzed yet, not because anything is wrong. So:
+
+- Show a neutral, mildly-positive calibration state, not an empty slot. Copy direction: *"Secure Play: calibrating — we analyze your games to confirm fair play. Your badge appears once enough games are reviewed."*
+- Never use a red / "unverified" / warning treatment that implies suspicion. Calibrating is the default, expected state.
+- Use the same surface slot as the eventual badge (Profile / History / Settlement) so the calibrating → clean transition is a fill-in, not a new element popping into existence.
+- Reuse the existing trust-tier `calibrating` visual language for consistency.
 
 The external-import path is the same `external_accounts` infrastructure Lichess verification already uses; extending it to pull recent game histories for analysis is a known follow-up. Document the licensing posture of any engine before importing.

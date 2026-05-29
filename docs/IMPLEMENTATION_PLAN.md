@@ -527,3 +527,17 @@ What stands between now and the milestone being complete:
 Safety note: the manual `POST /api/games/:id/finalize` endpoint is now explicitly dev-gated by `HORSEY_ENABLE_DEV_FINALIZE=1` and still requires the caller to be a player. Normal game completion should flow through moves, resignation, draw agreement, or timeout settlement.
 
 Mocks #1 (persistence), #3 (realtime transport), #4 (challenge create + matchmaking), #5 (server clocks + timeout settlement), and #7 (full game-lifecycle endpoints minus presence-driven abandonment) have all landed. Mock #3 unlocked the rest of Phase 4 by giving every server-push consumer (clocks, draw offers, plus future presence / spectator stream / quick chat) a transport to plug into — see ADR 0004.
+
+## Pointer: user-facing fair-play & enforcement reflection (added 2026-05-29)
+
+Admin enforcement (void / adjust / restrict / ban / report resolution) is built, but users currently don't reliably see review outcomes, voids, payout adjustments, resolved reports, or restriction explanations. The next user-facing slice closes that gap. It is almost entirely additive — the backend mutations and audit trail already exist (`apps/api/server.mjs`, `admin_actions`).
+
+Decisions are recorded in the policy/fair-play/notification docs, not duplicated here:
+
+- **Settlement model** — settle-then-claw-back for v1 (chips non-withdrawable); payout holds required before cashout: `OPERATIONAL_POLICY.md` § 2.6 (cross-linked from § 3.3).
+- **Enforcement visibility** — loud / state-only / quiet-shadow per ladder rung: `OPERATIONAL_POLICY.md` § 1.14.
+- **Void & report-resolution copy** — neutral void string + vague report acknowledgement: `OPERATIONAL_POLICY.md` § 2.6 and § 5.2.
+- **Notification taxonomy & surface matrix** — which outcome surfaces where (bell vs settlement vs history vs balance vs account state vs error copy), and the "no bell notification while actively playing" rule: `NOTIFICATIONS_NEXT_PASS.md` § "Fair-play & enforcement: event taxonomy & surface selection".
+- **Badge calibration UX** — absence of a Secure Play badge must not read as negative: `FAIR_PLAY_NEXT_PASS.md` § "What calibrating users see" and § "Review outcomes must reach the user".
+
+Suggested first build step: the per-event "loud vs quiet vs state-only / which surface" matrix is already settled, so implementation is emit-calls at `finalizeGame` (away-case only), `adminVoidGame`, `adminAdjustGame`, report resolution, and `adminSetRestrictions` (loud rungs only), plus settlement-screen void/adjust copy and login/over-wager state copy.

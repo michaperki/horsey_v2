@@ -343,6 +343,7 @@ Immediate.
 - If both players disconnect or the match state becomes unrecoverable, Horsey may void, refund, or manually settle the match.
 - Users are responsible for their own internet connection; platform-side failures are handled fairly.
 - **Repeat-offender escalation.** A pattern of pre-move aborts by the same account is a slice-2 (admin mutation + audit) signal, not a slice-1 concern. The schema captures `state='aborted'` per game; admins can sort/filter on it and escalate through the shadow-restriction ladder (§ 1.14) if a user is using aborts to dodge unfavorable pairings.
+- **Selective abort abuse.** The important exploit is not merely "many aborts"; it is aborts correlated with an unfavorable condition, especially seat/color. Example: a user repeatedly accepts/joins, sees they are black, and lets the pre-first-move window expire because aborts have no direct penalty. Admin review should therefore track abort rate by color, aborts before the user's own first move, opponent/stake/time-control distribution, and repeat patterns against the same accounts. Counters should start soft: reliability labeling, matchmaking/stake friction, temporary reduced stake limits, and manual review before any hard sanction.
 
 **Implementation notes**
 
@@ -544,6 +545,21 @@ Cons:
 - Manual review dashboard.
 - Appeal process for serious sanctions.
 
+**Decided 2026-05-29 — enforcement visibility: loud / quiet / state-only**
+
+Each rung of the ladder is classified by how much the user is *told*. Principle: tell users what they need to act on; stay silent on anything that would leak detection logic or teach evasion. (Delivery surfaces are specified in `NOTIFICATIONS_NEXT_PASS.md`; the ladder enum lives in `packages/shared/restrictions.mjs`.)
+
+- **Loud** — the user is actively notified, with a reason *category* only (never specifics):
+  - `hard_ban` — login is blocked with a suspension notice.
+  - (future) full account suspension short of a ban.
+- **State-only** — no proactive notice, but the constraint is surfaced honestly *at the moment it bites*, via error/UI copy, so the app never appears broken:
+  - `reduced_stake_limits` — an over-wager attempt is rejected with the existing stake-cap message (reuse the `stake_exceeds_trust_cap` copy; reason stays vague).
+  - `manual_review_required`, `delayed_withdrawals` — surfaced only once cashout exists, on the withdrawal flow ("withdrawals are being reviewed / may take longer"), never before.
+- **Quiet (shadow)** — deliberately invisible; the user is never told and nothing in the UI hints at it:
+  - `lower_trust_score`, `promotion_ineligibility`, `restricted_matchmaking`, `reduced_visibility`, `no_rewards_from_suspicious`.
+
+Reasoning: shadow restrictions only work if they stay shadow. Stake-limit and withdrawal constraints can't be hidden (the user hits a wall), so they get honest-but-vague copy instead of a silent dead end. Only terminal/suspension actions warrant a proactive notification.
+
 **User-facing wording**
 
 Horsey may limit, suspend, review, or close accounts that violate integrity rules or present elevated risk.
@@ -672,6 +688,34 @@ Design against obvious farming; defer advanced controls until needed.
 
 ---
 
+### 2.6 Settlement Timing & Payout Holds
+
+**Problem**
+When does the pot actually move — at game end, or after any integrity review?
+
+**Current behavior (verified in code 2026-05-29)**
+`finalizeGame` (`apps/api/server.mjs`) settles immediately: escrow releases to the winner's available chip balance and rake to the house in the same transaction that finalizes the game. Offline engine analysis is only *enqueued* afterward (`enqueueAnalysisJobIfNeeded`) and never gates the payout. There is no payout-hold state today.
+
+**Decided 2026-05-29 — settle-then-claw-back for v1**
+Keep instant settlement. This is acceptable *specifically because chips are non-withdrawable* (see § 2.1 and `packages/shared/tos.mjs`): nothing can leave the platform, so a wrongly-paid pot can always be corrected after the fact through the admin void/adjust path, which writes compensating ledger entries (the ledger stays append-only). Holding every game pending review would be bad UX for the overwhelmingly clean majority, and there is no automated flagging yet to scope a hold to suspect games only.
+
+**Required before cashout / withdrawals launch (becomes Immediate at that point)**
+Settle-then-claw-back stops being safe the moment chips become withdrawable, because a user could cash out a disputed pot before review runs. Before any withdrawal product ships we must add:
+
+- a **payout-hold** state on settlement for flagged games / flagged accounts (couples to the enforcement ladder § 1.14 and the withdrawal state machine § 3.3);
+- a rule that funds from a held game are credited but **not withdrawable** until review clears;
+- user-facing status so a held payout is explained, not silently missing (see `NOTIFICATIONS_NEXT_PASS.md` surface matrix).
+
+This is the single biggest integrity item the current "ship it" state defers — captured here so the withdrawal slice can't forget it.
+
+**User-facing wording**
+
+- Match payouts are credited to your chip balance at the end of each game.
+- When a match is voided after review, the neutral copy is: *"This match was voided after review; stakes were returned."* It never names the other player or the reason, and reads the same for a sanctioned player and an innocent opponent.
+- When cashout exists, payouts from a match under review may be held until the review completes.
+
+---
+
 ## 3. Payments / Crypto Operations
 
 ### 3.1 NOWPayments / Crypto Model
@@ -738,6 +782,7 @@ This avoids some card/chargeback issues but creates different operational risks:
 - Consider withdrawal holds for new accounts.
 - Consider manual review for large or suspicious withdrawals.
 - Add a withdrawal state machine: requested, reviewing, approved, sent, failed, canceled.
+- Gate withdrawals on match-level **payout holds** for flagged games/accounts — the settle-then-claw-back model (§ 2.6) is only safe pre-cashout; a withdrawal must not release funds from an unreviewed flagged match.
 - Require re-authentication or confirmation before withdrawal.
 
 ---
@@ -851,9 +896,14 @@ Immediate.
 - Preserve game data for review.
 - Communicate that integrity reviews may affect settlement.
 
+**Decided 2026-05-29 — report resolution is acknowledged, never detailed**
+A reporter is told their report was handled, but never what happened to the reported account (no confirmation of punishment, no detail). This closes the "did anyone even look at this?" loop without leaking detection logic or inviting "did you ban them?" follow-ups. Delivered as a notification (see `NOTIFICATIONS_NEXT_PASS.md`).
+
 **User-facing wording**
 
 Players may report suspicious games. Horsey may review games and take action, including voiding games, adjusting settlement, limiting accounts, or banning users.
+
+On resolution, the reporter sees a vague acknowledgement only: *"We reviewed your report and took appropriate action where warranted. Thanks for helping keep Horsey fair."* — with no detail about the other account or the outcome.
 
 ---
 

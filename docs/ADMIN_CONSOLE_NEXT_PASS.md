@@ -100,6 +100,12 @@ hanging off Games.
 Redesign complete. Future work would be incremental (e.g. column-level numeric right-align,
 per-tab empty-state context, a real pending-analysis job list rather than just a count).
 
+## Future Abuse-Signal Work
+
+- **Pre-move abort abuse.** Surface this as a TRUST signal, not as generic game history. The console should show a small "Reliability / Abort Review" queue with per-user abort rate, aborts by color, aborts before the user's own first move, recent aborted games, affected opponents, stake bands, and trend over the last N games/days. A tile on Overview should turn red only when a threshold is crossed (for example repeated black-seat aborts), while ordinary one-off aborts remain noise.
+- **Game tables need aborted visibility.** Today `/api/admin/games` lists live and finalized games; aborted games are terminal but are not first-class in that view. Add a recent-aborted slice or a filterable all-terminal games endpoint before relying on admins to catch repeat abort behavior manually.
+- **Counters belong next to evidence.** From the abort-review row, operators should be able to jump to the user, affected games, ledger entries, and restrictions. Recommended first actions are soft friction (`reduced_stake_limits`, `restricted_matchmaking`, reliability/trust downgrade) before hard bans unless the pattern is obviously abusive.
+
 ## Resolved decisions (2026-05-29)
 
 - **Escrow** is *not* its own view — it's a gold money column + emphasis on Users

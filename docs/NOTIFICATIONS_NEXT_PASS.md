@@ -128,3 +128,46 @@ The data model is doing the future-proofing here. The visible surface is small.
 - Whether `account_action_required` should also mirror to email when the address is verified. Default: yes once email is configured (Resend is already wired).
 - How long to keep terminal rows. Default: forever for money-related events (audit trail), 90 days for resolved social events.
 - ~~Whether the bell should render a soft sound on `notification.created`.~~ **Decided 2026-05-27:** yes. A soft two-note rising chime (`notification_arrived`, tier-2 ambient) plays when a new row arrives in real time. Honors the existing sound-mode setting — silenced under `essentials` and `mute`. Distinct timbre from milestone and check chimes.
+
+## Fair-play & enforcement: event taxonomy & surface selection (decided 2026-05-29)
+
+Motivating gap: admin enforcement is built end-to-end (`apps/api/server.mjs` — void, adjust, restrict, ban, report resolution, all with an `admin_actions` audit trail), but today the only persisted notifications are `challenge_received` / `challenge_countered`. Review outcomes, voids, payout adjustments, resolved reports, and restrictions never reach the user. This section is the canonical record of *which* outcomes surface and *where*.
+
+### Be selective — a notification is not the default
+
+A bell notification is the *loudest* surface and the easiest to overuse. Reserve it for things that (a) happened while the user was not looking and (b) need their attention. Specifically:
+
+- **No "game finished" notification when the user was actively playing the game** — the settlement screen already tells them. A notification would be noise.
+- Most state belongs in a surface the user visits on their own (settlement, history, balance), not pushed to the bell.
+- Quiet/shadow enforcement gets *no* surface at all by design (see `OPERATIONAL_POLICY.md` § 1.14).
+
+### Surfaces available
+
+- **Notification (bell)** — async, pushed; for outcomes that occurred while the user was away and changed something material.
+- **Settlement UI** — the post-game screen (`settlementPayload`); already renders `voided` / `aborted` / `draw` / win / loss.
+- **Game history** — the per-game list; reflects final state (e.g. a "Voided" tag).
+- **Balance history** — the ledger view; every credit/refund/reversal already appears here as an entry.
+- **Account state** — persistent status on Profile/account (badge, calibration, suspension banner).
+- **Error / inline copy** — shown at the moment an action is blocked (over-wager, blocked login).
+
+### Event → surface matrix
+
+| Event | Notification? | Primary surface(s) | Notes |
+|---|---|---|---|
+| Game finished, user present | No | Settlement UI, History | Live result already shown; bell would be noise. |
+| Game finished, user away (disconnect/timeout while gone) | Yes (lightweight) | Settlement UI, History | They left mid-flow; let them know it resolved. |
+| Payout credited | No | Balance history, Settlement UI | Part of game end, not its own event. |
+| Game **voided** after review | **Yes** | Notification + Settlement UI + History ("Voided") + Balance history (reversal) | Async, money + rating moved. Neutral copy from `OPERATIONAL_POLICY.md` § 2.6: *"This match was voided after review; stakes were returned."* Same copy for the innocent opponent. |
+| Result **adjusted** by admin | **Yes** | Notification + Settlement UI + Balance/rating history | Same rationale as void. |
+| Report submitted (acknowledge receipt) | No | Inline confirmation at submit time | A toast/inline "thanks, we'll review" — not a bell entry. |
+| Report **resolved** | **Yes** | Notification | Vague copy only, from `OPERATIONAL_POLICY.md` § 5.2 — never reveals the outcome for the other account. |
+| Restriction — **loud** (`hard_ban`) | **Yes** | Notification + blocked-login banner | Reason category only. |
+| Restriction — **state-only** (`reduced_stake_limits`, and `manual_review_required` / `delayed_withdrawals` once cashout exists) | No | Error/inline copy at point of action | Reuse `stake_exceeds_trust_cap` copy for stake caps; withdrawal copy only when cashout ships. |
+| Restriction — **quiet/shadow** (the remaining rungs) | No | None | Deliberately invisible. |
+| Secure Play badge / calibration | No | Account state (Profile/History/Settlement) | Calibrating must not look negative — see `FAIR_PLAY_NEXT_PASS.md` § "What calibrating users see". |
+
+The loud / state-only / quiet split is owned by `OPERATIONAL_POLICY.md` § 1.14; this table only maps each class onto a delivery surface.
+
+### Implementation note
+
+When these are built, the new persisted notification types (e.g. `game_voided`, `result_adjusted`, `report_resolved`, `account_suspended`) follow the existing entity-anchored, update-in-place pattern (`upsertNotification`, keyed on `entityType`/`entityId`). Emit them from `finalizeGame` (away-case only), `adminVoidGame`, `adminAdjustGame`, report resolution, and `adminSetRestrictions` (loud rungs only).
