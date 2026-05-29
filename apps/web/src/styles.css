@@ -4059,22 +4059,30 @@ p {
 .mini-button:hover { background: var(--paper-2); }
 
 /* ---- Fair Play Review panel --------------------------------------------- */
-.admin-analysis-panel {
-  margin-top: 12px;
-  padding: 0;
-  overflow: hidden;
+/* Analysis opens as an in-place drilldown inside the console body, fronted by a
+   breadcrumb whose first crumb is the back link to the parent tab. */
+.admin-breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  font-size: 13px;
 }
-.admin-analysis-panel .analysis-header {
-  display: flex; justify-content: space-between; align-items: center;
-  margin: 0;
-  padding: 14px 18px;
-  background:
-    radial-gradient(circle at 94% 6%, rgba(211, 164, 65, 0.16), transparent 44%),
-    linear-gradient(160deg, var(--felt), var(--felt-2));
-  color: #fff7e8;
+.crumb-link {
+  background: none;
+  border: 1px solid var(--rule);
+  padding: 4px 11px;
+  border-radius: 999px;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
 }
-.admin-analysis-panel .analysis-header h3 { margin: 0; color: #fff7e8; letter-spacing: 0.02em; }
-.admin-analysis-panel .analysis-body { padding: 16px 18px 18px; }
+.crumb-link:hover { background: var(--paper-2); border-color: var(--gold); }
+.crumb-sep { color: var(--muted); }
+.crumb-current { color: var(--muted); }
+.admin-drilldown .analysis-body { padding: 0; }
 .analysis-subhead { margin: 16px 0 6px; font-size: 13px; opacity: 0.85; }
 .fair-play-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;

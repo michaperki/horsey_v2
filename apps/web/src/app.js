@@ -4980,6 +4980,10 @@ async function loadAdminData(tabId) {
 }
 
 function switchAdminTab(tabId) {
+  // Leaving the drilldown when navigating to another tab.
+  state.adminAnalysisFor = null;
+  state.adminAnalysisData = null;
+  state.adminAnalysisError = null;
   loadAdminData(tabId).then(() => render());
   render();
 }
@@ -5012,7 +5016,11 @@ function renderAdmin() {
     : state.adminError
     ? `<p class="error">${escapeHtml(state.adminError)}</p>`
     : renderAdminBody(activeTab);
-  const analysisPanel = state.adminAnalysisFor ? renderAdminAnalysisPanel() : "";
+  // When a game analysis is open it takes over the body as an in-place drilldown
+  // (breadcrumb back to the parent tab) instead of appending a card below.
+  const main = state.adminAnalysisFor
+    ? renderAdminAnalysisPanel()
+    : `<div class="admin-body">${body}</div>`;
   return `
     <article class="card admin-panel">
       <header>
@@ -5020,9 +5028,8 @@ function renderAdmin() {
         <p class="muted small">Privileged actions require a reason and write audit rows plus append-only ledger corrections.</p>
       </header>
       ${nav}
-      <div class="admin-body">${body}</div>
+      ${main}
     </article>
-    ${analysisPanel}
   `;
 }
 
@@ -5032,11 +5039,16 @@ function renderAdminAnalysisPanel() {
   const job = data.job;
   const analysis = data.analysis;
   const moves = data.moves || [];
+  // Drilldown breadcrumb: the parent tab is the back link, so opening a game's
+  // analysis replaces the list in place rather than appending below it.
+  const activeTab = state.adminTab || "overview";
+  const parentLabel = ADMIN_TABS.find((t) => t.id === activeTab)?.label || "Admin";
   const header = `
-    <header class="analysis-header">
-      <h3>Game ${escapeHtml(gameId.slice(0, 16))} · analysis</h3>
-      <button class="mini-button" data-admin-analysis-close>Close</button>
-    </header>`;
+    <nav class="admin-breadcrumb">
+      <button class="crumb-link" data-admin-analysis-close>‹ ${escapeHtml(parentLabel)}</button>
+      <span class="crumb-sep">›</span>
+      <span class="crumb-current">Game ${escapeHtml(gameId.slice(0, 16))} · analysis</span>
+    </nav>`;
 
   const body = (() => {
     if (state.adminAnalysisLoading) return `<p class="muted">Loading…</p>`;
@@ -5068,7 +5080,7 @@ function renderAdminAnalysisPanel() {
     `;
   })();
 
-  return `<article class="card admin-analysis-panel">${header}<div class="analysis-body">${body}</div></article>`;
+  return `<div class="admin-body admin-drilldown">${header}<div class="analysis-body">${body}</div></div>`;
 }
 
 function renderAdminFairPlayPanel(analysis, fairPlay, gameId) {
@@ -5714,6 +5726,8 @@ async function adminOpenAnalysis(gameId) {
   state.adminAnalysisLoading = true;
   state.adminAnalysisError = null;
   render();
+  // The drilldown replaces the list at the top of the console — bring it into view.
+  window.scrollTo({ top: 0, behavior: "smooth" });
   try {
     const data = await getJson(`/api/admin/games/${encodeURIComponent(gameId)}/analysis`);
     state.adminAnalysisData = data;
