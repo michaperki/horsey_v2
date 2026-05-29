@@ -4926,17 +4926,27 @@ function renderAvatarPickerCard(viewer) {
   `;
 }
 
+// Console nav is grouped by operator intent (see docs/ADMIN_CONSOLE_NEXT_PASS.md):
+// Overview is the standalone home; TRUST / MONEY / OPS group the rest. Restrictions
+// is a derived view over the users endpoint (no dedicated endpoint needed).
 const ADMIN_TABS = [
-  { id: "overview", label: "Overview", endpoint: "/api/admin/overview" },
-  { id: "users", label: "Users", endpoint: "/api/admin/users" },
-  { id: "games", label: "Games", endpoint: "/api/admin/games" },
-  { id: "reports", label: "Reports", endpoint: "/api/admin/reports?limit=200" },
-  { id: "stuck", label: "Stuck", endpoint: "/api/admin/stuck-games" },
-  { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200" },
-  { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100" },
-  { id: "externals", label: "External", endpoint: "/api/admin/external-accounts" },
-  { id: "purchases", label: "Purchases", endpoint: "/api/admin/purchases?limit=200" },
-  { id: "audit", label: "Audit", endpoint: "/api/admin/audit?limit=200" }
+  { id: "overview", label: "Overview", endpoint: "/api/admin/overview", group: "home" },
+  { id: "reports", label: "Reports", endpoint: "/api/admin/reports?limit=200", group: "trust" },
+  { id: "restrictions", label: "Restrictions", endpoint: "/api/admin/users", group: "trust" },
+  { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200", group: "money" },
+  { id: "purchases", label: "Purchases", endpoint: "/api/admin/purchases?limit=200", group: "money" },
+  { id: "games", label: "Games", endpoint: "/api/admin/games", group: "ops" },
+  { id: "stuck", label: "Stuck", endpoint: "/api/admin/stuck-games", group: "ops" },
+  { id: "challenges", label: "Challenges", endpoint: "/api/admin/challenges?limit=100", group: "ops" },
+  { id: "externals", label: "External", endpoint: "/api/admin/external-accounts", group: "ops" },
+  { id: "users", label: "Users", endpoint: "/api/admin/users", group: "ops" },
+  { id: "audit", label: "Audit", endpoint: "/api/admin/audit?limit=200", group: "ops" }
+];
+
+const ADMIN_GROUPS = [
+  { id: "trust", label: "Trust" },
+  { id: "money", label: "Money" },
+  { id: "ops", label: "Ops" }
 ];
 
 const ADMIN_RESTRICTIONS = [
@@ -4978,9 +4988,23 @@ function renderAdmin() {
     return `<article class="card"><h2>Admin only</h2><p class="muted">This page requires an admin account.</p></article>`;
   }
   const activeTab = state.adminTab || "overview";
-  const tabBar = ADMIN_TABS.map((t) =>
-    `<button class="admin-tab ${t.id === activeTab ? "active" : ""}" data-admin-tab="${t.id}">${t.label}</button>`
-  ).join("");
+  const tabBtn = (t) =>
+    `<button class="admin-tab ${t.id === activeTab ? "active" : ""}" data-admin-tab="${t.id}">${escapeHtml(t.label)}</button>`;
+  const homeTab = ADMIN_TABS.find((t) => t.group === "home");
+  const groups = ADMIN_GROUPS.map((g) => {
+    const tabs = ADMIN_TABS.filter((t) => t.group === g.id);
+    if (!tabs.length) return "";
+    return `
+      <div class="admin-nav-group">
+        <span class="admin-nav-label">${escapeHtml(g.label)}</span>
+        <div class="admin-nav-tabs">${tabs.map(tabBtn).join("")}</div>
+      </div>`;
+  }).join("");
+  const nav = `
+    <nav class="admin-nav">
+      ${homeTab ? `<div class="admin-nav-home">${tabBtn(homeTab)}</div>` : ""}
+      ${groups}
+    </nav>`;
   const body = state.adminLoading
     ? `<p class="muted">Loading…</p>`
     : state.adminError
@@ -4993,7 +5017,7 @@ function renderAdmin() {
         <h2>Admin</h2>
         <p class="muted small">Privileged actions require a reason and write audit rows plus append-only ledger corrections.</p>
       </header>
-      <nav class="admin-tabs">${tabBar}</nav>
+      ${nav}
       <div class="admin-body">${body}</div>
     </article>
     ${analysisPanel}
@@ -5281,6 +5305,7 @@ function renderAdminBody(tabId) {
   const data = state.adminData?.[tabId];
   if (!data) return `<p class="muted">No data yet.</p>`;
   if (tabId === "overview") return renderAdminOverview(data);
+  if (tabId === "restrictions") return renderAdminRestrictions(data.users || []);
   if (tabId === "users") return renderAdminUsers(data.users || []);
   if (tabId === "games") return renderAdminGames(data);
   if (tabId === "reports") return renderAdminReports(data.reports || []);
@@ -5386,6 +5411,24 @@ function adminTable(headers, rows) {
     .map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`)
     .join("");
   return `<div class="admin-table-scroll"><table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// Restrictions is a focused view over the users payload: only accounts with an
+// active restriction, with the clear/restrict actions inline.
+function renderAdminRestrictions(users) {
+  const restricted = (users || []).filter((u) => (u.restrictions || []).length);
+  if (!restricted.length) return `<p class="muted small">No active restrictions.</p>`;
+  return adminTable(
+    ["Handle", "Rating", "Tier", "Restrictions", "Created", "Actions"],
+    restricted.map((u) => [
+      escapeHtml(u.handle),
+      u.rating,
+      u.trustTier,
+      adminRestrictionsCell(u),
+      escapeHtml(formatShortTimestamp(u.createdAt)),
+      adminUserActionsCell(u)
+    ])
+  );
 }
 
 function renderAdminUsers(users) {

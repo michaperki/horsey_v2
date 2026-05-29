@@ -3854,15 +3854,32 @@ p {
 }
 .admin-panel > header h2 { margin: 0; letter-spacing: 0.02em; }
 .admin-panel > header p { margin: 4px 0 0; color: rgba(255, 247, 232, 0.62); }
-.admin-tabs {
+.admin-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: stretch;
+  gap: 8px 16px;
   margin: 0;
-  padding: 8px 12px;
+  padding: 10px 12px;
   background: var(--felt-2);
   border-bottom: 1px solid rgba(0, 0, 0, 0.28);
 }
+.admin-nav-home { display: flex; align-items: center; }
+.admin-nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 16px;
+  border-left: 1px solid rgba(255, 247, 232, 0.12);
+}
+.admin-nav-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 600;
+  color: rgba(241, 201, 107, 0.78);
+}
+.admin-nav-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .admin-tab {
   padding: 6px 12px;
   border-radius: 6px;
