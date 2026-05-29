@@ -118,7 +118,8 @@ const state = {
     sharpOnly: false,
     hideForced: false,
     hideBook: false
-  }
+  },
+  adminFairPlayStatus: "open"
 };
 
 const STAKE_TIER_DEFAULT_CENTS = 2500;
@@ -4932,6 +4933,7 @@ function renderAvatarPickerCard(viewer) {
 const ADMIN_TABS = [
   { id: "overview", label: "Overview", endpoint: "/api/admin/overview", group: "home" },
   { id: "reports", label: "Reports", endpoint: "/api/admin/reports?limit=200", group: "trust" },
+  { id: "fairplay", label: "Fair-Play Queue", endpoint: "/api/admin/analysis?status=all&limit=200", group: "trust" },
   { id: "restrictions", label: "Restrictions", endpoint: "/api/admin/users", group: "trust" },
   { id: "ledger", label: "Ledger", endpoint: "/api/admin/ledger?limit=200", group: "money" },
   { id: "purchases", label: "Purchases", endpoint: "/api/admin/purchases?limit=200", group: "money" },
@@ -5066,7 +5068,7 @@ function renderAdminAnalysisPanel() {
     `;
   })();
 
-  return `<article class="card admin-analysis-panel">${header}${body}</article>`;
+  return `<article class="card admin-analysis-panel">${header}<div class="analysis-body">${body}</div></article>`;
 }
 
 function renderAdminFairPlayPanel(analysis, fairPlay, gameId) {
@@ -5305,6 +5307,7 @@ function renderAdminBody(tabId) {
   const data = state.adminData?.[tabId];
   if (!data) return `<p class="muted">No data yet.</p>`;
   if (tabId === "overview") return renderAdminOverview(data);
+  if (tabId === "fairplay") return renderAdminFairPlay(data);
   if (tabId === "restrictions") return renderAdminRestrictions(data.users || []);
   if (tabId === "users") return renderAdminUsers(data.users || []);
   if (tabId === "games") return renderAdminGames(data);
@@ -5411,6 +5414,46 @@ function adminTable(headers, rows) {
     .map((cells) => `<tr>${cells.map((c) => `<td>${c}</td>`).join("")}</tr>`)
     .join("");
   return `<div class="admin-table-scroll"><table class="admin-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// Fair-Play Queue: the trust backlog. Server returns every analyzed game (newest
+// first) plus whole-table review-status counts; the status chips filter the list
+// client-side. "Review" opens the analysis panel via the shared handler.
+function renderAdminFairPlay(data) {
+  const analyses = data.analyses || [];
+  const counts = data.counts || {};
+  const active = state.adminFairPlayStatus || "open";
+  const chips = ["open", "suspicious", "reviewing", "clean", "all"].map((s) => {
+    const n = s === "all" ? analyses.length : (counts[s] ?? 0);
+    return `<button class="fp-chip ${s === active ? "active" : ""} fp-${s}" data-fairplay-status="${s}">${escapeHtml(s)} <span class="fp-chip-count">${n}</span></button>`;
+  }).join("");
+  const filtered = active === "all"
+    ? analyses
+    : analyses.filter((g) => (g.analysis?.reviewStatus || "open") === active);
+  const table = filtered.length
+    ? adminTable(
+      ["Id", "Players", "Eng", "W ACPL", "B ACPL", "Review", "Analyzed", "Actions"],
+      filtered.map((g) => {
+        const a = g.analysis || {};
+        return [
+          escapeHtml(g.id),
+          adminPlayersCell(g),
+          escapeHtml(`d${a.depth ?? "?"}·mpv${a.multipv ?? "?"}`),
+          a.whiteAcpl ?? "—",
+          a.blackAcpl ?? "—",
+          `<span class="review-${escapeHtml(a.reviewStatus || "open")}">${escapeHtml(a.reviewStatus || "open")}</span>`,
+          escapeHtml(formatShortTimestamp(a.completedAt)),
+          `<div class="admin-actions"><button class="mini-button" data-admin-game-analysis="${escapeHtml(g.id)}">Review</button></div>`
+        ];
+      })
+    )
+    : `<p class="muted small">No ${escapeHtml(active)} analyses.${analyses.length ? "" : " Finalized games are analyzed in the background when the analysis worker is running."}</p>`;
+  return `
+    <section>
+      <div class="fp-chips">${chips}</div>
+      ${table}
+    </section>
+  `;
 }
 
 // Restrictions is a focused view over the users payload: only accounts with an
@@ -5686,6 +5729,12 @@ function adminCloseAnalysis() {
   state.adminAnalysisFor = null;
   state.adminAnalysisData = null;
   state.adminAnalysisError = null;
+  render();
+}
+
+function adminSetFairPlayStatus(status) {
+  const valid = ["open", "suspicious", "reviewing", "clean", "all"];
+  state.adminFairPlayStatus = valid.includes(status) ? status : "open";
   render();
 }
 
@@ -6043,6 +6092,9 @@ function render() {
   });
   document.querySelectorAll("[data-analysis-filter-side]").forEach((select) => {
     select.addEventListener("change", () => adminSetAnalysisFilter("side", select.value));
+  });
+  document.querySelectorAll("[data-fairplay-status]").forEach((b) => {
+    b.addEventListener("click", () => adminSetFairPlayStatus(b.dataset.fairplayStatus));
   });
   document.querySelectorAll("[data-admin-restrict-user]").forEach((b) => {
     b.addEventListener("click", () => adminRestrictUser(b.dataset.adminRestrictUser));

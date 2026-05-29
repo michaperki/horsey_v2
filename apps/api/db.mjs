@@ -1245,6 +1245,17 @@ function makeApi(db) {
       ORDER BY completed_at DESC
       LIMIT ?
     `),
+    listAnalysesByReviewStatus: db.prepare(`
+      SELECT * FROM game_analysis
+      WHERE status = 'complete' AND review_status = ?
+      ORDER BY completed_at DESC
+      LIMIT ?
+    `),
+    countAnalysesByReviewStatus: db.prepare(`
+      SELECT review_status AS status, count(*) AS n
+      FROM game_analysis WHERE status = 'complete'
+      GROUP BY review_status
+    `),
     updateGameAnalysisReview: db.prepare(`
       UPDATE game_analysis
       SET review_status = ?, admin_note = ?
@@ -1834,6 +1845,19 @@ function makeApi(db) {
     },
     listSuspiciousAnalyses(limit = 10) {
       return stmts.listSuspiciousAnalyses.all(limit).map(rowToGameAnalysis);
+    },
+    listAnalysesByReviewStatus(status, limit = 100) {
+      if (!status || status === "all") {
+        return stmts.listRecentAnalyzedGames.all(limit).map(rowToGameAnalysis);
+      }
+      return stmts.listAnalysesByReviewStatus.all(status, limit).map(rowToGameAnalysis);
+    },
+    analysisReviewCounts() {
+      const out = { open: 0, suspicious: 0, reviewing: 0, clean: 0 };
+      for (const row of stmts.countAnalysesByReviewStatus.all()) {
+        out[row.status] = Number(row.n);
+      }
+      return out;
     },
     adminOverviewCounts() {
       return {

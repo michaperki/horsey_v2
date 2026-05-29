@@ -3375,6 +3375,36 @@ async function routeApi(req, res) {
     } catch (error) { return handleDomainError(error, res); }
   }
 
+  // Fair-Play Queue: analyzed games with their review status, decoupled from the
+  // finalized-recency window so the trust backlog stays findable. Counts cover the
+  // whole table even when the list is limited. See docs/ADMIN_CONSOLE_NEXT_PASS.md.
+  if (req.method === "GET" && pathname === "/api/admin/analysis") {
+    try {
+      requireAdmin(viewer);
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const limit = clampInt(url.searchParams.get("limit"), 100, 1, 500);
+      const valid = ["open", "suspicious", "reviewing", "clean", "all"];
+      const statusParam = url.searchParams.get("status");
+      const status = valid.includes(statusParam) ? statusParam : "all";
+      const analyses = db.listAnalysesByReviewStatus(status, limit).map((a) => {
+        const game = db.getGame(a.gameId);
+        return {
+          ...(game ? summarizeGameRow(game) : { id: a.gameId, state: "finalized" }),
+          analysis: {
+            multipv: a.multipv,
+            depth: a.depth,
+            engineVersion: a.engineVersion,
+            whiteAcpl: a.whiteAcpl,
+            blackAcpl: a.blackAcpl,
+            reviewStatus: a.reviewStatus,
+            completedAt: a.completedAt
+          }
+        };
+      });
+      return json(res, 200, { analyses, counts: db.analysisReviewCounts(), status });
+    } catch (error) { return handleDomainError(error, res); }
+  }
+
   if (req.method === "GET" && pathname === "/api/admin/audit") {
     try {
       requireAdmin(viewer);

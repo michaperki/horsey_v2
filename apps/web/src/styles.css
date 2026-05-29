@@ -4003,6 +4003,43 @@ p {
 }
 .admin-flag:hover { background: rgba(211, 164, 65, 0.08); }
 .admin-flag-note { color: var(--muted); }
+/* Fair-Play Queue status chips. Suspicious is the actionable bucket — it carries
+   the red urgency accent so the trust backlog reads at a glance. */
+.fp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.fp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+.fp-chip:hover { background: var(--paper-2); }
+.fp-chip-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+}
+.fp-chip.active { border-color: var(--gold); background: rgba(211, 164, 65, 0.16); }
+.fp-chip.fp-suspicious .fp-chip-count { color: var(--red); }
+.fp-chip.fp-suspicious.active { border-color: var(--red); background: rgba(181, 58, 45, 0.12); }
+/* Review-status pills are authored for dark surfaces; on the paper data tables
+   re-map them to readable on-paper inks. */
+.admin-table .review-open { color: var(--muted); opacity: 1; }
+.admin-table .review-reviewing { color: #8a6411; }
+.admin-table .review-clean { color: var(--green); }
+.admin-table .review-suspicious { color: var(--red); font-weight: 600; }
 .admin-actions {
   display: flex;
   flex-wrap: wrap;
@@ -4022,11 +4059,22 @@ p {
 .mini-button:hover { background: var(--paper-2); }
 
 /* ---- Fair Play Review panel --------------------------------------------- */
-.admin-analysis-panel { margin-top: 12px; }
+.admin-analysis-panel {
+  margin-top: 12px;
+  padding: 0;
+  overflow: hidden;
+}
 .admin-analysis-panel .analysis-header {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 8px;
+  margin: 0;
+  padding: 14px 18px;
+  background:
+    radial-gradient(circle at 94% 6%, rgba(211, 164, 65, 0.16), transparent 44%),
+    linear-gradient(160deg, var(--felt), var(--felt-2));
+  color: #fff7e8;
 }
+.admin-analysis-panel .analysis-header h3 { margin: 0; color: #fff7e8; letter-spacing: 0.02em; }
+.admin-analysis-panel .analysis-body { padding: 16px 18px 18px; }
 .analysis-subhead { margin: 16px 0 6px; font-size: 13px; opacity: 0.85; }
 .fair-play-grid {
   display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
